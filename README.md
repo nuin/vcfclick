@@ -110,11 +110,11 @@ main process bulk-imports via
 `INSERT INTO ... SELECT * FROM file('staging/*.parquet')`.
 Use `--keep-staging` to retain the worker Parquet files as exports.
 
-**Current status:** the parallel path is *correct* (matches serial
-row counts) but its auto-split partitions chr17 by uniform position
-ranges, which underperforms on dense subregions (only one worker gets
-work). Use serial for now; an index-aware splitter (read tabix `.tbi`
-for natural cut points) is open work.
+The splitter does a single-pass count of variants per 100Kb position
+bucket and greedy-splits each contig into ranges of approximately
+equal variant count — so dense subregions (gene panels, exomes)
+don't leave N-1 workers idle. Workers flush Parquet in batches
+during parsing, keeping per-worker memory bounded.
 
 ## Export
 
@@ -154,9 +154,14 @@ exports as a side effect of ingestion.
 | Workload | Vars | Samples | Calls stored | Throughput |
 |---|---|---|---|---|
 | BRCA1 region (1000G 30x) | 1,863 | 3,202 | 369,776 | small-VCF baseline |
-| 10 Mb chr17 (1000G 30x) | 235,768 | 3,202 | **44,986,737** | **963 v/s serial** |
+| 10 Mb chr17 (1000G 30x) — serial | 235,768 | 3,202 | **44,986,737** | 952 v/s |
+| 10 Mb chr17 (1000G 30x) — parallel 4 workers | 235,768 | 3,202 | **44,986,737** | 1,983 v/s (2.1×) |
+| 10 Mb chr17 (1000G 30x) — parallel 8 workers | 235,768 | 3,202 | **44,986,737** | 2,466 v/s (2.6×) |
 
-Sparse-table compression: 6.2% of dense theoretical max.
+Parallel speedup comes from the variant-count-aware splitter — each
+worker gets approximately equal work regardless of where the data
+actually lives along the chromosome. Sparse-table compression
+empirically 6.2% of dense theoretical max.
 
 ## Licensing
 

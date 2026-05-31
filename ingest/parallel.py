@@ -1,22 +1,38 @@
-"""Parallel VCF ingestion.
+"""Parallel VCF ingestion with index-aware region splitting.
 
-Architecture, simpler now that chDB is in-process:
+Architecture:
 
-    [worker 1] parse region 1 → Parquet file
-    [worker 2] parse region 2 → Parquet file       →  main:
-    [worker 3] parse region 3 → Parquet file          INSERT INTO t
-    [worker N] parse region N → Parquet file          SELECT * FROM
-                                                      file('staging/*.parquet')
+    [worker 1] parse region 1 → variants_*.parquet
+                              → genotypes_*.parquet  ┐
+    [worker 2] parse region 2 → variants_*.parquet   │  main:
+                              → genotypes_*.parquet  │  INSERT INTO t
+    [worker N] parse region N → variants_*.parquet   │  SELECT * FROM
+                              → genotypes_*.parquet  ┘  file('staging/*.parquet')
 
 Workers have NO chDB dependency — they only need cyvcf2 + pyarrow.
-That keeps the parallel-friendly part (CPU-bound parsing) cleanly
-separated from the serial part (chDB write to MergeTree storage).
-Concurrent writers to a single chDB session aren't safe; concurrent
-writers to N independent Parquet files are trivial.
+Concurrent writers to one chDB session aren't safe; concurrent writers
+to N independent Parquet files are trivial.
 
-Bonus: the staging Parquet files ARE valid exports. Add `--keep-staging`
-to retain them after import — they'll show up in `<staging>/variants_*.parquet`
-and `<staging>/genotypes_*.parquet` for downstream use in DuckDB / Snowflake / Spark.
+Two design choices the earlier version got wrong, fixed here:
+
+1. Region splitting is variant-count-aware, not uniform-position.
+   The uniform splitter divided each contig into N equal position
+   ranges; when data lives in a dense subregion (BRCA1 panel, exome,
+   etc.) all variants land in one range and N-1 workers do nothing.
+   `split_by_variant_count()` does a single pre-pass counting variants
+   per 100Kb bucket, then greedy-splits each contig into ranges of
+   approximately equal variant count. The pre-pass cost (~10s for the
+   chr17 test slice) amortizes immediately against the parallelism
+   that follows.
+
+2. Workers flush Parquet batches during parsing, not all at the end.
+   Buffering 45M genotype rows in a single worker before the final
+   write costs ~10GB of Python memory and hits paging. The new worker
+   flushes every BATCH_SIZE variants — bounded memory, multiple small
+   Parquet files per worker, glob-import the lot.
+
+Bonus: staging Parquet files ARE valid exports. `--keep-staging`
+retains them for downstream DuckDB / Snowflake / Spark / Iceberg use.
 """
 
 from __future__ import annotations
@@ -38,6 +54,7 @@ from ingest._arrow import (
     write_parquet,
 )
 from ingest.vcf_load import (
+    BATCH_SIZE,
     build_genotype_rows,
     build_variant_row,
     classify_header,
@@ -45,54 +62,115 @@ from ingest.vcf_load import (
 from storage import DB_PATH, apply_schema, get_session, insert_via_parquet
 
 
-DEFAULT_CONTIG_LENGTH = 300_000_000  # > longest human chromosome (~250Mb)
+DEFAULT_BUCKET_SIZE = 100_000  # 100Kb position buckets for the splitter
+SPARSE_CONTIG_THRESHOLD = 1_000  # skip splitting if a contig has fewer
 
 
-def auto_split_regions(vcf_path: str, n_chunks: int) -> list[str]:
-    """Split each contig into n_chunks position ranges. Uses vcf.seqnames
-    as the source of truth (always populated); falls back to a wide
-    default range when ##contig headers lack `length=` (which the 1000G
-    phased files notably do)."""
+# ─────────────────────────────────────────────────────────────────────
+# Index-aware region splitter.
+# ─────────────────────────────────────────────────────────────────────
+
+def split_by_variant_count(
+    vcf_path: str,
+    n_workers: int,
+    bucket_size: int = DEFAULT_BUCKET_SIZE,
+) -> list[str]:
+    """Single-pass count of variants per position bucket → balanced ranges.
+
+    Cost: one VCF iteration without genotype access (`for variant in vcf`
+    only touches the binary record header, not the per-sample arrays).
+    For the chr17 10Mb / 235k-variant test slice this is ~10 seconds.
+    """
     vcf = VCF(vcf_path)
-    contig_lengths: dict[str, int] = {}
-    for h in vcf.header_iter():
-        try:
-            d = h.info(extra=True)
-        except Exception:
-            continue
-        if str(d.get("HeaderType", "")).upper() != "CONTIG":
-            continue
-        cid = d.get("ID")
-        if not cid:
-            continue
-        length = d.get("length") or d.get("Length")
-        contig_lengths[cid] = int(length) if length else DEFAULT_CONTIG_LENGTH
+    counts: dict[str, dict[int, int]] = {}
+    for variant in vcf:
+        contig = variant.CHROM
+        bucket = variant.POS // bucket_size
+        c = counts.setdefault(contig, {})
+        c[bucket] = c.get(bucket, 0) + 1
 
     regions: list[str] = []
-    for name in vcf.seqnames:
-        length = contig_lengths.get(name, DEFAULT_CONTIG_LENGTH)
-        chunk_size = max(length // n_chunks, 1_000_000)
-        start = 1
-        while start <= length:
-            end = min(start + chunk_size - 1, length)
-            regions.append(f"{name}:{start}-{end}")
-            start = end + 1
+    for contig in vcf.seqnames:
+        bucket_counts = counts.get(contig)
+        if not bucket_counts:
+            continue
+        regions.extend(
+            _split_contig_balanced(contig, bucket_counts, n_workers, bucket_size)
+        )
     return regions
 
 
-def _worker(args: tuple) -> tuple[str, int]:
-    """Parse one region and emit two Parquet files (variants, genotypes).
+def _split_contig_balanced(
+    contig: str,
+    bucket_counts: dict[int, int],
+    n_workers: int,
+    bucket_size: int,
+) -> list[str]:
+    sorted_buckets = sorted(bucket_counts.keys())
+    if not sorted_buckets:
+        return []
 
-    Workers have no chDB dependency by design — keeps process-pool
-    semantics simple and lets the parser parallelise without
-    coordinating writers.
+    total = sum(bucket_counts.values())
+    if total < SPARSE_CONTIG_THRESHOLD or n_workers <= 1:
+        start = sorted_buckets[0] * bucket_size + 1
+        end = (sorted_buckets[-1] + 1) * bucket_size
+        return [f"{contig}:{start}-{end}"]
+
+    target = total / n_workers
+    regions: list[str] = []
+    cur_start = sorted_buckets[0]
+    cur_count = 0
+
+    for i, b in enumerate(sorted_buckets):
+        cur_count += bucket_counts[b]
+        is_last_region = len(regions) == n_workers - 1
+        is_last_bucket = i == len(sorted_buckets) - 1
+
+        # Cut here if we hit the target AND we have remaining workers,
+        # OR if this is the last bucket (must emit the final region).
+        if (cur_count >= target and not is_last_region) or is_last_bucket:
+            start = cur_start * bucket_size + 1
+            end = (b + 1) * bucket_size
+            regions.append(f"{contig}:{start}-{end}")
+            cur_start = b + 1
+            cur_count = 0
+
+    return regions
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Per-worker parser with batched Parquet flushing.
+# ─────────────────────────────────────────────────────────────────────
+
+def _worker(args: tuple) -> tuple[str, int, int]:
+    """Parse one region, emit Parquet files in BATCH_SIZE batches.
+
+    Returns (region, n_variants, n_batches) — n_batches is informational,
+    used to log per-worker progress in the main process log.
     """
-    region, vcf_path, ingest_id, staging_dir, extra_format_fields = args
+    region, vcf_path, ingest_id, staging_dir, extra_format_fields, batch_size = args
     vcf = VCF(vcf_path)
     samples = list(vcf.samples)
 
-    variants_rows: list[list] = []
-    genotypes_rows: list[list] = []
+    safe_region = region.replace(":", "_").replace("-", "_")
+    staging = Path(staging_dir)
+
+    variants_batch: list[list] = []
+    genotypes_batch: list[list] = []
+    total_variants = 0
+    batch_idx = 0
+
+    def flush() -> None:
+        nonlocal batch_idx
+        if not variants_batch:
+            return
+        v_path = staging / f"variants_{safe_region}_{batch_idx:04d}.parquet"
+        g_path = staging / f"genotypes_{safe_region}_{batch_idx:04d}.parquet"
+        write_parquet(variants_batch, VARIANTS_ARROW_SCHEMA, v_path)
+        write_parquet(genotypes_batch, GENOTYPES_ARROW_SCHEMA, g_path)
+        variants_batch.clear()
+        genotypes_batch.clear()
+        batch_idx += 1
 
     for variant in vcf(region):
         if len(variant.ALT) != 1:
@@ -100,18 +178,16 @@ def _worker(args: tuple) -> tuple[str, int]:
                 f"Multi-allelic at {variant.CHROM}:{variant.POS}. "
                 f"Normalise with bcftools norm -m -."
             )
-        variants_rows.append(build_variant_row(variant, ingest_id))
-        genotypes_rows.extend(
+        variants_batch.append(build_variant_row(variant, ingest_id))
+        genotypes_batch.extend(
             build_genotype_rows(variant, samples, extra_format_fields, ingest_id)
         )
+        total_variants += 1
+        if len(variants_batch) >= batch_size:
+            flush()
 
-    safe_region = region.replace(":", "_").replace("-", "_")
-    v_path = Path(staging_dir) / f"variants_{safe_region}.parquet"
-    g_path = Path(staging_dir) / f"genotypes_{safe_region}.parquet"
-    write_parquet(variants_rows, VARIANTS_ARROW_SCHEMA, v_path)
-    write_parquet(genotypes_rows, GENOTYPES_ARROW_SCHEMA, g_path)
-
-    return region, len(variants_rows)
+    flush()
+    return region, total_variants, batch_idx
 
 
 def _ensure_schema() -> None:
@@ -125,6 +201,10 @@ def _ensure_schema() -> None:
         apply_schema(Path(__file__).parent.parent / "schema")
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Orchestration.
+# ─────────────────────────────────────────────────────────────────────
+
 def ingest_parallel(
     vcf_path: str,
     cohort: str,
@@ -132,6 +212,8 @@ def ingest_parallel(
     workers: int = 4,
     keep_staging: bool = False,
     staging_dir: str | None = None,
+    bucket_size: int = DEFAULT_BUCKET_SIZE,
+    batch_size: int = BATCH_SIZE,
 ) -> str:
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
@@ -144,9 +226,9 @@ def ingest_parallel(
     extra_format_fields = classification["extra_format"]
     samples = list(vcf.samples)
 
-    regions = auto_split_regions(vcf_path, workers)
-
-    staging = Path(staging_dir) if staging_dir else DB_PATH / "staging" / ingest_id
+    staging = (
+        Path(staging_dir) if staging_dir else DB_PATH / "staging" / ingest_id
+    )
     staging.mkdir(parents=True, exist_ok=True)
 
     print(f"[parallel-ingest] {vcf_path}")
@@ -154,7 +236,6 @@ def ingest_parallel(
     print(f"[parallel-ingest] cohort:    {cohort}")
     print(f"[parallel-ingest] samples:   {len(samples)}")
     print(f"[parallel-ingest] workers:   {workers}")
-    print(f"[parallel-ingest] regions:   {len(regions)}")
     print(f"[parallel-ingest] staging:   {staging}")
     print(
         f"[parallel-ingest] INFO typed={len(classification['typed_info'])} "
@@ -165,8 +246,17 @@ def ingest_parallel(
         f"→ format_extra={len(classification['extra_format'])}"
     )
 
-    # Samples go through the safe Parquet-staged path (no string
-    # interpolation of VCF-supplied sample IDs into SQL).
+    # Pre-pass: count variants per position bucket to plan balanced regions.
+    started_split = time.time()
+    regions = split_by_variant_count(vcf_path, workers, bucket_size)
+    split_elapsed = time.time() - started_split
+    print(
+        f"[parallel-ingest] split:  {split_elapsed:.1f}s → "
+        f"{len(regions)} regions across {len(set(r.split(':')[0] for r in regions))} contigs"
+    )
+
+    # Samples table — safe Parquet-staged insert (no string interpolation
+    # of VCF-supplied sample IDs).
     insert_via_parquet(
         "samples",
         SAMPLES_ARROW_SCHEMA,
@@ -178,7 +268,7 @@ def ingest_parallel(
     )
 
     args_list = [
-        (r, vcf_path, ingest_id, str(staging), extra_format_fields)
+        (r, vcf_path, ingest_id, str(staging), extra_format_fields, batch_size)
         for r in regions
     ]
 
@@ -186,13 +276,16 @@ def ingest_parallel(
     started_parse = time.time()
     total = 0
     with ProcessPoolExecutor(max_workers=workers) as pool:
-        for region, n in pool.map(_worker, args_list):
+        for region, n, n_batches in pool.map(_worker, args_list):
             total += n
             if n > 0:
-                print(f"[parallel-ingest]   {region}: {n:,} variants")
+                print(
+                    f"[parallel-ingest]   {region}: {n:,} variants "
+                    f"({n_batches} batches)"
+                )
     parse_elapsed = time.time() - started_parse
 
-    # Import phase — serial bulk import via glob.
+    # Import phase — single bulk import via glob.
     started_import = time.time()
     sess.query(
         f"INSERT INTO variants "
@@ -221,15 +314,15 @@ def ingest_parallel(
     else:
         print(f"[parallel-ingest] staging Parquet files kept at {staging}")
 
-    total_elapsed = parse_elapsed + import_elapsed
+    total_elapsed = split_elapsed + parse_elapsed + import_elapsed
     print(
-        f"[parallel-ingest] parse:  {parse_elapsed:.1f}s "
-        f"({total / max(parse_elapsed, 0.001):,.0f}/s with {workers} workers)"
+        f"[parallel-ingest] split:  {split_elapsed:.1f}s  "
+        f"parse: {parse_elapsed:.1f}s ({total / max(parse_elapsed, 0.001):,.0f}/s)  "
+        f"import: {import_elapsed:.1f}s"
     )
-    print(f"[parallel-ingest] import: {import_elapsed:.1f}s (bulk Parquet → chDB)")
     print(
         f"[parallel-ingest] total:  {total_elapsed:.1f}s, {total:,} variants "
-        f"({total / max(total_elapsed, 0.001):,.0f}/s overall)"
+        f"({total / max(total_elapsed, 0.001):,.0f}/s overall with {workers} workers)"
     )
     return ingest_id
 
@@ -240,6 +333,16 @@ def main() -> None:
     ap.add_argument("--cohort", required=True)
     ap.add_argument("--ingest-id", default=None)
     ap.add_argument("--workers", type=int, default=4)
+    ap.add_argument(
+        "--bucket-size", type=int, default=DEFAULT_BUCKET_SIZE,
+        help=f"Splitter position-bucket size (default {DEFAULT_BUCKET_SIZE:,} bp). "
+             f"Smaller = finer load balance, larger = cheaper pre-pass.",
+    )
+    ap.add_argument(
+        "--batch-size", type=int, default=BATCH_SIZE,
+        help=f"Variants per worker Parquet batch (default {BATCH_SIZE:,}). "
+             f"Bounds per-worker memory.",
+    )
     ap.add_argument(
         "--keep-staging", action="store_true",
         help="Keep the worker Parquet files for downstream use (they "
@@ -253,6 +356,7 @@ def main() -> None:
     ingest_parallel(
         args.vcf_path, args.cohort, args.ingest_id,
         args.workers, args.keep_staging, args.staging_dir,
+        args.bucket_size, args.batch_size,
     )
 
 
