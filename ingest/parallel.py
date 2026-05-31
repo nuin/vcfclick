@@ -246,12 +246,20 @@ def ingest_parallel(
         f"→ format_extra={len(classification['extra_format'])}"
     )
 
-    # Pre-pass: count variants per position bucket to plan balanced regions.
+    # Plan balanced regions. Prefer the tabix index (essentially free)
+    # and fall back to a cyvcf2 pre-pass if the .tbi is missing.
+    from ingest._tabix import split_via_tbi
+
     started_split = time.time()
-    regions = split_by_variant_count(vcf_path, workers, bucket_size)
+    regions = split_via_tbi(vcf_path, workers, bucket_size)
+    if regions is None:
+        regions = split_by_variant_count(vcf_path, workers, bucket_size)
+        split_source = "cyvcf2 pre-pass"
+    else:
+        split_source = "tabix .tbi"
     split_elapsed = time.time() - started_split
     print(
-        f"[parallel-ingest] split:  {split_elapsed:.1f}s → "
+        f"[parallel-ingest] split:  {split_elapsed:.2f}s via {split_source} → "
         f"{len(regions)} regions across {len(set(r.split(':')[0] for r in regions))} contigs"
     )
 
