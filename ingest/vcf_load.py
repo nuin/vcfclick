@@ -32,11 +32,13 @@ from cyvcf2 import VCF
 from ingest._arrow import (
     GENOTYPES_ARROW_SCHEMA,
     GENOTYPES_COLUMNS,
+    INGESTIONS_ARROW_SCHEMA,
+    SAMPLES_ARROW_SCHEMA,
     VARIANTS_ARROW_SCHEMA,
     VARIANTS_COLUMNS,
     write_parquet,
 )
-from storage import apply_schema, get_session
+from storage import apply_schema, get_session, insert_via_parquet
 
 # ─────────────────────────────────────────────────────────────────────
 # Schema router: VCF field name → ClickHouse column(s).
@@ -319,14 +321,17 @@ def ingest(
             f"[ingest]   format_extra keys: {classification['extra_format']}"
         )
 
-    # Samples + ingestions catalog go in via VALUES — small writes,
-    # the Parquet path isn't worth it.
-    sample_values = ", ".join(
-        f"('{ingest_id}', '{s}', '{cohort}', NULL)" for s in samples
-    )
-    sess.query(
-        f"INSERT INTO samples (ingest_id, sample_id, cohort, sex) "
-        f"VALUES {sample_values}"
+    # Samples + ingestions catalog go through the same Parquet-staged
+    # bulk-insert as variants/genotypes. Avoids string-interpolating
+    # sample IDs (which come from the VCF header) into SQL.
+    insert_via_parquet(
+        "samples",
+        SAMPLES_ARROW_SCHEMA,
+        [
+            {"ingest_id": ingest_id, "sample_id": s,
+             "cohort": cohort, "sex": None}
+            for s in samples
+        ],
     )
 
     variants_batch: list[list] = []
@@ -375,11 +380,16 @@ def ingest(
 
         flush()
 
-    sess.query(
-        f"INSERT INTO ingestions (ingest_id, cohort, vcf_path, "
-        f"n_variants, n_samples) "
-        f"VALUES ('{ingest_id}', '{cohort}', '{vcf_path}', "
-        f"{n_variants}, {len(samples)})"
+    insert_via_parquet(
+        "ingestions",
+        INGESTIONS_ARROW_SCHEMA,
+        [{
+            "ingest_id": ingest_id,
+            "cohort": cohort,
+            "vcf_path": vcf_path,
+            "n_variants": n_variants,
+            "n_samples": len(samples),
+        }],
     )
 
     elapsed = time.time() - started

@@ -116,8 +116,26 @@ def column_names(schema: pa.Schema) -> list[str]:
     return [f.name for f in schema]
 
 
+SAMPLES_ARROW_SCHEMA = pa.schema([
+    _f("ingest_id", pa.string(), False),
+    _f("sample_id", pa.string(), False),
+    _f("cohort", pa.string(), False),
+    _f("sex", pa.string()),
+])
+
+INGESTIONS_ARROW_SCHEMA = pa.schema([
+    _f("ingest_id", pa.string(), False),
+    _f("cohort", pa.string(), False),
+    _f("vcf_path", pa.string(), False),
+    _f("n_variants", pa.uint64(), False),
+    _f("n_samples", pa.uint32(), False),
+])
+
+
 VARIANTS_COLUMNS = column_names(VARIANTS_ARROW_SCHEMA)
 GENOTYPES_COLUMNS = column_names(GENOTYPES_ARROW_SCHEMA)
+SAMPLES_COLUMNS = column_names(SAMPLES_ARROW_SCHEMA)
+INGESTIONS_COLUMNS = column_names(INGESTIONS_ARROW_SCHEMA)
 
 
 def write_parquet(rows: Iterable[list], schema: pa.Schema, path: Path) -> int:

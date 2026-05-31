@@ -17,6 +17,7 @@ Multiple tables in one call:
 from __future__ import annotations
 
 import argparse
+import tempfile
 from pathlib import Path
 
 from storage import get_session
@@ -26,19 +27,41 @@ TABLES = ["variants", "genotypes", "samples", "ingestions"]
 
 
 def export_table(table: str, out_path: Path, where: str | None = None) -> None:
-    """Materialise a table (or filtered slice) as a Parquet file."""
+    """Materialise a table (or filtered slice) as a Parquet file.
+
+    Note on safety:
+      - `table` is checked against an allowlist (above).
+      - `out_path` is NEVER interpolated into the SQL. chDB writes to
+        a tempfile under our control, then we atomic-move to out_path.
+      - `where` IS interpolated. It's a CLI argument provided by the
+        operator and treated as trusted SQL fragment input. Do NOT
+        expose this entry point to untrusted callers (HTTP, etc.)
+        without first switching to a parameterised query builder.
+    """
     if table not in TABLES:
         raise ValueError(f"Unknown table {table}; expected one of {TABLES}")
     out_path = Path(out_path).resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
 
     sess = get_session()
-    sql = f"SELECT * FROM {table}"
-    if where:
-        sql += f" WHERE {where}"
-    sql += f" INTO OUTFILE '{out_path}' FORMAT Parquet"
+    with tempfile.NamedTemporaryFile(
+        suffix=".parquet", delete=False, dir=out_path.parent
+    ) as f:
+        staging = Path(f.name)
+    try:
+        sql = f"SELECT * FROM {table}"
+        if where:
+            sql += f" WHERE {where}"
+        # staging is from tempfile (path is controlled, no quotes).
+        # TRUNCATE lets chDB overwrite the empty file tempfile created
+        # for us — otherwise FILE_ALREADY_EXISTS.
+        sql += f" INTO OUTFILE '{staging}' TRUNCATE FORMAT Parquet"
+        sess.query(sql)
+        staging.replace(out_path)
+    except Exception:
+        staging.unlink(missing_ok=True)
+        raise
 
-    sess.query(sql)
     size = out_path.stat().st_size
     print(f"[export] {table} → {out_path} ({size:,} bytes)")
 

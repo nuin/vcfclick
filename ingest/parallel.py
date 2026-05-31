@@ -32,6 +32,8 @@ from cyvcf2 import VCF
 
 from ingest._arrow import (
     GENOTYPES_ARROW_SCHEMA,
+    INGESTIONS_ARROW_SCHEMA,
+    SAMPLES_ARROW_SCHEMA,
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
@@ -40,7 +42,7 @@ from ingest.vcf_load import (
     build_variant_row,
     classify_header,
 )
-from storage import DB_PATH, apply_schema, get_session
+from storage import DB_PATH, apply_schema, get_session, insert_via_parquet
 
 
 DEFAULT_CONTIG_LENGTH = 300_000_000  # > longest human chromosome (~250Mb)
@@ -163,13 +165,16 @@ def ingest_parallel(
         f"→ format_extra={len(classification['extra_format'])}"
     )
 
-    # Samples + ingestions: small writes, VALUES is fine.
-    sample_values = ", ".join(
-        f"('{ingest_id}', '{s}', '{cohort}', NULL)" for s in samples
-    )
-    sess.query(
-        f"INSERT INTO samples (ingest_id, sample_id, cohort, sex) "
-        f"VALUES {sample_values}"
+    # Samples go through the safe Parquet-staged path (no string
+    # interpolation of VCF-supplied sample IDs into SQL).
+    insert_via_parquet(
+        "samples",
+        SAMPLES_ARROW_SCHEMA,
+        [
+            {"ingest_id": ingest_id, "sample_id": s,
+             "cohort": cohort, "sex": None}
+            for s in samples
+        ],
     )
 
     args_list = [
@@ -199,11 +204,16 @@ def ingest_parallel(
     )
     import_elapsed = time.time() - started_import
 
-    sess.query(
-        f"INSERT INTO ingestions (ingest_id, cohort, vcf_path, "
-        f"n_variants, n_samples) "
-        f"VALUES ('{ingest_id}', '{cohort}', '{vcf_path}', "
-        f"{total}, {len(samples)})"
+    insert_via_parquet(
+        "ingestions",
+        INGESTIONS_ARROW_SCHEMA,
+        [{
+            "ingest_id": ingest_id,
+            "cohort": cohort,
+            "vcf_path": vcf_path,
+            "n_variants": total,
+            "n_samples": len(samples),
+        }],
     )
 
     if not keep_staging:
