@@ -43,3 +43,9 @@ data/*.parquet
 
 # Marketing/landing site — lives on disk, not in the OSS repo.
 web/
+
+# Browser-automation artefacts (Playwright MCP screenshots etc.)
+.playwright-mcp/
+*.png
+*.jpeg
+*.jpg

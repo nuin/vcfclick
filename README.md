@@ -6,12 +6,9 @@ DuckDB for reference annotations, and a natural-language query layer
 that turns plain English into SQL you can read.
 
 Single binary. `uv run vcfclick`. No Docker, no port, no server, no
-Gatekeeper dialog. The wedge demo runs from a clean `git clone`.
+Gatekeeper dialog. The headline demo runs from a clean `git clone`.
 
-Designed as a portfolio + distribution piece for
-[Bioinformat](https://bioinformat.org).
-
-Status: Phase 0 — architecture validated against real 1000 Genomes data.
+Status: research preview. Architecture validated against real 1000 Genomes data.
 
 ## Why
 
@@ -179,12 +176,11 @@ arm64 (vcfclick) vs Rosetta-emulated linux/amd64 (TileDB-VCF Docker):
 Full methodology, caveats (including the Rosetta penalty), and
 reproduction commands: [`bench/BENCHMARK.md`](bench/BENCHMARK.md).
 
-## Licensing
+## License
 
-Single open-source license, all features included. See
-[LICENSING.md](LICENSING.md) for the choice (AGPL vs BSL, TBD) and the
-Bioinformat business model around the OSS — hosted SaaS, support
-contracts, consulting. No feature gating.
+License choice (AGPL-3.0 vs BSL) is pending. A standard `LICENSE` file
+will be added before the first tagged release. See
+[LICENSING.md](LICENSING.md).
 
 ## Open work
 
