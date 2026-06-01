@@ -6,7 +6,7 @@ tiers. Academic, commercial, and clinical use are all permitted by the
 license itself.
 
 This is a deliberate choice. The project is built as a portfolio /
-distribution piece for [Bioinformat](#) — its job is
+distribution piece for [Bioinformat](https://bioinformat.org) — its job is
 to be technically credible and widely used, not to maximise per-seat
 revenue. Revenue, when it comes, comes from the operational side
 described below — not from gating features.

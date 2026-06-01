@@ -9,7 +9,7 @@ Single binary. `uv run vcfclick`. No Docker, no port, no server, no
 Gatekeeper dialog. The wedge demo runs from a clean `git clone`.
 
 Designed as a portfolio + distribution piece for
-[Bioinformat](#).
+[Bioinformat](https://bioinformat.org).
 
 Status: Phase 0 — architecture validated against real 1000 Genomes data.
 
