@@ -7,4 +7,5 @@ dependencies = [
     "chdb>=4.1.8",
     "pyarrow>=15.0.0",
     "duckdb>=1.0.0",
+    "mcp>=1.0.0",
 ]

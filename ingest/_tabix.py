@@ -96,7 +96,6 @@ def variant_density(
     don't matter.
     """
     LINEAR_BUCKET_BP = 16384  # tabix convention
-    buckets_per_pos_bucket = max(position_bucket_size // LINEAR_BUCKET_BP, 1)
 
     # Per-16Kb byte deltas. The upper 48 bits of the virtual offset
     # are the BGZF block offset; intra-block uoffset noise washes out

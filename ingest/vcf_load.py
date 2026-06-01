@@ -292,7 +292,6 @@ def ingest(
         ingest_id = str(uuid.uuid4())
 
     _ensure_schema()
-    sess = get_session()
 
     vcf = VCF(vcf_path)
     classification = classify_header(vcf)
