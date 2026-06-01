@@ -40,23 +40,28 @@ from ingest._arrow import (
 )
 from storage import apply_schema, get_session, insert_via_parquet
 
-# ─────────────────────────────────────────────────────────────────────
-# Schema router: VCF field name → ClickHouse column(s).
-# Insertion order in these dicts MUST match the column order in
-# ingest/_arrow.py's schemas. Don't reorder without updating both.
-# ─────────────────────────────────────────────────────────────────────
-
 INFO_SCALAR = {
-    "AC": "info_AC", "AF": "info_AF", "AN": "info_AN",
-    "DP": "info_DP", "MQ": "info_MQ", "MQ0": "info_MQ0",
-    "NS": "info_NS", "BQ": "info_BQ", "SB": "info_SB",
-    "END": "info_END", "CIGAR": "info_CIGAR", "AA": "info_AA",
-    "QD": "info_QD", "FS": "info_FS", "SOR": "info_SOR",
+    "AC": "info_AC",
+    "AF": "info_AF",
+    "AN": "info_AN",
+    "DP": "info_DP",
+    "MQ": "info_MQ",
+    "MQ0": "info_MQ0",
+    "NS": "info_NS",
+    "BQ": "info_BQ",
+    "SB": "info_SB",
+    "END": "info_END",
+    "CIGAR": "info_CIGAR",
+    "AA": "info_AA",
+    "QD": "info_QD",
+    "FS": "info_FS",
+    "SOR": "info_SOR",
     "MQRankSum": "info_MQRankSum",
     "ReadPosRankSum": "info_ReadPosRankSum",
     "ExcessHet": "info_ExcessHet",
     "InbreedingCoeff": "info_InbreedingCoeff",
-    "MLEAC": "info_MLEAC", "MLEAF": "info_MLEAF",
+    "MLEAC": "info_MLEAC",
+    "MLEAF": "info_MLEAF",
     "BaseQRankSum": "info_BaseQRankSum",
     "ClippingRankSum": "info_ClippingRankSum",
 }
@@ -66,14 +71,21 @@ INFO_PAIR = {
 }
 
 INFO_FLAG = {
-    "SOMATIC": "info_SOMATIC", "VALIDATED": "info_VALIDATED",
-    "DB": "info_DB", "H2": "info_H2", "H3": "info_H3",
+    "SOMATIC": "info_SOMATIC",
+    "VALIDATED": "info_VALIDATED",
+    "DB": "info_DB",
+    "H2": "info_H2",
+    "H3": "info_H3",
     "1000G": "info_1000G",
 }
 
 FORMAT_SCALAR = {
-    "GQ": "gq", "DP": "dp", "MQ": "mq",
-    "FT": "ft", "PS": "ps", "PQ": "pq",
+    "GQ": "gq",
+    "DP": "dp",
+    "MQ": "mq",
+    "FT": "ft",
+    "PS": "ps",
+    "PQ": "pq",
 }
 
 FORMAT_PAIR = {
@@ -89,17 +101,8 @@ FORMAT_TRIPLE = {
 
 
 def _typed_format_fields() -> set[str]:
-    return (
-        {"GT"}
-        | FORMAT_SCALAR.keys()
-        | FORMAT_PAIR.keys()
-        | FORMAT_TRIPLE.keys()
-    )
+    return {"GT"} | FORMAT_SCALAR.keys() | FORMAT_PAIR.keys() | FORMAT_TRIPLE.keys()
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Header classification.
-# ─────────────────────────────────────────────────────────────────────
 
 def classify_header(vcf: VCF) -> dict[str, list[str]]:
     typed_info, extra_info = [], []
@@ -133,10 +136,6 @@ def classify_header(vcf: VCF) -> dict[str, list[str]]:
         "extra_format": sorted(extra_format),
     }
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Row builders. Output column order matches the Arrow schemas in _arrow.py.
-# ─────────────────────────────────────────────────────────────────────
 
 def _stringify(value) -> str:
     if isinstance(value, (list, tuple)):
@@ -254,30 +253,28 @@ def build_genotype_rows(
     return rows
 
 
-# ─────────────────────────────────────────────────────────────────────
-# chDB import via Parquet staging.
-# ─────────────────────────────────────────────────────────────────────
-
 def _import_parquet(table: str, parquet_path: Path) -> None:
     """Bulk-import a single Parquet file into a chDB table."""
     sess = get_session()
     # `file()` resolves relative to the chDB user_files directory by
     # default; passing an absolute path bypasses that. Wrap in single
     # quotes for SQL safety (paths shouldn't contain quotes in practice).
-    sess.query(
-        f"INSERT INTO {table} "
-        f"SELECT * FROM file('{parquet_path}', 'Parquet')"
-    )
+    sess.query(f"INSERT INTO {table} SELECT * FROM file('{parquet_path}', 'Parquet')")
 
 
 def _ensure_schema() -> None:
     """Apply the schema if the variants table isn't already there."""
     sess = get_session()
-    result = sess.query(
-        "SELECT count() FROM system.tables "
-        "WHERE database = currentDatabase() AND name = 'variants'",
-        "CSV",
-    ).bytes().decode().strip()
+    result = (
+        sess.query(
+            "SELECT count() FROM system.tables "
+            "WHERE database = currentDatabase() AND name = 'variants'",
+            "CSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+    )
     if result == "0":
         apply_schema(Path(__file__).parent.parent / "schema")
 
@@ -317,9 +314,7 @@ def ingest(
     if classification["extra_info"]:
         print(f"[ingest]   info_extra keys: {classification['extra_info']}")
     if classification["extra_format"]:
-        print(
-            f"[ingest]   format_extra keys: {classification['extra_format']}"
-        )
+        print(f"[ingest]   format_extra keys: {classification['extra_format']}")
 
     # Samples + ingestions catalog go through the same Parquet-staged
     # bulk-insert as variants/genotypes. Avoids string-interpolating
@@ -328,8 +323,7 @@ def ingest(
         "samples",
         SAMPLES_ARROW_SCHEMA,
         [
-            {"ingest_id": ingest_id, "sample_id": s,
-             "cohort": cohort, "sex": None}
+            {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
             for s in samples
         ],
     )
@@ -364,9 +358,7 @@ def ingest(
                 )
             variants_batch.append(build_variant_row(variant, ingest_id))
             genotypes_batch.extend(
-                build_genotype_rows(
-                    variant, samples, extra_format_fields, ingest_id
-                )
+                build_genotype_rows(variant, samples, extra_format_fields, ingest_id)
             )
             n_variants += 1
 
@@ -383,13 +375,15 @@ def ingest(
     insert_via_parquet(
         "ingestions",
         INGESTIONS_ARROW_SCHEMA,
-        [{
-            "ingest_id": ingest_id,
-            "cohort": cohort,
-            "vcf_path": vcf_path,
-            "n_variants": n_variants,
-            "n_samples": len(samples),
-        }],
+        [
+            {
+                "ingest_id": ingest_id,
+                "cohort": cohort,
+                "vcf_path": vcf_path,
+                "n_variants": n_variants,
+                "n_samples": len(samples),
+            }
+        ],
     )
 
     elapsed = time.time() - started
@@ -405,7 +399,8 @@ def main() -> None:
     ap.add_argument("vcf_path", help="Normalised VCF/BCF (.vcf.gz, .bcf)")
     ap.add_argument("--cohort", required=True)
     ap.add_argument(
-        "--ingest-id", default=None,
+        "--ingest-id",
+        default=None,
         help="Upload identifier (UUID4 if omitted). Reuse to replace prior data.",
     )
     args = ap.parse_args()

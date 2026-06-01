@@ -24,11 +24,6 @@ artefact — is shipped under the same OSS license as the engine.
 from __future__ import annotations
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Planned DuckDB schema. Lives in the same annotations.duckdb file as
-# the gene + ClinVar tables.
-# ─────────────────────────────────────────────────────────────────────
-
 TRANSCRIPTS_SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS transcripts (
     transcript_id    VARCHAR PRIMARY KEY,    -- e.g. 'NM_007294.4'
@@ -71,10 +66,6 @@ CREATE INDEX IF NOT EXISTS idx_cds_range
     ON cds (chrom, start_pos, end_pos);
 """
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Planned public API. Phase 2 implementation.
-# ─────────────────────────────────────────────────────────────────────
 
 def transcripts_for_gene(symbol: str) -> list:
     """All transcripts of a gene."""

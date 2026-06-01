@@ -136,8 +136,7 @@ def load(gff_path: Path | None = None, replace: bool = True) -> int:
 
     # Quick verification — the demo gene should be reachable.
     brca1 = conn.execute(
-        "SELECT chrom, start_pos, end_pos FROM refseq_genes "
-        "WHERE gene_symbol = 'BRCA1'"
+        "SELECT chrom, start_pos, end_pos FROM refseq_genes WHERE gene_symbol = 'BRCA1'"
     ).fetchone()
     if brca1:
         print(f"[gencode] BRCA1 → {brca1[0]}:{brca1[1]}-{brca1[2]}")
@@ -150,12 +149,14 @@ def load(gff_path: Path | None = None, replace: bool = True) -> int:
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument(
-        "--gff", type=Path, default=None,
-        help="Local GENCODE GFF3 (.gff3 or .gff3.gz). Downloads from EBI "
-             "if omitted.",
+        "--gff",
+        type=Path,
+        default=None,
+        help="Local GENCODE GFF3 (.gff3 or .gff3.gz). Downloads from EBI if omitted.",
     )
     ap.add_argument(
-        "--keep-existing", action="store_true",
+        "--keep-existing",
+        action="store_true",
         help="Don't truncate refseq_genes before loading.",
     )
     args = ap.parse_args()

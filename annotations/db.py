@@ -35,12 +35,6 @@ import duckdb
 DUCKDB_PATH = Path(__file__).parent / "annotations.duckdb"
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Schema. Two tables, both GRCh38-only for MVP.
-# Adding GRCh37 would mean either parallel tables or an assembly column;
-# defer until a real user asks.
-# ─────────────────────────────────────────────────────────────────────
-
 SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS refseq_genes (
     gene_symbol  VARCHAR PRIMARY KEY,    -- HGNC symbol, e.g. 'BRCA1'
@@ -75,12 +69,6 @@ def get_connection() -> duckdb.DuckDBPyConnection:
     conn.execute(SCHEMA_DDL)
     return conn
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Public API — what the MCP server calls.
-# Each function is the "thinnest reasonable" query so failure modes are
-# obvious. The MCP tool layer wraps these for the LLM.
-# ─────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True)
 class GeneRange:
@@ -137,9 +125,7 @@ def gene_at(chrom: str, pos: int) -> list[GeneRange]:
     return [GeneRange(*r) for r in rows]
 
 
-def clinvar_lookup(
-    chrom: str, pos: int, ref: str, alt: str
-) -> ClinVarRecord | None:
+def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | None:
     """Look up ClinVar significance for a specific allele.
 
     Returns None if the variant is not in ClinVar — which the caller

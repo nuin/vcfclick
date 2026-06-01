@@ -45,9 +45,7 @@ def parse_tbi(tbi_path: Path) -> dict[str, list[int]]:
         buf = f.read()
 
     if buf[:4] != TBI_MAGIC:
-        raise ValueError(
-            f"{tbi_path}: bad magic {buf[:4]!r}, expected {TBI_MAGIC!r}"
-        )
+        raise ValueError(f"{tbi_path}: bad magic {buf[:4]!r}, expected {TBI_MAGIC!r}")
 
     pos = 4
     (n_ref, pos) = _read(buf, pos, "<i")
@@ -57,7 +55,7 @@ def parse_tbi(tbi_path: Path) -> dict[str, list[int]]:
         (_, pos) = _read(buf, pos, "<i")
     (l_nm, pos) = _read(buf, pos, "<i")
 
-    names_blob = buf[pos:pos + l_nm]
+    names_blob = buf[pos : pos + l_nm]
     pos += l_nm
     # Sequence names: concatenated null-terminated strings. Filter empty
     # trailing slot from the final NUL.
@@ -77,9 +75,7 @@ def parse_tbi(tbi_path: Path) -> dict[str, list[int]]:
             pos += n_chunk * 16  # each chunk is two uint64s
 
         (n_intv, pos) = _read(buf, pos, "<i")
-        offsets = list(
-            struct.unpack_from(f"<{n_intv}Q", buf, pos)
-        )
+        offsets = list(struct.unpack_from(f"<{n_intv}Q", buf, pos))
         pos += n_intv * 8
 
         contigs[name] = offsets
@@ -147,7 +143,5 @@ def split_via_tbi(
         density = variant_density(offsets, bucket_size)
         if not density:
             continue
-        regions.extend(
-            _split_contig_balanced(contig, density, n_workers, bucket_size)
-        )
+        regions.extend(_split_contig_balanced(contig, density, n_workers, bucket_size))
     return regions

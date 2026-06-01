@@ -61,14 +61,9 @@ from ingest.vcf_load import (
 )
 from storage import DB_PATH, apply_schema, get_session, insert_via_parquet
 
-
 DEFAULT_BUCKET_SIZE = 100_000  # 100Kb position buckets for the splitter
 SPARSE_CONTIG_THRESHOLD = 1_000  # skip splitting if a contig has fewer
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Index-aware region splitter.
-# ─────────────────────────────────────────────────────────────────────
 
 def split_by_variant_count(
     vcf_path: str,
@@ -138,10 +133,6 @@ def _split_contig_balanced(
     return regions
 
 
-# ─────────────────────────────────────────────────────────────────────
-# Per-worker parser with batched Parquet flushing.
-# ─────────────────────────────────────────────────────────────────────
-
 def _worker(args: tuple) -> tuple[str, int, int]:
     """Parse one region, emit Parquet files in BATCH_SIZE batches.
 
@@ -192,18 +183,19 @@ def _worker(args: tuple) -> tuple[str, int, int]:
 
 def _ensure_schema() -> None:
     sess = get_session()
-    n = sess.query(
-        "SELECT count() FROM system.tables "
-        "WHERE database = currentDatabase() AND name = 'variants'",
-        "CSV",
-    ).bytes().decode().strip()
+    n = (
+        sess.query(
+            "SELECT count() FROM system.tables "
+            "WHERE database = currentDatabase() AND name = 'variants'",
+            "CSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+    )
     if n == "0":
         apply_schema(Path(__file__).parent.parent / "schema")
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Orchestration.
-# ─────────────────────────────────────────────────────────────────────
 
 def ingest_parallel(
     vcf_path: str,
@@ -226,9 +218,7 @@ def ingest_parallel(
     extra_format_fields = classification["extra_format"]
     samples = list(vcf.samples)
 
-    staging = (
-        Path(staging_dir) if staging_dir else DB_PATH / "staging" / ingest_id
-    )
+    staging = Path(staging_dir) if staging_dir else DB_PATH / "staging" / ingest_id
     staging.mkdir(parents=True, exist_ok=True)
 
     print(f"[parallel-ingest] {vcf_path}")
@@ -269,8 +259,7 @@ def ingest_parallel(
         "samples",
         SAMPLES_ARROW_SCHEMA,
         [
-            {"ingest_id": ingest_id, "sample_id": s,
-             "cohort": cohort, "sex": None}
+            {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
             for s in samples
         ],
     )
@@ -280,7 +269,6 @@ def ingest_parallel(
         for r in regions
     ]
 
-    # Parse phase — parallel.
     started_parse = time.time()
     total = 0
     with ProcessPoolExecutor(max_workers=workers) as pool:
@@ -293,7 +281,6 @@ def ingest_parallel(
                 )
     parse_elapsed = time.time() - started_parse
 
-    # Import phase — single bulk import via glob.
     started_import = time.time()
     sess.query(
         f"INSERT INTO variants "
@@ -308,13 +295,15 @@ def ingest_parallel(
     insert_via_parquet(
         "ingestions",
         INGESTIONS_ARROW_SCHEMA,
-        [{
-            "ingest_id": ingest_id,
-            "cohort": cohort,
-            "vcf_path": vcf_path,
-            "n_variants": total,
-            "n_samples": len(samples),
-        }],
+        [
+            {
+                "ingest_id": ingest_id,
+                "cohort": cohort,
+                "vcf_path": vcf_path,
+                "n_variants": total,
+                "n_samples": len(samples),
+            }
+        ],
     )
 
     if not keep_staging:
@@ -342,29 +331,40 @@ def main() -> None:
     ap.add_argument("--ingest-id", default=None)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument(
-        "--bucket-size", type=int, default=DEFAULT_BUCKET_SIZE,
+        "--bucket-size",
+        type=int,
+        default=DEFAULT_BUCKET_SIZE,
         help=f"Splitter position-bucket size (default {DEFAULT_BUCKET_SIZE:,} bp). "
-             f"Smaller = finer load balance, larger = cheaper pre-pass.",
+        f"Smaller = finer load balance, larger = cheaper pre-pass.",
     )
     ap.add_argument(
-        "--batch-size", type=int, default=BATCH_SIZE,
+        "--batch-size",
+        type=int,
+        default=BATCH_SIZE,
         help=f"Variants per worker Parquet batch (default {BATCH_SIZE:,}). "
-             f"Bounds per-worker memory.",
+        f"Bounds per-worker memory.",
     )
     ap.add_argument(
-        "--keep-staging", action="store_true",
+        "--keep-staging",
+        action="store_true",
         help="Keep the worker Parquet files for downstream use (they "
-             "ARE the export format).",
+        "ARE the export format).",
     )
     ap.add_argument(
-        "--staging-dir", default=None,
+        "--staging-dir",
+        default=None,
         help="Override staging directory (default: <DB>/staging/<ingest_id>/).",
     )
     args = ap.parse_args()
     ingest_parallel(
-        args.vcf_path, args.cohort, args.ingest_id,
-        args.workers, args.keep_staging, args.staging_dir,
-        args.bucket_size, args.batch_size,
+        args.vcf_path,
+        args.cohort,
+        args.ingest_id,
+        args.workers,
+        args.keep_staging,
+        args.staging_dir,
+        args.bucket_size,
+        args.batch_size,
     )
 
 

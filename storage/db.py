@@ -48,9 +48,7 @@ def get_session() -> _session.Session:
 _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
-def insert_via_parquet(
-    table: str, schema: pa.Schema, rows: list[dict]
-) -> None:
+def insert_via_parquet(table: str, schema: pa.Schema, rows: list[dict]) -> None:
     """Bulk-insert rows into a chDB table via a Parquet staging file.
 
     Uses the same Parquet-staging path the variants/genotypes loaders use,
@@ -68,24 +66,17 @@ def insert_via_parquet(
         raise ValueError(f"Unsafe table name: {table!r}")
 
     sess = get_session()
-    with tempfile.NamedTemporaryFile(
-        suffix=".parquet", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
         tmp_path = Path(f.name)
     try:
         arrays = [
             pa.array([r.get(field.name) for r in rows], type=field.type)
             for field in schema
         ]
-        pq.write_table(
-            pa.Table.from_arrays(arrays, schema=schema), tmp_path
-        )
+        pq.write_table(pa.Table.from_arrays(arrays, schema=schema), tmp_path)
         # tmp_path is from tempfile.NamedTemporaryFile — controlled, safe
         # to interpolate into SQL (no quotes, no shell metacharacters).
-        sess.query(
-            f"INSERT INTO {table} "
-            f"SELECT * FROM file('{tmp_path}', 'Parquet')"
-        )
+        sess.query(f"INSERT INTO {table} SELECT * FROM file('{tmp_path}', 'Parquet')")
     finally:
         tmp_path.unlink(missing_ok=True)
 

@@ -75,11 +75,14 @@ def export_all(out_dir: Path) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("table", nargs="?", help="Table name (variants/genotypes/samples/ingestions)")
+    ap.add_argument(
+        "table", nargs="?", help="Table name (variants/genotypes/samples/ingestions)"
+    )
     ap.add_argument("out_path", nargs="?", help="Output Parquet path")
     ap.add_argument("--where", default=None, help="Optional WHERE clause")
     ap.add_argument(
-        "--all", action="store_true",
+        "--all",
+        action="store_true",
         help="Export all tables to <out_path>/<table>.parquet",
     )
     args = ap.parse_args()

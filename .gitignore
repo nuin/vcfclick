@@ -40,3 +40,6 @@ data/*.parquet
 .idea/
 *.swp
 .DS_Store
+
+# Marketing/landing site — lives on disk, not in the OSS repo.
+web/
