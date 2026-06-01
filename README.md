@@ -40,7 +40,7 @@ vcfclick closes both:
 
 ```
 ┌────────────────────────────────────┐
-│  Tiny web UI (SvelteKit)           │   English in → SQL + result out
+│  Tiny web UI (separate repo)       │   English in → SQL + result out
 └────────────────┬───────────────────┘
                  │
 ┌────────────────▼───────────────────┐
@@ -189,7 +189,8 @@ contracts, consulting. No feature gating.
 ## Open work
 
 - VCF schema auto-discovery utility (`vcf-discover`).
-- Index-aware region splitter for parallel ingest.
-- RefSeq GFF + ClinVar VCF loaders under `annotations/loaders/`.
+- ClinVar VCF loader under `annotations/loaders/` (the GENCODE gene
+  loader is in; ClinVar significance lookup is still stubbed).
 - Phase 2: transcript / exon / CDS hierarchy + corresponding MCP tools.
-- Web UI (SvelteKit) — three-panel display: English / annotation steps / SQL.
+- End-to-end MCP integration test with a real LLM client — the
+  `SCHEMA_DESCRIPTION` prompt is theoretical until it's stress-tested.
