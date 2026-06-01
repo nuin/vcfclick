@@ -6,12 +6,12 @@ tiers. Academic, commercial, and clinical use are all permitted by the
 license itself.
 
 This is a deliberate choice. The project is built as a portfolio /
-distribution piece for [Genedrift](https://genedrift.org) — its job is
+distribution piece for [Bioinformat](#) — its job is
 to be technically credible and widely used, not to maximise per-seat
 revenue. Revenue, when it comes, comes from the operational side
 described below — not from gating features.
 
-## How Genedrift makes money around vcfclick
+## How Bioinformat makes money around vcfclick
 
 The OSS itself stays free. Three revenue surfaces sit *next to* it:
 
@@ -24,7 +24,7 @@ The OSS itself stays free. Three revenue surfaces sit *next to* it:
    contracts for research labs and bioinformatics companies that want
    to run vcfclick on their own infrastructure. Annual flat fee.
 
-3. **Consulting engagements** — Genedrift's existing line of work.
+3. **Consulting engagements** — Bioinformat's existing line of work.
    vcfclick as a portfolio piece draws inbound conversations; some of
    those become engagements that have nothing to do with vcfclick.
 
@@ -41,10 +41,10 @@ This is the next strategic decision before the first public commit.
   shared back. Protects against a competitor wrapping vcfclick as a
   closed SaaS. Some commercial users avoid AGPL on principle.
 - **BSL** — time-delayed conversion to a permissive license (e.g.,
-  Apache 2 after 3 years). Lets Genedrift restrict commercial
+  Apache 2 after 3 years). Lets Bioinformat restrict commercial
   competition during the active window without scaring research users
   for normal use. Pioneered by MariaDB, used by Sentry, CockroachDB.
 
-For a portfolio-first project with a Genedrift-operated hosted SaaS as
+For a portfolio-first project with a Bioinformat-operated hosted SaaS as
 the eventual revenue lane, BSL is the more aligned choice. Decide
 before first public commit.

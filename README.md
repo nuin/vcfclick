@@ -9,7 +9,7 @@ Single binary. `uv run vcfclick`. No Docker, no port, no server, no
 Gatekeeper dialog. The wedge demo runs from a clean `git clone`.
 
 Designed as a portfolio + distribution piece for
-[Genedrift](https://genedrift.org).
+[Bioinformat](#).
 
 Status: Phase 0 — architecture validated against real 1000 Genomes data.
 
@@ -183,7 +183,7 @@ reproduction commands: [`bench/BENCHMARK.md`](bench/BENCHMARK.md).
 
 Single open-source license, all features included. See
 [LICENSING.md](LICENSING.md) for the choice (AGPL vs BSL, TBD) and the
-Genedrift business model around the OSS — hosted SaaS, support
+Bioinformat business model around the OSS — hosted SaaS, support
 contracts, consulting. No feature gating.
 
 ## Open work
