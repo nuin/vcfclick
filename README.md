@@ -163,6 +163,22 @@ worker gets approximately equal work regardless of where the data
 actually lives along the chromosome. Sparse-table compression
 empirically 6.2% of dense theoretical max.
 
+## TileDB-VCF comparison
+
+End-to-end on the same 235k-variant / 3,202-sample workload, native
+arm64 (vcfclick) vs Rosetta-emulated linux/amd64 (TileDB-VCF Docker):
+
+| | vcfclick | TileDB-VCF |
+|---|---|---|
+| Source VCF format | joint VCF ingested directly | per-sample VCFs only ("Combined VCFs are currently not supported") |
+| Pre-processing | none | bcftools +split + tabix × 3,202 ≈ 8+ min |
+| Source VCF disk | 114 MB | 15.1 GB (132× inflation) |
+| Ingest, best stable config | **69 s** (parallel-8) | **~79 min** projected (single-thread, multi-thread failed) |
+| End-to-end | **~1 min** | **~87 min** |
+
+Full methodology, caveats (including the Rosetta penalty), and
+reproduction commands: [`bench/BENCHMARK.md`](bench/BENCHMARK.md).
+
 ## Licensing
 
 Single open-source license, all features included. See
