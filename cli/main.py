@@ -20,9 +20,16 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import tarfile
+import tempfile
+import urllib.request
 from pathlib import Path
 
 import click
+
+
+# Parquet files a vcfclick bundle is expected to contain.
+BUNDLE_TABLES = ("variants", "genotypes", "samples", "ingestions")
 
 
 # Reasonable default for `vcfclick db ingest`.
@@ -218,6 +225,115 @@ def db_path_cmd(name: str) -> None:
     """Print the on-disk path of a named database (no checks)."""
     from storage import db_path
     click.echo(db_path(name))
+
+
+# ─── push ───────────────────────────────────────────────────────────
+
+@db.command(name="push")
+@click.argument("name")
+@click.argument("out_path", type=click.Path(dir_okay=False))
+def db_push(name: str, out_path: str) -> None:
+    """Dump a database and bundle it as a portable tar.gz file.
+
+    The bundle is a flat archive of variants.parquet, genotypes.parquet,
+    samples.parquet, ingestions.parquet — exactly what `db pull` consumes.
+    Upload the resulting file anywhere (S3, HTTPS, scp, USB) and the
+    receiver runs `vcfclick db pull <name> <url|path>` to restore it.
+    """
+    from storage import db_path, get_session
+    from export.parquet import export_all
+
+    if not db_path(name).exists():
+        raise click.ClickException(f"db {name!r} not found")
+
+    out = Path(out_path).resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    _set_db(name)
+    get_session(name)
+
+    with tempfile.TemporaryDirectory(prefix="vcfclick_push_") as tmp:
+        tmp_dir = Path(tmp)
+        export_all(tmp_dir)
+        with tarfile.open(out, "w:gz") as tar:
+            for f in sorted(tmp_dir.iterdir()):
+                tar.add(f, arcname=f.name)
+
+    size_mb = out.stat().st_size / 1_000_000
+    click.echo(f"\npushed   {name}  →  {out}  ({size_mb:.1f} MB)")
+
+
+# ─── pull ───────────────────────────────────────────────────────────
+
+@db.command(name="pull")
+@click.argument("name")
+@click.argument("source")
+def db_pull(name: str, source: str) -> None:
+    """Restore a database from a tar.gz bundle (HTTPS URL or local file).
+
+    Creates a new named DB called <name>, applies the schema, and imports
+    each Parquet file in the bundle. Refuses to overwrite an existing
+    DB — run `vcfclick db rm <name>` first if you want to replace.
+
+    Source can be:
+      · an https://… or http://… URL (downloaded to a temp file)
+      · a local .tar.gz / .tgz path
+    """
+    from storage import apply_schema, db_path, get_session
+
+    target = db_path(name)
+    if target.exists() and any(target.iterdir()):
+        raise click.ClickException(
+            f"db {name!r} already exists at {target}. "
+            f"Run `vcfclick db rm {name}` first."
+        )
+
+    with tempfile.TemporaryDirectory(prefix="vcfclick_pull_") as tmp:
+        tmp_dir = Path(tmp)
+
+        # Acquire the tarball.
+        if source.startswith(("http://", "https://")):
+            tarball = tmp_dir / "bundle.tar.gz"
+            click.echo(f"downloading  {source}")
+            urllib.request.urlretrieve(source, tarball)
+        else:
+            tarball = Path(source).expanduser().resolve()
+            if not tarball.exists():
+                raise click.ClickException(f"{tarball} not found")
+
+        # Extract with the safest standard filter (Python 3.12+).
+        extract_dir = tmp_dir / "extract"
+        extract_dir.mkdir()
+        with tarfile.open(tarball, "r:gz") as tar:
+            tar.extractall(extract_dir, filter="data")
+
+        parquets = list(extract_dir.rglob("*.parquet"))
+        if not parquets:
+            raise click.ClickException("no parquet files in bundle")
+
+        # Create the target DB and apply the schema.
+        _set_db(name)
+        sess = get_session(name)
+        apply_schema()
+
+        # Import each table by basename.
+        for table in BUNDLE_TABLES:
+            match = next((p for p in parquets if p.stem == table), None)
+            if match is None:
+                click.echo(f"  (no {table}.parquet in bundle, skipping)")
+                continue
+            sess.query(
+                f"INSERT INTO {table} SELECT * FROM file('{match}', 'Parquet')"
+            )
+            count = (
+                sess.query(f"SELECT count() FROM {table}", "CSV")
+                .bytes()
+                .decode()
+                .strip()
+            )
+            click.echo(f"  imported  {table:11s}  {count:>12s} rows")
+
+    click.echo(f"\npulled   {name}  ←  {source}")
 
 
 if __name__ == "__main__":

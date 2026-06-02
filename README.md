@@ -98,6 +98,12 @@ vcfclick db query my-cohort "SELECT count() FROM variants"
 # Snowflake, BigQuery, Spark, Iceberg)
 vcfclick db dump my-cohort --out my-cohort-export/
 
+# Bundle a database as a single tar.gz for sharing
+vcfclick db push my-cohort /path/to/my-cohort.tar.gz
+
+# Restore from a bundle — local file or HTTPS URL
+vcfclick db pull other-cohort https://example.com/other-cohort.tar.gz
+
 # List, remove
 vcfclick db list
 vcfclick db rm my-cohort
