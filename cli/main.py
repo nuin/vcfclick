@@ -317,13 +317,47 @@ def db_pull(name: str, source: str) -> None:
         apply_schema()
 
         # Import each table by basename.
+        #
+        # SAFETY: the path interpolated into `INSERT ... FROM file('{p}')`
+        # MUST be fully controlled by this code; a single quote in the
+        # filename would break out of the SQL string literal. Two layers
+        # of defence:
+        #   1. resolve() + is_relative_to() rejects anything pointing
+        #      outside extract_dir (defence-in-depth even though
+        #      extractall(filter='data') already prevents path
+        #      traversal).
+        #   2. rename to a canonical `<table>.parquet` under extract_dir
+        #      before referencing in SQL — extract_dir is a tempfile
+        #      (no quotes/control chars), <table> is from BUNDLE_TABLES
+        #      (hardcoded literals), so the resulting path is guaranteed
+        #      to be SQL-safe.
+        extract_root = extract_dir.resolve()
         for table in BUNDLE_TABLES:
             match = next((p for p in parquets if p.stem == table), None)
             if match is None:
                 click.echo(f"  (no {table}.parquet in bundle, skipping)")
                 continue
+
+            resolved = match.resolve()
+            if not resolved.is_relative_to(extract_root):
+                raise click.ClickException(
+                    f"refusing to import {match}: resolves outside the "
+                    f"extraction directory"
+                )
+
+            safe_path = extract_dir / f"{table}.parquet"
+            if match != safe_path:
+                match.rename(safe_path)
+
+            # Triple-belt: rename + extract_root check above already make
+            # `safe_path` SQL-safe (tempfile dirs cannot contain quotes on
+            # any supported OS). The SQL-standard quote-doubling here is
+            # defensive against a future regression that might point
+            # tempfile at a user-controlled location.
+            sql_path = str(safe_path).replace("'", "''")
             sess.query(
-                f"INSERT INTO {table} SELECT * FROM file('{match}', 'Parquet')"
+                f"INSERT INTO {table} "
+                f"SELECT * FROM file('{sql_path}', 'Parquet')"
             )
             count = (
                 sess.query(f"SELECT count() FROM {table}", "CSV")
