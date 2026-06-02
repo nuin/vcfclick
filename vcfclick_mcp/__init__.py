@@ -1,0 +1,1 @@
+"""vcfclick MCP server."""

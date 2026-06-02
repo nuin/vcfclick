@@ -143,7 +143,9 @@ exports as a side effect of ingestion.
 - `export/parquet.py` — table → Parquet export CLI.
 - `annotations/db.py` — DuckDB annotation API (gene, ClinVar).
 - `annotations/transcripts.py` — transcript/exon/CDS API stubs (Phase 2).
-- `mcp/server.py` — MCP server (chDB + DuckDB tool surface).
+- `vcfclick_mcp/server.py` — MCP server (chDB + DuckDB tool surface).
+  Renamed from `mcp/` so the directory does not shadow the upstream
+  `mcp` Python SDK.
 - `data/` — VCF inputs (gitignored).
 
 ## Validated against real data
