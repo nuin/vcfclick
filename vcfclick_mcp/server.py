@@ -87,8 +87,21 @@ clin_sig columns in chDB — they do not exist there.
 
 2. DEFAULT QUALITY FILTER: every query against `genotypes` includes
        AND gq >= 20 AND dp >= 10
-   unless the user explicitly overrides. Sensible defaults for
-   germline calls; the user can ask for raw counts at any time.
+   unless the user explicitly overrides. Sensible defaults for germline
+   calls.
+
+   IMPORTANT: NULL silently fails the comparison, so if `gq` or `dp` is
+   NULL for every row in the result set (common in phased / joint-call
+   public releases like 1000 Genomes Phase 3, which ship genotype-only),
+   the filter silently drops everything and returns 0.
+
+   Always validate a "0" or suspiciously low filtered result by running
+   the same query without the quality filter. If the raw count is high
+   and the filtered count is 0, the dataset does not carry per-sample
+   GQ/DP and you should report both numbers, explain why, and ask the
+   user whether they want raw counts or a different quality gate (e.g.
+   `ft = 'PASS'` if FT is populated, or `ad_alt / (ad_ref + ad_alt)` for
+   allele-balance filtering).
 
 3. COUNTING SAMPLES: always COUNT(DISTINCT (ingest_id, sample_id)).
 
