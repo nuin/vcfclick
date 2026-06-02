@@ -1,7 +1,39 @@
 [project]
 name = "vcfclick"
 version = "0.1.0"
+description = "Small VCF databases. One per cohort. Embedded ClickHouse engine, embedded DuckDB annotations, MCP natural-language layer."
+readme = "README.md"
 requires-python = ">=3.11"
+authors = [
+    { name = "nuin", email = "nuin@genedrift.org" },
+]
+keywords = [
+    "vcf",
+    "bioinformatics",
+    "genomics",
+    "clickhouse",
+    "duckdb",
+    "embedded-database",
+    "mcp",
+    "model-context-protocol",
+    "natural-language-sql",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    "Intended Audience :: Developers",
+    "Topic :: Scientific/Engineering :: Bio-Informatics",
+    "Topic :: Database",
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "License :: Other/Proprietary License",
+]
 dependencies = [
     "cyvcf2>=0.31.0",
     "chdb>=4.1.8",
@@ -10,6 +42,12 @@ dependencies = [
     "mcp>=1.0.0",
     "click>=8.1.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/nuin/vcfclick"
+Repository = "https://github.com/nuin/vcfclick"
+Issues = "https://github.com/nuin/vcfclick/issues"
+Benchmark = "https://github.com/nuin/vcfclick/blob/main/bench/BENCHMARK.md"
 
 [project.scripts]
 vcfclick = "cli.main:cli"
@@ -27,4 +65,19 @@ packages = [
     "schema",
     "storage",
     "vcfclick_mcp",
+]
+
+[tool.hatch.build.targets.sdist]
+include = [
+    "annotations",
+    "cli",
+    "export",
+    "ingest",
+    "schema",
+    "storage",
+    "vcfclick_mcp",
+    "bench/BENCHMARK.md",
+    "LICENSING.md",
+    "README.md",
+    "pyproject.toml",
 ]

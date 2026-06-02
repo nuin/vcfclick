@@ -72,7 +72,33 @@ The MCP server composes across them at query time. Annotation lookups
 happen first (DuckDB), then their results parameterise the sample
 query (chDB). The chain of reasoning is visible in the UI.
 
-## Using vcfclick
+## Installation
+
+```bash
+pip install vcfclick
+```
+
+That installs the `vcfclick` CLI and the underlying engine. macOS
+arm64 + Linux x86_64 wheels are published on PyPI; other platforms
+build from source (you need `htslib` headers for `cyvcf2`).
+
+## 30-second demo
+
+A pre-built 1000 Genomes Phase 3 BRCA1 cohort (3,014 variants × 3,202
+samples) ships as a release asset. Three commands from a clean machine:
+
+```bash
+pip install vcfclick
+
+vcfclick db pull demo \
+    https://github.com/nuin/vcfclick/releases/download/v0.1.0/1000g-brca1-demo.tar.gz
+
+vcfclick db query demo \
+    "SELECT count(DISTINCT (ingest_id, sample_id)) FROM genotypes
+     WHERE chrom='chr17' AND pos BETWEEN 43044295 AND 43170245"
+```
+
+## Using vcfclick on your own data
 
 Each cohort / study / VCF lives in its own small database under
 `~/.vcfclick/dbs/<name>/`. The `vcfclick` CLI manages them.
