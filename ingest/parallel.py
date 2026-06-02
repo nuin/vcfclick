@@ -59,7 +59,7 @@ from ingest.vcf_load import (
     build_variant_row,
     classify_header,
 )
-from storage import DB_PATH, apply_schema, get_session, insert_via_parquet
+from storage import apply_schema, db_path, get_session, insert_via_parquet
 
 DEFAULT_BUCKET_SIZE = 100_000  # 100Kb position buckets for the splitter
 SPARSE_CONTIG_THRESHOLD = 1_000  # skip splitting if a contig has fewer
@@ -218,7 +218,7 @@ def ingest_parallel(
     extra_format_fields = classification["extra_format"]
     samples = list(vcf.samples)
 
-    staging = Path(staging_dir) if staging_dir else DB_PATH / "staging" / ingest_id
+    staging = Path(staging_dir) if staging_dir else db_path() / "staging" / ingest_id
     staging.mkdir(parents=True, exist_ok=True)
 
     print(f"[parallel-ingest] {vcf_path}")

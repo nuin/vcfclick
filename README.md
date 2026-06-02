@@ -72,66 +72,94 @@ The MCP server composes across them at query time. Annotation lookups
 happen first (DuckDB), then their results parameterise the sample
 query (chDB). The chain of reasoning is visible in the UI.
 
-## Ingestion
+## Using vcfclick
+
+Each cohort / study / VCF lives in its own small database under
+`~/.vcfclick/dbs/<name>/`. The `vcfclick` CLI manages them.
 
 ```bash
-# 1. Normalise multi-allelic sites (one-time per VCF)
+# Normalise the VCF (one-time per file)
 bcftools norm -m - input.vcf.gz | bgzip > normalised.vcf.gz
 
-# 2. Load
-uv run python -m ingest.vcf_load normalised.vcf.gz \
-    --cohort demo \
-    --ingest-id batch_2026Q2_a
+# Create a database for this cohort
+vcfclick db create my-cohort
+
+# Ingest the VCF into it
+vcfclick db ingest my-cohort normalised.vcf.gz \
+    --cohort demo --ingest-id batch_a
+
+# Inspect what's in it
+vcfclick db info my-cohort
+
+# Run SQL directly
+vcfclick db query my-cohort "SELECT count() FROM variants"
+
+# Export the whole database as Parquet (interop with DuckDB,
+# Snowflake, BigQuery, Spark, Iceberg)
+vcfclick db dump my-cohort --out my-cohort-export/
+
+# List, remove
+vcfclick db list
+vcfclick db rm my-cohort
 ```
+
+Each database is a self-contained chDB session — the on-disk format is
+byte-identical to a full ClickHouse server. Multiple databases sit side
+by side; each is cheap to create, dump, share, or delete.
 
 The ingester prints a classification of the VCF's INFO/FORMAT fields
 on startup — what landed in typed columns vs. the overflow Maps. That
 log line is the "adapts to any VCF" claim made literally visible.
 
-**Per-ingestion identity.** Every row carries `ingest_id`. Rows are
-NOT merged across uploads — the same `(chrom, pos, ref, alt)` observed
-in two different VCFs is two rows, because annotations and QC origin
-can differ. Re-running with the same `--ingest-id` is idempotent
-(silently replaces prior rows via `ReplacingMergeTree`). Using a new
-`--ingest-id` appends.
+**Per-ingestion identity inside a database.** Every row carries
+`ingest_id`. Rows are NOT merged across uploads — the same
+`(chrom, pos, ref, alt)` observed in two different VCFs is two rows,
+because annotations and QC origin can differ. Re-running with the same
+`--ingest-id` is idempotent (silently replaces prior rows via
+`ReplacingMergeTree`). Using a new `--ingest-id` appends.
 
-### Parallel ingest
+**Parallel ingestion** is the default; pass `--serial` to force the
+single-process loader. The parallel splitter does a single-pass count
+of variants per 100Kb position bucket via the tabix `.tbi` index (~1 ms)
+and greedy-splits each contig into ranges of approximately equal
+variant count — so dense subregions (gene panels, exomes) don't leave
+N–1 workers idle.
 
-```bash
-uv run python -m ingest.parallel normalised.vcf.gz \
-    --cohort demo --ingest-id batch --workers 4
+### Pointing the MCP server at a specific database
+
+In your Claude Desktop / MCP-client config, set `VCFCLICK_DB_NAME` to
+the database you want the LLM to talk to:
+
+```jsonc
+"vcfclick": {
+  "command": "/path/to/vcfclick/.venv/bin/python",
+  "args": ["-m", "vcfclick_mcp.server"],
+  "cwd": "/path/to/vcfclick",
+  "env": {
+    "PYTHONPATH": "/path/to/vcfclick",
+    "VCFCLICK_DB_NAME": "my-cohort"
+  }
+}
 ```
 
-Workers parse VCF regions in parallel, write Parquet to staging,
-main process bulk-imports via
-`INSERT INTO ... SELECT * FROM file('staging/*.parquet')`.
-Use `--keep-staging` to retain the worker Parquet files as exports.
+Register multiple `vcfclick-<dbname>` entries if you want the LLM to be
+able to switch between cohorts in a single Claude Desktop session.
 
-The splitter does a single-pass count of variants per 100Kb position
-bucket and greedy-splits each contig into ranges of approximately
-equal variant count — so dense subregions (gene panels, exomes)
-don't leave N-1 workers idle. Workers flush Parquet in batches
-during parsing, keeping per-worker memory bounded.
+### Legacy Python-module entry points
 
-## Export
-
-Parquet is the open-format export — usable from DuckDB, Snowflake,
-BigQuery, Spark, or as the storage layer for an Iceberg table:
+The pre-CLI module commands still work for scripted use:
 
 ```bash
-# Single table
+# Single database at ./.chdb/  (no CLI involvement)
+uv run python -m ingest.parallel normalised.vcf.gz \
+    --cohort demo --ingest-id batch --workers 4
+
 uv run python -m export.parquet variants /path/out.parquet
-
-# With a filter
-uv run python -m export.parquet variants /path/brca1.parquet \
-    --where "chrom='chr17' AND pos BETWEEN 43044295 AND 43125483"
-
-# Everything
 uv run python -m export.parquet --all /path/output_dir/
 ```
 
-The parallel ingester's `--keep-staging` flag gives you Parquet
-exports as a side effect of ingestion.
+These ingest into / read from `./.chdb/` (or `VCFCLICK_DB`-pointed
+directory) and ignore the named-DB layout.
 
 ## Layout
 

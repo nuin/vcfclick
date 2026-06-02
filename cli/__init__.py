@@ -1,0 +1,1 @@
+"""vcfclick command-line interface."""
