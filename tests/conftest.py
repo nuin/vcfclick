@@ -36,3 +36,19 @@ def tiny_vcf() -> Path:
     assert p.exists(), f"missing fixture: {p}"
     assert (FIXTURES / "tiny.vcf.gz.tbi").exists(), "missing tabix index"
     return p
+
+
+@pytest.fixture
+def isolated_annotation_db(tmp_path, monkeypatch) -> Path:
+    """Redirect annotations.db.DUCKDB_PATH to a temp file per test so
+    the ClinVar loader / position_for_gene / clinvar_lookup tests
+    cannot touch the user's real annotations/annotations.duckdb.
+
+    get_connection() reads DUCKDB_PATH at call time, so patching the
+    module attribute is enough — no reload needed.
+    """
+    import annotations.db as adb
+
+    path = tmp_path / "test_annotations.duckdb"
+    monkeypatch.setattr(adb, "DUCKDB_PATH", path)
+    return path

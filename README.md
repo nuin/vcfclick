@@ -276,5 +276,8 @@ Apache License 2.0. Full text in [`LICENSE`](LICENSE); rationale in
 ## Open work
 
 - Phase 2: transcript / exon / CDS hierarchy + corresponding MCP tools.
-- End-to-end MCP integration test with a real LLM client — the
-  `SCHEMA_DESCRIPTION` prompt is theoretical until it's stress-tested.
+- LLM-prompt stress-testing of `SCHEMA_DESCRIPTION` against a real
+  client. The MCP transport + tool wiring is covered by
+  `tests/test_mcp_server.py`; whether the prompt actually steers a
+  model away from common mistakes (NULL GQ/DP traps, sparse-table
+  joins) needs real LLM runs to confirm.

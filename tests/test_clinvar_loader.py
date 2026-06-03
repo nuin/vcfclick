@@ -11,25 +11,15 @@ user's real annotations/annotations.duckdb.
 
 from __future__ import annotations
 
-import os
 import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 CLINVAR_FIXTURE = Path(__file__).parent / "fixtures" / "clinvar_mini.vcf.gz"
-
-
-@pytest.fixture
-def isolated_annotation_db(tmp_path, monkeypatch):
-    """Redirect annotations.db.DUCKDB_PATH to a temp file per test."""
-    import annotations.db as adb
-
-    monkeypatch.setattr(adb, "DUCKDB_PATH", tmp_path / "test_annotations.duckdb")
-    yield tmp_path / "test_annotations.duckdb"
+# isolated_annotation_db fixture moved to conftest.py — reused by the
+# MCP server tests as well.
 
 
 def test_load_counts_decomposed_alleles(isolated_annotation_db):
@@ -47,9 +37,11 @@ def test_contigs_normalised_to_chr_prefix(isolated_annotation_db):
     from annotations.loaders.clinvar import load
 
     load(CLINVAR_FIXTURE)
-    rows = get_connection().execute(
-        "SELECT DISTINCT chrom FROM clinvar_variants ORDER BY chrom"
-    ).fetchall()
+    rows = (
+        get_connection()
+        .execute("SELECT DISTINCT chrom FROM clinvar_variants ORDER BY chrom")
+        .fetchall()
+    )
     contigs = {r[0] for r in rows}
     assert contigs == {"chr17", "chrM"}
 
@@ -94,9 +86,11 @@ def test_alt_dot_record_is_skipped(isolated_annotation_db):
     # The pos 43044500 record had ALT='.' — no row in either form should exist.
     assert clinvar_lookup("chr17", 43044500, "A", ".") is None
     assert clinvar_lookup("chr17", 43044500, "A", "") is None
-    rows = get_connection().execute(
-        "SELECT count() FROM clinvar_variants WHERE pos = 43044500"
-    ).fetchone()
+    rows = (
+        get_connection()
+        .execute("SELECT count() FROM clinvar_variants WHERE pos = 43044500")
+        .fetchone()
+    )
     assert rows[0] == 0
 
 
