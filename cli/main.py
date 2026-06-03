@@ -76,6 +76,7 @@ import importlib  # noqa: E402
 
 importlib.import_module("cli.db")
 importlib.import_module("cli.annotations")
+importlib.import_module("cli.discover")
 
 
 if __name__ == "__main__":

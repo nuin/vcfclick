@@ -110,6 +110,10 @@ Each cohort / study / VCF lives in its own small database under
 # Normalise the VCF (one-time per file)
 bcftools norm -m - input.vcf.gz | bgzip > normalised.vcf.gz
 
+# Preview which INFO/FORMAT fields will land in typed columns vs the
+# overflow Maps — and what DDL would promote an overflow field to typed
+vcfclick discover normalised.vcf.gz
+
 # Create a database for this cohort
 vcfclick db create my-cohort
 
@@ -244,7 +248,6 @@ Apache License 2.0. Full text in [`LICENSE`](LICENSE); rationale in
 
 ## Open work
 
-- VCF schema auto-discovery utility (`vcf-discover`).
 - ClinVar VCF loader under `annotations/loaders/` (the GENCODE gene
   loader is in; ClinVar significance lookup is still stubbed).
 - Phase 2: transcript / exon / CDS hierarchy + corresponding MCP tools.
