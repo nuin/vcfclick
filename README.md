@@ -78,9 +78,12 @@ query (chDB). The chain of reasoning is visible in the UI.
 pip install vcfclick
 ```
 
-That installs the `vcfclick` CLI and the underlying engine. macOS
-arm64 + Linux x86_64 wheels are published on PyPI; other platforms
-build from source (you need `htslib` headers for `cyvcf2`).
+That installs the `vcfclick` CLI and the underlying engine. vcfclick
+itself is pure-Python; its dependencies (`cyvcf2`, `chdb`) ship as
+prebuilt wheels for macOS arm64 and Linux x86_64. Other platforms build
+from source — `cyvcf2` needs `htslib` headers available on `PATH`.
+
+Listing: <https://pypi.org/project/vcfclick/>.
 
 ## 30-second demo
 
