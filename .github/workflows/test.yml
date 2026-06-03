@@ -26,18 +26,29 @@ jobs:
         # 3.11 is our floor (requires-python in pyproject); 3.13 is the
         # current stable. 3.12 is the middle ground most users have.
         python-version: ["3.11", "3.12", "3.13"]
+        exclude:
+          # chDB 4.x hits `recursive_mutex lock failed: Invalid argument`
+          # during EmbeddedServer init under Python 3.13 on Linux —
+          # reproducible upstream, not a vcfclick bug. Re-enable when
+          # chDB ships a fix.
+          - os: ubuntu-latest
+            python-version: "3.13"
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Install bgzip + tabix (htslib utilities)
-        # cyvcf2 ships its own htslib, but our smoke-test path uses the
-        # `bgzip` / `tabix` binaries via subprocess. Install via apt
-        # on Linux, brew (preinstalled) on macOS.
+        # cyvcf2 ships its own htslib, but smoke tests + the routing
+        # fixture build use the `bgzip` / `tabix` binaries via
+        # subprocess. Linux: apt's `tabix` package brings bgzip with
+        # it. macOS-14 runners do NOT preinstall htslib — install via
+        # brew.
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq
             sudo apt-get install -y --no-install-recommends tabix
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install htslib
           fi
           which bgzip
           which tabix
