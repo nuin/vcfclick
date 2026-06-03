@@ -21,7 +21,6 @@ Pre-requisite: multi-allelic sites decomposed via
 
 from __future__ import annotations
 
-import argparse
 import tempfile
 import time
 import uuid
@@ -393,18 +392,5 @@ def ingest(
     return ingest_id
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("vcf_path", help="Normalised VCF/BCF (.vcf.gz, .bcf)")
-    ap.add_argument("--cohort", required=True)
-    ap.add_argument(
-        "--ingest-id",
-        default=None,
-        help="Upload identifier (UUID4 if omitted). Reuse to replace prior data.",
-    )
-    args = ap.parse_args()
-    ingest(args.vcf_path, args.cohort, args.ingest_id)
-
-
-if __name__ == "__main__":
-    main()
+# Library module — invoke via `vcfclick db ingest <name> <vcf> --serial`.
+# The public CLI lives in cli/main.py.

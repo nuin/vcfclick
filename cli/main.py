@@ -227,6 +227,42 @@ def db_path_cmd(name: str) -> None:
     click.echo(db_path(name))
 
 
+# ─── annotations group ─────────────────────────────────────────────
+
+@cli.group()
+def annotations() -> None:
+    """Manage the embedded annotation reference store (DuckDB).
+
+    Annotations are reference data shared across all named databases:
+    gene coordinates today (GENCODE), transcript / exon / CDS depth and
+    ClinVar in Phase 2. They live at `annotations/annotations.duckdb`
+    inside the installed package directory.
+    """
+
+
+@annotations.command(name="load")
+@click.option(
+    "--gff", type=click.Path(exists=True, dir_okay=False), default=None,
+    help="Local GENCODE GFF3 (.gff3 or .gff3.gz). Downloads v45 from EBI if omitted.",
+)
+@click.option(
+    "--keep-existing", is_flag=True,
+    help="Don't truncate refseq_genes before loading (default: replace).",
+)
+def annotations_load(gff: str | None, keep_existing: bool) -> None:
+    """Populate the gene-coordinates table from a GENCODE GFF3.
+
+    Required once after `pip install vcfclick` for the MCP server's
+    `position_for_gene` tool to resolve symbols → coordinates. Re-run
+    when GENCODE releases a new annotation version (yearly-ish).
+    """
+    from annotations.loaders.gencode_genes import load
+    from pathlib import Path as _Path
+
+    n = load(_Path(gff) if gff else None, replace=not keep_existing)
+    click.echo(f"\nloaded   {n:,} genes into the annotation store")
+
+
 # ─── push ───────────────────────────────────────────────────────────
 
 @db.command(name="push")

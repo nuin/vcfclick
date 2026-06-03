@@ -16,7 +16,6 @@ Multiple tables in one call:
 
 from __future__ import annotations
 
-import argparse
 import tempfile
 from pathlib import Path
 
@@ -33,10 +32,11 @@ def export_table(table: str, out_path: Path, where: str | None = None) -> None:
       - `table` is checked against an allowlist (above).
       - `out_path` is NEVER interpolated into the SQL. chDB writes to
         a tempfile under our control, then we atomic-move to out_path.
-      - `where` IS interpolated. It's a CLI argument provided by the
-        operator and treated as trusted SQL fragment input. Do NOT
-        expose this entry point to untrusted callers (HTTP, etc.)
-        without first switching to a parameterised query builder.
+      - `where` IS interpolated. It is treated as a trusted SQL
+        fragment passed in by the local operator (via `vcfclick db dump
+        --where ...`). Do NOT expose this entry point to untrusted
+        callers (HTTP, etc.) without first switching to a parameterised
+        query builder.
     """
     if table not in TABLES:
         raise ValueError(f"Unknown table {table}; expected one of {TABLES}")
@@ -73,29 +73,5 @@ def export_all(out_dir: Path) -> None:
         export_table(t, out_dir / f"{t}.parquet")
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument(
-        "table", nargs="?", help="Table name (variants/genotypes/samples/ingestions)"
-    )
-    ap.add_argument("out_path", nargs="?", help="Output Parquet path")
-    ap.add_argument("--where", default=None, help="Optional WHERE clause")
-    ap.add_argument(
-        "--all",
-        action="store_true",
-        help="Export all tables to <out_path>/<table>.parquet",
-    )
-    args = ap.parse_args()
-
-    if args.all:
-        if not args.table:
-            ap.error("--all requires a directory argument")
-        export_all(Path(args.table))
-    else:
-        if not args.table or not args.out_path:
-            ap.error("table and out_path required (or use --all <dir>)")
-        export_table(args.table, Path(args.out_path), args.where)
-
-
-if __name__ == "__main__":
-    main()
+# Library module — invoke via `vcfclick db dump <name>`.
+# The public CLI lives in cli/main.py.

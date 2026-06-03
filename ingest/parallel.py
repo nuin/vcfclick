@@ -37,7 +37,6 @@ retains them for downstream DuckDB / Snowflake / Spark / Iceberg use.
 
 from __future__ import annotations
 
-import argparse
 import shutil
 import time
 import uuid
@@ -324,49 +323,5 @@ def ingest_parallel(
     return ingest_id
 
 
-def main() -> None:
-    ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("vcf_path")
-    ap.add_argument("--cohort", required=True)
-    ap.add_argument("--ingest-id", default=None)
-    ap.add_argument("--workers", type=int, default=4)
-    ap.add_argument(
-        "--bucket-size",
-        type=int,
-        default=DEFAULT_BUCKET_SIZE,
-        help=f"Splitter position-bucket size (default {DEFAULT_BUCKET_SIZE:,} bp). "
-        f"Smaller = finer load balance, larger = cheaper pre-pass.",
-    )
-    ap.add_argument(
-        "--batch-size",
-        type=int,
-        default=BATCH_SIZE,
-        help=f"Variants per worker Parquet batch (default {BATCH_SIZE:,}). "
-        f"Bounds per-worker memory.",
-    )
-    ap.add_argument(
-        "--keep-staging",
-        action="store_true",
-        help="Keep the worker Parquet files for downstream use (they "
-        "ARE the export format).",
-    )
-    ap.add_argument(
-        "--staging-dir",
-        default=None,
-        help="Override staging directory (default: <DB>/staging/<ingest_id>/).",
-    )
-    args = ap.parse_args()
-    ingest_parallel(
-        args.vcf_path,
-        args.cohort,
-        args.ingest_id,
-        args.workers,
-        args.keep_staging,
-        args.staging_dir,
-        args.bucket_size,
-        args.batch_size,
-    )
-
-
-if __name__ == "__main__":
-    main()
+# Library module — invoke via `vcfclick db ingest <name> <vcf>`.
+# The public CLI lives in cli/main.py.

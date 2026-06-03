@@ -180,21 +180,17 @@ the database you want the LLM to talk to:
 Register multiple `vcfclick-<dbname>` entries if you want the LLM to be
 able to switch between cohorts in a single Claude Desktop session.
 
-### Legacy Python-module entry points
+### Annotation reference store
 
-The pre-CLI module commands still work for scripted use:
+The MCP server's `position_for_gene` tool needs a populated GENCODE
+gene table in the embedded DuckDB. After installing, load it once:
 
 ```bash
-# Single database at ./.chdb/  (no CLI involvement)
-uv run python -m ingest.parallel normalised.vcf.gz \
-    --cohort demo --ingest-id batch --workers 4
-
-uv run python -m export.parquet variants /path/out.parquet
-uv run python -m export.parquet --all /path/output_dir/
+vcfclick annotations load
 ```
 
-These ingest into / read from `./.chdb/` (or `VCFCLICK_DB`-pointed
-directory) and ignore the named-DB layout.
+That downloads GENCODE v45 (≈ 60 MB) and loads 61,578 genes. Re-run
+when GENCODE releases a new annotation (yearly-ish).
 
 ## Layout
 
