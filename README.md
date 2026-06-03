@@ -184,6 +184,11 @@ the database you want the LLM to talk to:
 Register multiple `vcfclick-<dbname>` entries if you want the LLM to be
 able to switch between cohorts in a single Claude Desktop session.
 
+Worked example with real SQL and real outputs: see
+[`examples/brca1-cohort.md`](examples/brca1-cohort.md) — five
+canonical questions against the demo bundle, the MCP tools the LLM
+calls for each, the SQL it generates, and verbatim chDB results.
+
 ### Annotation reference store
 
 The MCP server's annotation tools (`position_for_gene`, `gene_at`,
