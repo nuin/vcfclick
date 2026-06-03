@@ -145,6 +145,81 @@ def _stringify(value) -> str:
     return str(value)
 
 
+def _format_arr(variant, field):
+    """Read a FORMAT field as a per-sample array via cyvcf2, or None."""
+    try:
+        arr = variant.format(field)
+    except KeyError:
+        return None
+    return arr
+
+
+def _cell(arr, i):
+    """Extract sample `i`'s value from a FORMAT array, unwrapping (n,1) shapes."""
+    v = arr[i]
+    if hasattr(v, "__len__") and not isinstance(v, (str, bytes)) and len(v) == 1:
+        v = v[0]
+    return v
+
+
+def _scalar_int(arr, i):
+    if arr is None:
+        return None
+    try:
+        v = int(_cell(arr, i))
+    except (IndexError, TypeError, ValueError):
+        return None
+    return v if v >= 0 else None
+
+
+def _pair_int(arr, i):
+    if arr is None:
+        return (None, None)
+    try:
+        v = arr[i]
+        if len(v) < 2:
+            return (None, None)
+        a, b = int(v[0]), int(v[1])
+    except (IndexError, TypeError, ValueError):
+        return (None, None)
+    return (a if a >= 0 else None, b if b >= 0 else None)
+
+
+def _triple_int(arr, i):
+    if arr is None:
+        return (None, None, None)
+    try:
+        v = arr[i]
+        if len(v) < 3:
+            return (None, None, None)
+        a, b, c = int(v[0]), int(v[1]), int(v[2])
+    except (IndexError, TypeError, ValueError):
+        return (None, None, None)
+    return (
+        a if a >= 0 else None,
+        b if b >= 0 else None,
+        c if c >= 0 else None,
+    )
+
+
+def _triple_float(arr, i):
+    if arr is None:
+        return (None, None, None)
+    try:
+        v = arr[i]
+        if len(v) < 3:
+            return (None, None, None)
+        a, b, c = float(v[0]), float(v[1]), float(v[2])
+    except (IndexError, TypeError, ValueError):
+        return (None, None, None)
+    # cyvcf2 uses NaN as the float-missing sentinel.
+    return (
+        None if a != a else a,
+        None if b != b else b,
+        None if c != c else c,
+    )
+
+
 def build_variant_row(variant, ingest_id: str) -> list:
     """One row for the variants table. Caller has verified len(ALT) == 1."""
     info = dict(variant.INFO)
@@ -195,17 +270,19 @@ def build_genotype_rows(
 ) -> list[list]:
     gt_types = variant.gt_types
     gt_phases = variant.gt_phases
-    gqs = variant.gt_quals
-    dps = variant.gt_depths
-    ad_refs = variant.gt_ref_depths
-    ad_alts = variant.gt_alt_depths
+
+    # Read every typed FORMAT field through variant.format(). The cyvcf2
+    # shortcuts (gt_quals/gt_depths/gt_ref_depths/gt_alt_depths) silently
+    # return -1 when the FORMAT column ordering varies between records in
+    # the same VCF — observed on the routing-test fixture, where a later
+    # record with `GT:GQ:DP` came after one with `GT:GQ:DP:AD:PL:...`.
+    scalar_arrs = {f: _format_arr(variant, f) for f in FORMAT_SCALAR}
+    pair_arrs = {f: _format_arr(variant, f) for f in FORMAT_PAIR}
+    triple_arrs = {f: _format_arr(variant, f) for f in FORMAT_TRIPLE}
 
     extra_arrays: dict[str, object] = {}
     for f in extra_format_fields:
-        try:
-            arr = variant.format(f)
-        except KeyError:
-            continue
+        arr = _format_arr(variant, f)
         if arr is not None:
             extra_arrays[f] = arr
 
@@ -225,22 +302,34 @@ def build_genotype_rows(
         row["gt"] = encoded
         row["phased"] = 1 if gt_phases[i] else 0
 
-        if gqs is not None:
-            v = gqs[i]
-            if v is not None and v >= 0:
-                row["gq"] = int(v)
-        if dps is not None:
-            v = dps[i]
-            if v is not None and v >= 0:
-                row["dp"] = int(v)
-        if ad_refs is not None:
-            v = ad_refs[i]
-            if v is not None and v >= 0:
-                row["ad_ref"] = int(v)
-        if ad_alts is not None:
-            v = ad_alts[i]
-            if v is not None and v >= 0:
-                row["ad_alt"] = int(v)
+        for src, col in FORMAT_SCALAR.items():
+            if col == "ft":
+                # ft is a string; handled below.
+                continue
+            row[col] = _scalar_int(scalar_arrs[src], i)
+
+        # ft: per-sample FILTER string. cyvcf2 returns it as ndarray of
+        # bytes or list of str; treat "." and "" as missing.
+        ft_arr = scalar_arrs.get("FT")
+        if ft_arr is not None:
+            try:
+                v = _cell(ft_arr, i)
+                if isinstance(v, bytes):
+                    v = v.decode()
+                s = str(v).strip() if v is not None else ""
+                if s and s != ".":
+                    row["ft"] = s
+            except (IndexError, TypeError):
+                pass
+
+        for src, (ref_col, alt_col) in FORMAT_PAIR.items():
+            row[ref_col], row[alt_col] = _pair_int(pair_arrs[src], i)
+
+        for src, (c1, c2, c3) in FORMAT_TRIPLE.items():
+            if src == "GL":
+                row[c1], row[c2], row[c3] = _triple_float(triple_arrs[src], i)
+            else:
+                row[c1], row[c2], row[c3] = _triple_int(triple_arrs[src], i)
 
         extra: dict[str, str] = {}
         for f, arr in extra_arrays.items():
