@@ -1,5 +1,8 @@
 # vcfclick
 
+[![test](https://github.com/nuin/vcfclick/actions/workflows/test.yml/badge.svg)](https://github.com/nuin/vcfclick/actions/workflows/test.yml)
+[![PyPI](https://img.shields.io/pypi/v/vcfclick.svg)](https://pypi.org/project/vcfclick/)
+
 A modern VCF database for research labs and bioinformatics teams.
 Embedded chDB (ClickHouse engine, no server) for sample data, embedded
 DuckDB for reference annotations, and a natural-language query layer
