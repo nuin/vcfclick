@@ -186,15 +186,23 @@ able to switch between cohorts in a single Claude Desktop session.
 
 ### Annotation reference store
 
-The MCP server's `position_for_gene` tool needs a populated GENCODE
-gene table in the embedded DuckDB. After installing, load it once:
+The MCP server's annotation tools (`position_for_gene`, `gene_at`,
+`clinvar_lookup`) read from the embedded DuckDB. Two one-time loads
+after installing:
 
 ```bash
+# Gene coordinates (GENCODE v45 — ~60 MB, ~61,000 genes).
+# Required for position_for_gene / gene_at.
 vcfclick annotations load
+
+# Pathogenic / benign variant calls (NCBI ClinVar weekly release —
+# ~80 MB compressed, ~3M variants). Required for clinvar_lookup.
+vcfclick annotations load-clinvar
 ```
 
-That downloads GENCODE v45 (≈ 60 MB) and loads 61,578 genes. Re-run
-when GENCODE releases a new annotation (yearly-ish).
+GENCODE updates yearly; ClinVar updates weekly. Re-run either command
+to refresh. Both default to downloading the canonical source; pass
+`--gff` or `--vcf` to load from a local file instead.
 
 ## Layout
 
@@ -248,8 +256,6 @@ Apache License 2.0. Full text in [`LICENSE`](LICENSE); rationale in
 
 ## Open work
 
-- ClinVar VCF loader under `annotations/loaders/` (the GENCODE gene
-  loader is in; ClinVar significance lookup is still stubbed).
 - Phase 2: transcript / exon / CDS hierarchy + corresponding MCP tools.
 - End-to-end MCP integration test with a real LLM client — the
   `SCHEMA_DESCRIPTION` prompt is theoretical until it's stress-tested.
