@@ -127,23 +127,22 @@ is the more direct fit.
 
 ## Reproducing this
 
-vcfclick numbers:
+vcfclick numbers — one script, downloads the slice once, runs all three
+configurations from a cold DB:
 
 ```bash
-git clone <repo>
+git clone https://github.com/nuin/vcfclick.git
 cd vcfclick
 uv sync
-# 1) download VCF slice
-mkdir -p data && cd data
-URL="http://ftp.1000genomes.ebi.ac.uk/vol1/ftp/data_collections/1000G_2504_high_coverage/working/20201028_3202_phased/CCDG_14151_B01_GRM_WGS_2020-08-05_chr17.filtered.shapeit2-duohmm-phased.vcf.gz"
-tabix -h "$URL" chr17:40000000-50000000 | bgzip > chr17_40_50M.vcf.gz
-tabix -p vcf chr17_40_50M.vcf.gz
-cd ..
-# 2) ingest
-rm -rf .chdb
-uv run python -m ingest.parallel data/chr17_40_50M.vcf.gz \
-    --cohort bench --ingest-id par8 --workers 8
+./bench/run.sh                          # all three configs
+./bench/run.sh serial                   # one config only
+./bench/run.sh parallel-4 parallel-8    # subset
 ```
+
+The script caches the chr17:40-50M slice (~110 MB) under `bench/data/` on
+first run, then ingests it into an isolated `bench/.vcfclick/` (so your
+real `~/.vcfclick/dbs/` is never touched). The ingester's own
+`[ingest] done. N variants in X.Xs (Y/s)` line is the measurement.
 
 TileDB-VCF numbers:
 
