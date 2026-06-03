@@ -11,7 +11,7 @@ calls, scoped to BRCA1 (chr17:43,044,295-43,170,245).
 
 ```bash
 # Install + load reference annotations (one-time, ~5 min total).
-pip install vcfclick
+uv tool install vcfclick
 vcfclick annotations load            # GENCODE genes (~60 MB)
 vcfclick annotations load-clinvar    # ClinVar weekly VCF (~80 MB)
 

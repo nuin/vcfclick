@@ -75,13 +75,27 @@ query (chDB). The chain of reasoning is visible in the UI.
 ## Installation
 
 ```bash
-pip install vcfclick
+uv tool install vcfclick     # recommended for CLI use
+# or
+pipx install vcfclick
 ```
 
-That installs the `vcfclick` CLI and the underlying engine. vcfclick
-itself is pure-Python; its dependencies (`cyvcf2`, `chdb`) ship as
-prebuilt wheels for macOS arm64 and Linux x86_64. Other platforms build
-from source — `cyvcf2` needs `htslib` headers available on `PATH`.
+Both install an isolated environment behind the scenes and expose the
+`vcfclick` command on `$PATH`. Upgrade with `uv tool upgrade vcfclick`
+(or `pipx upgrade vcfclick`).
+
+If you're embedding vcfclick as a library inside your own Python
+project (e.g., importing `vcfclick_mcp.server`), use the project
+form instead:
+
+```bash
+pip install vcfclick         # inside your own venv
+```
+
+vcfclick is pure-Python; its native dependencies (`cyvcf2`, `chdb`,
+`duckdb`) ship as prebuilt wheels for macOS arm64 and Linux x86_64.
+Other platforms build from source — `cyvcf2` needs `htslib` headers
+on `$PATH`.
 
 Listing: <https://pypi.org/project/vcfclick/>.
 
@@ -91,7 +105,7 @@ A pre-built 1000 Genomes Phase 3 BRCA1 cohort (3,014 variants × 3,202
 samples) ships as a release asset. Three commands from a clean machine:
 
 ```bash
-pip install vcfclick
+uv tool install vcfclick
 
 vcfclick db pull demo \
     https://github.com/nuin/vcfclick/releases/download/v0.1.0/1000g-brca1-demo.tar.gz
