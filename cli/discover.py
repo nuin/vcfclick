@@ -20,7 +20,7 @@ import click
 from cyvcf2 import VCF
 
 from cli.main import cli
-from ingest.vcf_load import (
+from ingest.routing import (
     FORMAT_PAIR,
     FORMAT_SCALAR,
     FORMAT_TRIPLE,
@@ -117,7 +117,9 @@ def _print_section(
     click.echo(f"  typed   ({len(typed):>3}) → {container}.<typed columns>")
     if typed:
         click.echo(f"    {', '.join(typed)}")
-    click.echo(f"  overflow ({len(overflow):>3}) → {container}.{section_name.lower()}_extra Map")
+    click.echo(
+        f"  overflow ({len(overflow):>3}) → {container}.{section_name.lower()}_extra Map"
+    )
     if not overflow:
         click.echo()
         return 0
@@ -127,9 +129,13 @@ def _print_section(
         hint = _promotion_hint(vtype, number, prefix, fid)
         if hint:
             promotable += 1
-            click.echo(f"    {fid:25s} {vtype:8s} Number={number:<3s} → promote: {hint}")
+            click.echo(
+                f"    {fid:25s} {vtype:8s} Number={number:<3s} → promote: {hint}"
+            )
         else:
-            click.echo(f"    {fid:25s} {vtype:8s} Number={number:<3s}   (variable-length / unknown — keep in Map)")
+            click.echo(
+                f"    {fid:25s} {vtype:8s} Number={number:<3s}   (variable-length / unknown — keep in Map)"
+            )
         if desc:
             short = desc if len(desc) <= 80 else desc[:77] + "..."
             click.echo(f"      └ {short}")
@@ -155,7 +161,9 @@ def discover(vcf_path: str) -> None:
         "INFO", "variants", info_typed_ids, info_fields, prefix="info_"
     )
 
-    format_typed_ids = {"GT"} | set(FORMAT_SCALAR) | set(FORMAT_PAIR) | set(FORMAT_TRIPLE)
+    format_typed_ids = (
+        {"GT"} | set(FORMAT_SCALAR) | set(FORMAT_PAIR) | set(FORMAT_TRIPLE)
+    )
     format_fields = list(_iter_header(vcf, "FORMAT"))
     n_fmt_prom = _print_section(
         "FORMAT", "genotypes", format_typed_ids, format_fields, prefix=""
@@ -163,8 +171,14 @@ def discover(vcf_path: str) -> None:
 
     if n_info_prom + n_fmt_prom > 0:
         click.echo("To promote an overflow field to a typed column:")
-        click.echo("  1. Add the column(s) to schema/01_variants.sql or 02_genotypes.sql.")
-        click.echo("  2. Add a routing entry to ingest/vcf_load.py:")
+        click.echo(
+            "  1. Add the column(s) to schema/01_variants.sql or 02_genotypes.sql."
+        )
+        click.echo("  2. Add a routing entry to ingest/routing.py:")
         click.echo("       INFO_SCALAR['<FIELD>'] = 'info_<field>'")
-        click.echo("       (or INFO_PAIR / INFO_FLAG / FORMAT_SCALAR / FORMAT_PAIR / FORMAT_TRIPLE)")
-        click.echo("  3. Re-create the DB and re-ingest. (In-place ALTER works but back-fills NULL.)")
+        click.echo(
+            "       (or INFO_PAIR / INFO_FLAG / FORMAT_SCALAR / FORMAT_PAIR / FORMAT_TRIPLE)"
+        )
+        click.echo(
+            "  3. Re-create the DB and re-ingest. (In-place ALTER works but back-fills NULL.)"
+        )

@@ -60,8 +60,18 @@ def _vc(home: Path, *args: str) -> str:
 
 
 def _ingest(home: Path, db: str, vcf: Path, ingest_id: str = "batch_a") -> None:
-    _vc(home, "db", "ingest", db, str(vcf),
-        "--cohort", "demo", "--ingest-id", ingest_id, "--serial")
+    _vc(
+        home,
+        "db",
+        "ingest",
+        db,
+        str(vcf),
+        "--cohort",
+        "demo",
+        "--ingest-id",
+        ingest_id,
+        "--serial",
+    )
 
 
 def test_create_list_rm(vcfclick_home):
@@ -104,7 +114,9 @@ def test_idempotent_reingest(vcfclick_home, tiny_vcf):
     _vc(vcfclick_home, "db", "create", "smoke")
     _ingest(vcfclick_home, "smoke", tiny_vcf)
     _ingest(vcfclick_home, "smoke", tiny_vcf)
-    out = _vc(vcfclick_home, "db", "query", "smoke", "SELECT count() FROM variants FINAL")
+    out = _vc(
+        vcfclick_home, "db", "query", "smoke", "SELECT count() FROM variants FINAL"
+    )
     assert str(FIXTURE_VARIANTS) in out
 
 
@@ -115,7 +127,12 @@ def test_dump_produces_parquet(vcfclick_home, tiny_vcf, tmp_path):
     out_dir = tmp_path / "dump"
     _vc(vcfclick_home, "db", "dump", "smoke", "--out", str(out_dir))
 
-    expected = {"variants.parquet", "genotypes.parquet", "samples.parquet", "ingestions.parquet"}
+    expected = {
+        "variants.parquet",
+        "genotypes.parquet",
+        "samples.parquet",
+        "ingestions.parquet",
+    }
     actual = {p.name for p in out_dir.iterdir()}
     assert expected.issubset(actual), f"missing files: {expected - actual}"
     for p in out_dir.iterdir():
@@ -145,7 +162,10 @@ def test_query_genomic_region(vcfclick_home, tiny_vcf):
     _ingest(vcfclick_home, "smoke", tiny_vcf)
 
     out = _vc(
-        vcfclick_home, "db", "query", "smoke",
+        vcfclick_home,
+        "db",
+        "query",
+        "smoke",
         "SELECT count() FROM variants WHERE chrom='chr1' AND pos BETWEEN 200 AND 800",
     )
     # 250, 500, 750 → three matches.

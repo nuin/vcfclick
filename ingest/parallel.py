@@ -53,12 +53,8 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
-from ingest.vcf_load import (
-    BATCH_SIZE,
-    build_genotype_rows,
-    build_variant_row,
-    classify_header,
-)
+from ingest.routing import classify_header
+from ingest.vcf_load import BATCH_SIZE, build_genotype_rows, build_variant_row
 from storage import apply_schema, db_path, get_session, insert_via_parquet
 
 log = logging.getLogger(__name__)

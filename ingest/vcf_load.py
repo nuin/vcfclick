@@ -12,8 +12,8 @@ files; main imports the glob).
 
 Schema policy: VCF 4.3 reserved INFO/FORMAT fields and common GATK
 fields land in typed columns. Anything else lands in info_extra /
-format_extra Maps. The routing tables below are the single source of
-truth — extend them when promoting fields from overflow to typed.
+format_extra Maps. See ingest.routing for the routing tables — the
+single source of truth for which fields are typed.
 
 Pre-requisite: multi-allelic sites decomposed via
     bcftools norm -m - input.vcf.gz | bgzip > normalised.vcf.gz
@@ -38,105 +38,11 @@ from ingest._arrow import (
     VARIANTS_COLUMNS,
     write_parquet,
 )
+from ingest.routing import FORMAT_PAIR, FORMAT_SCALAR, FORMAT_TRIPLE
+from ingest.routing import INFO_FLAG, INFO_PAIR, INFO_SCALAR, classify_header
 from storage import apply_schema, get_session, insert_via_parquet
 
 log = logging.getLogger(__name__)
-
-INFO_SCALAR = {
-    "AC": "info_AC",
-    "AF": "info_AF",
-    "AN": "info_AN",
-    "DP": "info_DP",
-    "MQ": "info_MQ",
-    "MQ0": "info_MQ0",
-    "NS": "info_NS",
-    "BQ": "info_BQ",
-    "SB": "info_SB",
-    "END": "info_END",
-    "CIGAR": "info_CIGAR",
-    "AA": "info_AA",
-    "QD": "info_QD",
-    "FS": "info_FS",
-    "SOR": "info_SOR",
-    "MQRankSum": "info_MQRankSum",
-    "ReadPosRankSum": "info_ReadPosRankSum",
-    "ExcessHet": "info_ExcessHet",
-    "InbreedingCoeff": "info_InbreedingCoeff",
-    "MLEAC": "info_MLEAC",
-    "MLEAF": "info_MLEAF",
-    "BaseQRankSum": "info_BaseQRankSum",
-    "ClippingRankSum": "info_ClippingRankSum",
-}
-
-INFO_PAIR = {
-    "AD": ("info_AD_ref", "info_AD_alt"),
-}
-
-INFO_FLAG = {
-    "SOMATIC": "info_SOMATIC",
-    "VALIDATED": "info_VALIDATED",
-    "DB": "info_DB",
-    "H2": "info_H2",
-    "H3": "info_H3",
-    "1000G": "info_1000G",
-}
-
-FORMAT_SCALAR = {
-    "GQ": "gq",
-    "DP": "dp",
-    "MQ": "mq",
-    "FT": "ft",
-    "PS": "ps",
-    "PQ": "pq",
-}
-
-FORMAT_PAIR = {
-    "AD": ("ad_ref", "ad_alt"),
-    "ADF": ("adf_ref", "adf_alt"),
-    "ADR": ("adr_ref", "adr_alt"),
-}
-
-FORMAT_TRIPLE = {
-    "PL": ("pl_ref_ref", "pl_ref_alt", "pl_alt_alt"),
-    "GL": ("gl_ref_ref", "gl_ref_alt", "gl_alt_alt"),
-}
-
-
-def _typed_format_fields() -> set[str]:
-    return {"GT"} | FORMAT_SCALAR.keys() | FORMAT_PAIR.keys() | FORMAT_TRIPLE.keys()
-
-
-def classify_header(vcf: VCF) -> dict[str, list[str]]:
-    typed_info, extra_info = [], []
-    typed_format, extra_format = [], []
-    typed_format_ids = _typed_format_fields()
-
-    for h in vcf.header_iter():
-        try:
-            d = h.info(extra=True)
-        except Exception:
-            continue
-        kind = str(d.get("HeaderType", "")).upper()
-        field = d.get("ID")
-        if not field:
-            continue
-        if kind == "INFO":
-            if field in INFO_SCALAR or field in INFO_PAIR or field in INFO_FLAG:
-                typed_info.append(field)
-            else:
-                extra_info.append(field)
-        elif kind == "FORMAT":
-            if field in typed_format_ids:
-                typed_format.append(field)
-            else:
-                extra_format.append(field)
-
-    return {
-        "typed_info": sorted(typed_info),
-        "extra_info": sorted(extra_info),
-        "typed_format": sorted(typed_format),
-        "extra_format": sorted(extra_format),
-    }
 
 
 def _stringify(value) -> str:
@@ -487,7 +393,3 @@ def ingest(
         f"{n_variants / max(elapsed, 0.001):,.0f}",
     )
     return ingest_id
-
-
-# Library module — invoke via `vcfclick db ingest <name> <vcf> --serial`.
-# The public CLI lives in cli/main.py.

@@ -22,7 +22,9 @@ def _vc(*args: str) -> str:
         capture_output=True,
         text=True,
     )
-    assert r.returncode == 0, f"`vcfclick {' '.join(args)}` failed:\n{r.stdout}\n{r.stderr}"
+    assert r.returncode == 0, (
+        f"`vcfclick {' '.join(args)}` failed:\n{r.stdout}\n{r.stderr}"
+    )
     return r.stdout
 
 
@@ -68,7 +70,9 @@ def test_discover_lowercases_format_column_names():
     MYCUSTOM (FORMAT) should suggest the lowercase `mycustom`, not `MYCUSTOM`."""
     out = _vc("discover", str(ROUTING_VCF))
     # Find the MYCUSTOM line specifically (in the FORMAT overflow section).
-    mycustom_line = next(line for line in out.splitlines() if "MYCUSTOM" in line and "promote:" in line)
+    mycustom_line = next(
+        line for line in out.splitlines() if "MYCUSTOM" in line and "promote:" in line
+    )
     assert "mycustom Nullable(String)" in mycustom_line
 
 
@@ -84,7 +88,9 @@ def test_discover_does_not_promote_already_typed_fields():
             continue
         if "FORMAT fields:" in line:
             break
-        if in_overflow and line.strip().startswith(("AC ", "AF ", "AN ", "DP ", "SOMATIC ")):
+        if in_overflow and line.strip().startswith(
+            ("AC ", "AF ", "AN ", "DP ", "SOMATIC ")
+        ):
             raise AssertionError(f"typed field leaked into overflow section: {line!r}")
 
 
@@ -99,4 +105,7 @@ def test_discover_errors_on_missing_vcf():
         text=True,
     )
     assert r.returncode != 0
-    assert "no such" in (r.stdout + r.stderr).lower() or "does not exist" in (r.stdout + r.stderr).lower()
+    assert (
+        "no such" in (r.stdout + r.stderr).lower()
+        or "does not exist" in (r.stdout + r.stderr).lower()
+    )

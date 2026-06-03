@@ -29,9 +29,7 @@ from annotations.db import get_connection
 
 log = logging.getLogger(__name__)
 
-CLINVAR_URL = (
-    "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"
-)
+CLINVAR_URL = "https://ftp.ncbi.nlm.nih.gov/pub/clinvar/vcf_GRCh38/clinvar.vcf.gz"
 
 CACHE_DIR = Path(__file__).parent / "_cache"
 CACHED_VCF = CACHE_DIR / "clinvar.vcf.gz"
