@@ -4,6 +4,8 @@ version = "0.1.0"
 description = "Small VCF databases. One per cohort. Embedded ClickHouse engine, embedded DuckDB annotations, MCP natural-language layer."
 readme = "README.md"
 requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
 authors = [
     { name = "nuin", email = "nuin@genedrift.org" },
 ]
@@ -32,7 +34,6 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
-    "License :: Other/Proprietary License",
 ]
 dependencies = [
     "cyvcf2>=0.31.0",
@@ -77,6 +78,7 @@ include = [
     "storage",
     "vcfclick_mcp",
     "bench/BENCHMARK.md",
+    "LICENSE",
     "LICENSING.md",
     "README.md",
     "pyproject.toml",

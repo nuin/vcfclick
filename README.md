@@ -239,9 +239,8 @@ reproduction commands: [`bench/BENCHMARK.md`](bench/BENCHMARK.md).
 
 ## License
 
-License choice (AGPL-3.0 vs BSL) is pending. A standard `LICENSE` file
-will be added before the first tagged release. See
-[LICENSING.md](LICENSING.md).
+Apache License 2.0. Full text in [`LICENSE`](LICENSE); rationale in
+[`LICENSING.md`](LICENSING.md).
 
 ## Open work
 
