@@ -21,6 +21,7 @@ Pre-requisite: multi-allelic sites decomposed via
 
 from __future__ import annotations
 
+import logging
 import tempfile
 import time
 import uuid
@@ -38,6 +39,8 @@ from ingest._arrow import (
     write_parquet,
 )
 from storage import apply_schema, get_session, insert_via_parquet
+
+log = logging.getLogger(__name__)
 
 INFO_SCALAR = {
     "AC": "info_AC",
@@ -297,22 +300,24 @@ def ingest(
     extra_format_fields = classification["extra_format"]
     samples = list(vcf.samples)
 
-    print(f"[ingest] {vcf_path}")
-    print(f"[ingest] ingest_id: {ingest_id}")
-    print(f"[ingest] cohort:    {cohort}")
-    print(f"[ingest] samples:   {len(samples)}")
-    print(
-        f"[ingest] INFO typed={len(classification['typed_info'])} "
-        f"→ info_extra={len(classification['extra_info'])}"
+    log.info("[ingest] %s", vcf_path)
+    log.info("[ingest] ingest_id: %s", ingest_id)
+    log.info("[ingest] cohort:    %s", cohort)
+    log.info("[ingest] samples:   %d", len(samples))
+    log.info(
+        "[ingest] INFO typed=%d → info_extra=%d",
+        len(classification["typed_info"]),
+        len(classification["extra_info"]),
     )
-    print(
-        f"[ingest] FORMAT typed={len(classification['typed_format'])} "
-        f"→ format_extra={len(classification['extra_format'])}"
+    log.info(
+        "[ingest] FORMAT typed=%d → format_extra=%d",
+        len(classification["typed_format"]),
+        len(classification["extra_format"]),
     )
     if classification["extra_info"]:
-        print(f"[ingest]   info_extra keys: {classification['extra_info']}")
+        log.info("[ingest]   info_extra keys: %s", classification["extra_info"])
     if classification["extra_format"]:
-        print(f"[ingest]   format_extra keys: {classification['extra_format']}")
+        log.info("[ingest]   format_extra keys: %s", classification["extra_format"])
 
     # Samples + ingestions catalog go through the same Parquet-staged
     # bulk-insert as variants/genotypes. Avoids string-interpolating
@@ -363,9 +368,10 @@ def ingest(
             if len(variants_batch) >= BATCH_SIZE:
                 flush()
                 elapsed = time.time() - started
-                print(
-                    f"[ingest] {n_variants:>10,} variants "
-                    f"({n_variants / elapsed:>8,.0f}/s)"
+                log.info(
+                    "[ingest] %s variants (%s/s)",
+                    f"{n_variants:>10,}",
+                    f"{n_variants / elapsed:>8,.0f}",
                 )
 
         flush()
@@ -385,9 +391,11 @@ def ingest(
     )
 
     elapsed = time.time() - started
-    print(
-        f"[ingest] done. {n_variants:,} variants in {elapsed:.1f}s "
-        f"({n_variants / max(elapsed, 0.001):,.0f}/s)"
+    log.info(
+        "[ingest] done. %s variants in %.1fs (%s/s)",
+        f"{n_variants:,}",
+        elapsed,
+        f"{n_variants / max(elapsed, 0.001):,.0f}",
     )
     return ingest_id
 

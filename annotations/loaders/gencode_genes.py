@@ -19,11 +19,14 @@ Usage:
 from __future__ import annotations
 
 import gzip
+import logging
 import time
 import urllib.request
 from pathlib import Path
 
 from annotations.db import get_connection
+
+log = logging.getLogger(__name__)
 
 GENCODE_VERSION = "45"
 GENCODE_URL = (
@@ -39,13 +42,13 @@ def download_gencode() -> Path:
     """Download the GENCODE GFF3 once and cache it. Returns the local path."""
     CACHE_DIR.mkdir(parents=True, exist_ok=True)
     if CACHED_GFF.exists():
-        print(f"[gencode] already cached: {CACHED_GFF}")
+        log.info("[gencode] already cached: %s", CACHED_GFF)
         return CACHED_GFF
-    print(f"[gencode] downloading {GENCODE_URL} → {CACHED_GFF}")
+    log.info("[gencode] downloading %s → %s", GENCODE_URL, CACHED_GFF)
     started = time.time()
     urllib.request.urlretrieve(GENCODE_URL, CACHED_GFF)
     size_mb = CACHED_GFF.stat().st_size / 1_000_000
-    print(f"[gencode] done ({size_mb:.0f} MB in {time.time() - started:.1f}s)")
+    log.info("[gencode] done (%.0f MB in %.1fs)", size_mb, time.time() - started)
     return CACHED_GFF
 
 
@@ -131,16 +134,16 @@ def load(gff_path: Path | None = None, replace: bool = True) -> int:
         "VALUES (?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
-    print(f"[gencode] loaded {len(rows):,} genes into refseq_genes")
+    log.info("[gencode] loaded %s genes into refseq_genes", f"{len(rows):,}")
 
     # Quick verification — the demo gene should be reachable.
     brca1 = conn.execute(
         "SELECT chrom, start_pos, end_pos FROM refseq_genes WHERE gene_symbol = 'BRCA1'"
     ).fetchone()
     if brca1:
-        print(f"[gencode] BRCA1 → {brca1[0]}:{brca1[1]}-{brca1[2]}")
+        log.info("[gencode] BRCA1 → %s:%s-%s", brca1[0], brca1[1], brca1[2])
     else:
-        print("[gencode] WARNING: BRCA1 not found in loaded data")
+        log.warning("[gencode] WARNING: BRCA1 not found in loaded data")
 
     return len(rows)
 

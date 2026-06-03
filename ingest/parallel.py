@@ -37,6 +37,7 @@ retains them for downstream DuckDB / Snowflake / Spark / Iceberg use.
 
 from __future__ import annotations
 
+import logging
 import shutil
 import time
 import uuid
@@ -59,6 +60,8 @@ from ingest.vcf_load import (
     classify_header,
 )
 from storage import apply_schema, db_path, get_session, insert_via_parquet
+
+log = logging.getLogger(__name__)
 
 DEFAULT_BUCKET_SIZE = 100_000  # 100Kb position buckets for the splitter
 SPARSE_CONTIG_THRESHOLD = 1_000  # skip splitting if a contig has fewer
@@ -220,19 +223,21 @@ def ingest_parallel(
     staging = Path(staging_dir) if staging_dir else db_path() / "staging" / ingest_id
     staging.mkdir(parents=True, exist_ok=True)
 
-    print(f"[parallel-ingest] {vcf_path}")
-    print(f"[parallel-ingest] ingest_id: {ingest_id}")
-    print(f"[parallel-ingest] cohort:    {cohort}")
-    print(f"[parallel-ingest] samples:   {len(samples)}")
-    print(f"[parallel-ingest] workers:   {workers}")
-    print(f"[parallel-ingest] staging:   {staging}")
-    print(
-        f"[parallel-ingest] INFO typed={len(classification['typed_info'])} "
-        f"→ info_extra={len(classification['extra_info'])}"
+    log.info("[parallel-ingest] %s", vcf_path)
+    log.info("[parallel-ingest] ingest_id: %s", ingest_id)
+    log.info("[parallel-ingest] cohort:    %s", cohort)
+    log.info("[parallel-ingest] samples:   %d", len(samples))
+    log.info("[parallel-ingest] workers:   %d", workers)
+    log.info("[parallel-ingest] staging:   %s", staging)
+    log.info(
+        "[parallel-ingest] INFO typed=%d → info_extra=%d",
+        len(classification["typed_info"]),
+        len(classification["extra_info"]),
     )
-    print(
-        f"[parallel-ingest] FORMAT typed={len(classification['typed_format'])} "
-        f"→ format_extra={len(classification['extra_format'])}"
+    log.info(
+        "[parallel-ingest] FORMAT typed=%d → format_extra=%d",
+        len(classification["typed_format"]),
+        len(classification["extra_format"]),
     )
 
     # Plan balanced regions. Prefer the tabix index (essentially free)
@@ -247,9 +252,12 @@ def ingest_parallel(
     else:
         split_source = "tabix .tbi"
     split_elapsed = time.time() - started_split
-    print(
-        f"[parallel-ingest] split:  {split_elapsed:.2f}s via {split_source} → "
-        f"{len(regions)} regions across {len(set(r.split(':')[0] for r in regions))} contigs"
+    log.info(
+        "[parallel-ingest] split:  %.2fs via %s → %d regions across %d contigs",
+        split_elapsed,
+        split_source,
+        len(regions),
+        len({r.split(":")[0] for r in regions}),
     )
 
     # Samples table — safe Parquet-staged insert (no string interpolation
@@ -274,9 +282,11 @@ def ingest_parallel(
         for region, n, n_batches in pool.map(_worker, args_list):
             total += n
             if n > 0:
-                print(
-                    f"[parallel-ingest]   {region}: {n:,} variants "
-                    f"({n_batches} batches)"
+                log.info(
+                    "[parallel-ingest]   %s: %s variants (%d batches)",
+                    region,
+                    f"{n:,}",
+                    n_batches,
                 )
     parse_elapsed = time.time() - started_parse
 
@@ -308,17 +318,22 @@ def ingest_parallel(
     if not keep_staging:
         shutil.rmtree(staging)
     else:
-        print(f"[parallel-ingest] staging Parquet files kept at {staging}")
+        log.info("[parallel-ingest] staging Parquet files kept at %s", staging)
 
     total_elapsed = split_elapsed + parse_elapsed + import_elapsed
-    print(
-        f"[parallel-ingest] split:  {split_elapsed:.1f}s  "
-        f"parse: {parse_elapsed:.1f}s ({total / max(parse_elapsed, 0.001):,.0f}/s)  "
-        f"import: {import_elapsed:.1f}s"
+    log.info(
+        "[parallel-ingest] split:  %.1fs  parse: %.1fs (%s/s)  import: %.1fs",
+        split_elapsed,
+        parse_elapsed,
+        f"{total / max(parse_elapsed, 0.001):,.0f}",
+        import_elapsed,
     )
-    print(
-        f"[parallel-ingest] total:  {total_elapsed:.1f}s, {total:,} variants "
-        f"({total / max(total_elapsed, 0.001):,.0f}/s overall with {workers} workers)"
+    log.info(
+        "[parallel-ingest] total:  %.1fs, %s variants (%s/s overall with %d workers)",
+        total_elapsed,
+        f"{total:,}",
+        f"{total / max(total_elapsed, 0.001):,.0f}",
+        workers,
     )
     return ingest_id
 

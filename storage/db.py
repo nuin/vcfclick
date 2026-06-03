@@ -113,9 +113,7 @@ def db_disk_size(name: str | None = None) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
-def insert_via_parquet(
-    table: str, schema: pa.Schema, rows: list[dict]
-) -> None:
+def insert_via_parquet(table: str, schema: pa.Schema, rows: list[dict]) -> None:
     """Bulk-insert rows into the active DB via a Parquet staging file.
 
     Same Parquet-staging path the variants/genotypes loaders use, just
@@ -128,21 +126,15 @@ def insert_via_parquet(
         raise ValueError(f"Unsafe table name: {table!r}")
 
     sess = get_session()
-    with tempfile.NamedTemporaryFile(
-        suffix=".parquet", delete=False
-    ) as f:
+    with tempfile.NamedTemporaryFile(suffix=".parquet", delete=False) as f:
         tmp_path = Path(f.name)
     try:
         arrays = [
             pa.array([r.get(field.name) for r in rows], type=field.type)
             for field in schema
         ]
-        pq.write_table(
-            pa.Table.from_arrays(arrays, schema=schema), tmp_path
-        )
-        sess.query(
-            f"INSERT INTO {table} SELECT * FROM file('{tmp_path}', 'Parquet')"
-        )
+        pq.write_table(pa.Table.from_arrays(arrays, schema=schema), tmp_path)
+        sess.query(f"INSERT INTO {table} SELECT * FROM file('{tmp_path}', 'Parquet')")
     finally:
         tmp_path.unlink(missing_ok=True)
 

@@ -16,10 +16,13 @@ Multiple tables in one call:
 
 from __future__ import annotations
 
+import logging
 import tempfile
 from pathlib import Path
 
 from storage import get_session
+
+log = logging.getLogger(__name__)
 
 
 TABLES = ["variants", "genotypes", "samples", "ingestions"]
@@ -63,7 +66,7 @@ def export_table(table: str, out_path: Path, where: str | None = None) -> None:
         raise
 
     size = out_path.stat().st_size
-    print(f"[export] {table} → {out_path} ({size:,} bytes)")
+    log.info("[export] %s → %s (%s bytes)", table, out_path, f"{size:,}")
 
 
 def export_all(out_dir: Path) -> None:
