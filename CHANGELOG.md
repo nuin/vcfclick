@@ -7,6 +7,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `vcfclick db diff <name> --cohort-a A --cohort-b B [--top N]` —
+  per-variant allele-frequency comparison across two cohorts in the
+  same database. Computes AC, AN, AF, and AF difference for every
+  variant called in either cohort, sorted by absolute AF diff
+  descending. Honest about sparse-table semantics (absent samples
+  count as 0/0) and cross-ingestion accumulation (same sample under
+  two ingest_ids counts as two observations). Cohort names go
+  through SQL-standard quote-doubling — embedded quotes don't break
+  out of the literal.
+- CHANGELOG.md, CONTRIBUTING.md, and a release-on-tag GitHub Actions
+  workflow that runs tests, builds, publishes to PyPI, and creates
+  a GitHub release in one tag push. Requires a `PYPI_API_TOKEN`
+  repository secret.
 - Atomic ingest — failed ingests (multi-allelic record, batch flush
   error, Ctrl-C) now roll back every row written under the failed
   `ingest_id` so the database is left in its pre-call state, instead

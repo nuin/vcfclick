@@ -148,6 +148,10 @@ vcfclick db query my-cohort "SELECT count() FROM variants"
 # Snowflake, BigQuery, Spark, Iceberg)
 vcfclick db dump my-cohort --out my-cohort-export/
 
+# Compare allele frequencies across two cohorts in the same DB
+# (case-vs-control, drug-vs-placebo, population-vs-population)
+vcfclick db diff my-cohort --cohort-a case --cohort-b control --top 50
+
 # Bundle a database as a single tar.gz for sharing
 vcfclick db push my-cohort /path/to/my-cohort.tar.gz
 

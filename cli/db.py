@@ -24,6 +24,16 @@ BUNDLE_TABLES = ("variants", "genotypes", "samples", "ingestions")
 DEFAULT_WORKERS = 4
 
 
+def _quote_str(s: str) -> str:
+    """SQL-standard single-quoted string literal.
+
+    chDB's `session.query()` doesn't take parameter bindings, so we
+    interpolate strings into SQL by hand. Doubling embedded single
+    quotes is the portable escape and matches what ClickHouse parses.
+    """
+    return "'" + s.replace("'", "''") + "'"
+
+
 # ─── create ─────────────────────────────────────────────────────────
 
 
@@ -373,3 +383,114 @@ def db_pull(name: str, source: str) -> None:
             _import_table(sess, table, parquets, extract_dir)
 
     click.echo(f"\npulled   {name}  ←  {source}")
+
+
+# ─── diff ───────────────────────────────────────────────────────────
+
+
+@db.command(name="diff")
+@click.argument("name")
+@click.option("--cohort-a", required=True, help="First cohort name (as stored on samples.cohort).")
+@click.option("--cohort-b", required=True, help="Second cohort name.")
+@click.option(
+    "--top",
+    "top",
+    type=int,
+    default=50,
+    show_default=True,
+    help="Limit to the top N variants by absolute AF difference. 0 = no limit.",
+)
+@click.option(
+    "--format",
+    "fmt",
+    default="PrettyCompact",
+    show_default=True,
+    help="chDB output format (PrettyCompact, JSON, CSV, TSV, ...).",
+)
+def db_diff(name: str, cohort_a: str, cohort_b: str, top: int, fmt: str) -> None:
+    """Per-variant allele-frequency comparison across two cohorts.
+
+    Computes AC / AN / AF for cohorts A and B (and their difference)
+    for every variant with at least one non-reference call in either
+    cohort. AN is `2 × distinct samples in the cohort`; samples
+    absent from the sparse genotypes table at a given variant are
+    assumed 0/0 (the sparse-storage convention). Results are sorted
+    by absolute AF difference, descending.
+
+    Multi-ingestion semantics: a cohort spans every (ingest_id, sample_id)
+    where samples.cohort matches. Samples ingested twice under
+    different ingest_ids count as two observations — by design,
+    matching the schema's cross-ingestion non-merging rule.
+    """
+    from storage import db_path, get_session
+
+    if not db_path(name).exists():
+        raise click.ClickException(f"db {name!r} not found")
+
+    _set_db(name)
+    sess = get_session(name)
+
+    a = _quote_str(cohort_a)
+    b = _quote_str(cohort_b)
+
+    # Pre-check: both cohorts must have at least one sample. Without
+    # this the main query happily returns an empty result and the user
+    # can't tell whether it's "no variants differ" or "you typoed a
+    # cohort name".
+    rows = (
+        sess.query(
+            f"SELECT cohort FROM samples WHERE cohort IN ({a}, {b}) GROUP BY cohort",
+            "TSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+    )
+    found = set(rows.splitlines()) if rows else set()
+    missing = sorted({cohort_a, cohort_b} - found)
+    if missing:
+        raise click.ClickException(
+            f"unknown cohort(s): {', '.join(missing)}. "
+            f"Available: {', '.join(sorted(found)) or '(none)'}"
+        )
+
+    limit_clause = f"LIMIT {int(top)}" if top > 0 else ""
+
+    # `sumIf(gt, cohort = X)` counts alt alleles in each cohort.
+    # `cohort_sizes` provides the denominator (2 × distinct samples).
+    # CROSS JOIN over a single-row table is the chDB-friendly way to
+    # bring a scalar into a per-row SELECT — works around the lack of
+    # uncorrelated scalar subqueries in older ClickHouse / chDB.
+    sql = f"""
+WITH cohort_sizes AS (
+    SELECT cohort, count(DISTINCT (ingest_id, sample_id)) * 2 AS an
+    FROM samples
+    WHERE cohort IN ({a}, {b})
+    GROUP BY cohort
+),
+calls AS (
+    SELECT
+        g.chrom, g.pos, g.ref, g.alt,
+        sumIf(g.gt, s.cohort = {a}) AS ac_a,
+        sumIf(g.gt, s.cohort = {b}) AS ac_b
+    FROM genotypes g
+    INNER JOIN samples s
+        ON s.ingest_id = g.ingest_id AND s.sample_id = g.sample_id
+    WHERE s.cohort IN ({a}, {b})
+    GROUP BY g.chrom, g.pos, g.ref, g.alt
+)
+SELECT
+    chrom, pos, ref, alt,
+    ac_a, an_a, round(ac_a / an_a, 4) AS af_a,
+    ac_b, an_b, round(ac_b / an_b, 4) AS af_b,
+    round(ac_a / an_a - ac_b / an_b, 4) AS af_diff
+FROM calls
+CROSS JOIN (SELECT an AS an_a FROM cohort_sizes WHERE cohort = {a}) ca
+CROSS JOIN (SELECT an AS an_b FROM cohort_sizes WHERE cohort = {b}) cb
+WHERE an_a > 0 AND an_b > 0
+ORDER BY abs(af_diff) DESC, chrom, pos
+{limit_clause}
+""".strip()
+
+    out = sess.query(sql, fmt).bytes().decode()
+    click.echo(out)
