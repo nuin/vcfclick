@@ -113,6 +113,54 @@ def db_disk_size(name: str | None = None) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+# Ingest IDs come from user CLI input. Validating them up front lets us
+# safely interpolate the value into the rollback DELETE statements below
+# without quote-escaping — chDB's parameterised binding does not extend
+# to ALTER TABLE ... DELETE expressions.
+_INGEST_ID_RE = re.compile(r"^[A-Za-z0-9_.\-]+$")
+
+
+def validate_ingest_id(ingest_id: str) -> None:
+    """Reject ingest IDs that aren't safe to interpolate into SQL.
+
+    Allowed: ASCII letters, digits, underscore, dot, hyphen. This covers
+    UUIDs, batch labels like `batch_a`, dated tags like `2026.05.31`,
+    and the slugs users actually type. Anything else (quotes, spaces,
+    semicolons) is rejected.
+    """
+    if not _INGEST_ID_RE.fullmatch(ingest_id):
+        raise ValueError(
+            f"invalid ingest_id {ingest_id!r}: only ASCII letters, "
+            f"digits, underscore, dot, hyphen allowed"
+        )
+
+
+# Tables that carry per-ingestion rows — these are the ones rollback
+# has to scrub when an ingest fails mid-stream. Keep in sync with the
+# schema/*.sql files.
+_INGESTION_SCOPED_TABLES = ("variants", "genotypes", "samples", "ingestions")
+
+
+def rollback_ingest(ingest_id: str) -> None:
+    """Delete every row carrying `ingest_id` from the active DB.
+
+    Used by both ingest paths to leave the DB clean when ingestion
+    fails partway — without this, a half-loaded ingest_id stays
+    queryable and the user has to `db rm` the whole cohort to recover.
+
+    Runs synchronously (`mutations_sync = 2`) so callers can rely on
+    the cleanup having completed before they re-raise the original
+    error.
+    """
+    validate_ingest_id(ingest_id)
+    sess = get_session()
+    for table in _INGESTION_SCOPED_TABLES:
+        sess.query(
+            f"ALTER TABLE {table} DELETE WHERE ingest_id = '{ingest_id}' "
+            f"SETTINGS mutations_sync = 2"
+        )
+
+
 def insert_via_parquet(table: str, schema: pa.Schema, rows: list[dict]) -> None:
     """Bulk-insert rows into the active DB via a Parquet staging file.
 

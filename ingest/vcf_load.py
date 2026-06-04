@@ -40,7 +40,13 @@ from ingest._arrow import (
 )
 from ingest.routing import FORMAT_PAIR, FORMAT_SCALAR, FORMAT_TRIPLE
 from ingest.routing import INFO_FLAG, INFO_PAIR, INFO_SCALAR, classify_header
-from storage import apply_schema, get_session, insert_via_parquet
+from storage import (
+    apply_schema,
+    get_session,
+    insert_via_parquet,
+    rollback_ingest,
+    validate_ingest_id,
+)
 
 log = logging.getLogger(__name__)
 
@@ -284,9 +290,16 @@ def ingest(
     cohort: str,
     ingest_id: str | None = None,
 ) -> str:
-    """Load a normalised VCF into the embedded chDB store."""
+    """Load a normalised VCF into the embedded chDB store.
+
+    Atomic at the ingest_id level: if any record fails (multi-allelic,
+    malformed row, batch flush error), every row already written under
+    this `ingest_id` is deleted before the exception propagates. The DB
+    is left in the same state it was in before the failed call.
+    """
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
+    validate_ingest_id(ingest_id)
 
     _ensure_schema()
 
@@ -314,76 +327,91 @@ def ingest(
     if classification["extra_format"]:
         log.info("[ingest]   format_extra keys: %s", classification["extra_format"])
 
-    # Samples + ingestions catalog go through the same Parquet-staged
-    # bulk-insert as variants/genotypes. Avoids string-interpolating
-    # sample IDs (which come from the VCF header) into SQL.
-    insert_via_parquet(
-        "samples",
-        SAMPLES_ARROW_SCHEMA,
-        [
-            {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
-            for s in samples
-        ],
-    )
+    try:
+        # Samples + ingestions catalog go through the same Parquet-staged
+        # bulk-insert as variants/genotypes. Avoids string-interpolating
+        # sample IDs (which come from the VCF header) into SQL.
+        insert_via_parquet(
+            "samples",
+            SAMPLES_ARROW_SCHEMA,
+            [
+                {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
+                for s in samples
+            ],
+        )
 
-    variants_batch: list[list] = []
-    genotypes_batch: list[list] = []
-    n_variants = 0
-    started = time.time()
+        variants_batch: list[list] = []
+        genotypes_batch: list[list] = []
+        n_variants = 0
+        started = time.time()
 
-    with tempfile.TemporaryDirectory(prefix="vcfclick_ingest_") as staging:
-        staging_path = Path(staging)
+        with tempfile.TemporaryDirectory(prefix="vcfclick_ingest_") as staging:
+            staging_path = Path(staging)
 
-        def flush() -> None:
-            if not variants_batch:
-                return
-            v_path = staging_path / f"v_{n_variants}.parquet"
-            g_path = staging_path / f"g_{n_variants}.parquet"
-            write_parquet(variants_batch, VARIANTS_ARROW_SCHEMA, v_path)
-            write_parquet(genotypes_batch, GENOTYPES_ARROW_SCHEMA, g_path)
-            _import_parquet("variants", v_path)
-            if g_path.stat().st_size > 0:
-                _import_parquet("genotypes", g_path)
-            variants_batch.clear()
-            genotypes_batch.clear()
+            def flush() -> None:
+                if not variants_batch:
+                    return
+                v_path = staging_path / f"v_{n_variants}.parquet"
+                g_path = staging_path / f"g_{n_variants}.parquet"
+                write_parquet(variants_batch, VARIANTS_ARROW_SCHEMA, v_path)
+                write_parquet(genotypes_batch, GENOTYPES_ARROW_SCHEMA, g_path)
+                _import_parquet("variants", v_path)
+                if g_path.stat().st_size > 0:
+                    _import_parquet("genotypes", g_path)
+                variants_batch.clear()
+                genotypes_batch.clear()
 
-        for variant in vcf:
-            if len(variant.ALT) != 1:
-                raise ValueError(
-                    f"Multi-allelic site at {variant.CHROM}:{variant.POS} "
-                    f"({len(variant.ALT)} ALTs). Re-normalise with: "
-                    f"bcftools norm -m - {vcf_path} | bgzip > out.vcf.gz"
+            for variant in vcf:
+                if len(variant.ALT) != 1:
+                    raise ValueError(
+                        f"Multi-allelic site at {variant.CHROM}:{variant.POS} "
+                        f"({len(variant.ALT)} ALTs). Re-normalise with: "
+                        f"bcftools norm -m - {vcf_path} | bgzip > out.vcf.gz"
+                    )
+                variants_batch.append(build_variant_row(variant, ingest_id))
+                genotypes_batch.extend(
+                    build_genotype_rows(variant, samples, extra_format_fields, ingest_id)
                 )
-            variants_batch.append(build_variant_row(variant, ingest_id))
-            genotypes_batch.extend(
-                build_genotype_rows(variant, samples, extra_format_fields, ingest_id)
-            )
-            n_variants += 1
+                n_variants += 1
 
-            if len(variants_batch) >= BATCH_SIZE:
-                flush()
-                elapsed = time.time() - started
-                log.info(
-                    "[ingest] %s variants (%s/s)",
-                    f"{n_variants:>10,}",
-                    f"{n_variants / elapsed:>8,.0f}",
-                )
+                if len(variants_batch) >= BATCH_SIZE:
+                    flush()
+                    elapsed = time.time() - started
+                    log.info(
+                        "[ingest] %s variants (%s/s)",
+                        f"{n_variants:>10,}",
+                        f"{n_variants / elapsed:>8,.0f}",
+                    )
 
-        flush()
+            flush()
 
-    insert_via_parquet(
-        "ingestions",
-        INGESTIONS_ARROW_SCHEMA,
-        [
-            {
-                "ingest_id": ingest_id,
-                "cohort": cohort,
-                "vcf_path": vcf_path,
-                "n_variants": n_variants,
-                "n_samples": len(samples),
-            }
-        ],
-    )
+        insert_via_parquet(
+            "ingestions",
+            INGESTIONS_ARROW_SCHEMA,
+            [
+                {
+                    "ingest_id": ingest_id,
+                    "cohort": cohort,
+                    "vcf_path": vcf_path,
+                    "n_variants": n_variants,
+                    "n_samples": len(samples),
+                }
+            ],
+        )
+    except BaseException:
+        # Atomic guarantee: on ANY failure (multi-allelic ValueError,
+        # batch flush error, KeyboardInterrupt) scrub everything written
+        # under this ingest_id so the DB is queryable and free of half-
+        # loaded rows. Catches BaseException (not just Exception) so
+        # Ctrl-C during a long ingest also cleans up.
+        log.warning("[ingest] failed — rolling back ingest_id=%s", ingest_id)
+        try:
+            rollback_ingest(ingest_id)
+        except Exception as rb_err:
+            # Surface rollback failures separately — the user needs to
+            # know the DB is dirty so they can manually `db rm`.
+            log.error("[ingest] rollback FAILED: %s", rb_err)
+        raise
 
     elapsed = time.time() - started
     log.info(

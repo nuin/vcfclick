@@ -55,7 +55,14 @@ from ingest._arrow import (
 )
 from ingest.routing import classify_header
 from ingest.vcf_load import BATCH_SIZE, build_genotype_rows, build_variant_row
-from storage import apply_schema, db_path, get_session, insert_via_parquet
+from storage import (
+    apply_schema,
+    db_path,
+    get_session,
+    insert_via_parquet,
+    rollback_ingest,
+    validate_ingest_id,
+)
 
 log = logging.getLogger(__name__)
 
@@ -207,6 +214,7 @@ def ingest_parallel(
 ) -> str:
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
+    validate_ingest_id(ingest_id)
 
     _ensure_schema()
     sess = get_session()
@@ -256,60 +264,73 @@ def ingest_parallel(
         len({r.split(":")[0] for r in regions}),
     )
 
-    # Samples table — safe Parquet-staged insert (no string interpolation
-    # of VCF-supplied sample IDs).
-    insert_via_parquet(
-        "samples",
-        SAMPLES_ARROW_SCHEMA,
-        [
-            {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
-            for s in samples
-        ],
-    )
+    try:
+        # Samples table — safe Parquet-staged insert (no string interpolation
+        # of VCF-supplied sample IDs).
+        insert_via_parquet(
+            "samples",
+            SAMPLES_ARROW_SCHEMA,
+            [
+                {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
+                for s in samples
+            ],
+        )
 
-    args_list = [
-        (r, vcf_path, ingest_id, str(staging), extra_format_fields, batch_size)
-        for r in regions
-    ]
+        args_list = [
+            (r, vcf_path, ingest_id, str(staging), extra_format_fields, batch_size)
+            for r in regions
+        ]
 
-    started_parse = time.time()
-    total = 0
-    with ProcessPoolExecutor(max_workers=workers) as pool:
-        for region, n, n_batches in pool.map(_worker, args_list):
-            total += n
-            if n > 0:
-                log.info(
-                    "[parallel-ingest]   %s: %s variants (%d batches)",
-                    region,
-                    f"{n:,}",
-                    n_batches,
-                )
-    parse_elapsed = time.time() - started_parse
+        started_parse = time.time()
+        total = 0
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            for region, n, n_batches in pool.map(_worker, args_list):
+                total += n
+                if n > 0:
+                    log.info(
+                        "[parallel-ingest]   %s: %s variants (%d batches)",
+                        region,
+                        f"{n:,}",
+                        n_batches,
+                    )
+        parse_elapsed = time.time() - started_parse
 
-    started_import = time.time()
-    sess.query(
-        f"INSERT INTO variants "
-        f"SELECT * FROM file('{staging}/variants_*.parquet', 'Parquet')"
-    )
-    sess.query(
-        f"INSERT INTO genotypes "
-        f"SELECT * FROM file('{staging}/genotypes_*.parquet', 'Parquet')"
-    )
-    import_elapsed = time.time() - started_import
+        started_import = time.time()
+        sess.query(
+            f"INSERT INTO variants "
+            f"SELECT * FROM file('{staging}/variants_*.parquet', 'Parquet')"
+        )
+        sess.query(
+            f"INSERT INTO genotypes "
+            f"SELECT * FROM file('{staging}/genotypes_*.parquet', 'Parquet')"
+        )
+        import_elapsed = time.time() - started_import
 
-    insert_via_parquet(
-        "ingestions",
-        INGESTIONS_ARROW_SCHEMA,
-        [
-            {
-                "ingest_id": ingest_id,
-                "cohort": cohort,
-                "vcf_path": vcf_path,
-                "n_variants": total,
-                "n_samples": len(samples),
-            }
-        ],
-    )
+        insert_via_parquet(
+            "ingestions",
+            INGESTIONS_ARROW_SCHEMA,
+            [
+                {
+                    "ingest_id": ingest_id,
+                    "cohort": cohort,
+                    "vcf_path": vcf_path,
+                    "n_variants": total,
+                    "n_samples": len(samples),
+                }
+            ],
+        )
+    except BaseException:
+        # Atomic guarantee at the ingest_id level. Workers only write
+        # Parquet to staging — they don't touch chDB — so the at-risk
+        # writes are the samples insert (line ~270), the
+        # variants/genotypes INSERT...SELECT, and the ingestions insert.
+        # Rollback scrubs them all so the DB stays usable.
+        log.warning("[parallel-ingest] failed — rolling back ingest_id=%s", ingest_id)
+        try:
+            rollback_ingest(ingest_id)
+        except Exception as rb_err:
+            log.error("[parallel-ingest] rollback FAILED: %s", rb_err)
+        raise
 
     if not keep_staging:
         shutil.rmtree(staging)
