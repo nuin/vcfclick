@@ -7,6 +7,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- DRAGEN-specific INFO routing — `FractionInformativeReads`, `HAPCOMP`,
+  `HAPDOM`, `DragenSnvHardQUAL`, `DragenIndelHardQUAL` now promote to
+  typed columns on `variants` instead of landing in `info_extra`.
+  DRAGEN cohorts can query QC metrics with the same typed-column
+  ergonomics as GATK cohorts. Per-sample DRAGEN FORMAT fields
+  (`ML_PROB` etc.) stay in `format_extra` until a Float FORMAT
+  routing path is added.
 - `vcfclick db ingest-batch <name>` — multi-file ingest for per-sample
   VCFs (DRAGEN, GATK `-ERC GVCF`, clinical-pipeline output). Takes
   either `--from-dir <path>` (scans `*.vcf.gz`, derives ingest_id
@@ -48,6 +55,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - README CI + PyPI badges.
 
 ### Changed
+- **Schema added five new typed columns on `variants`** for the DRAGEN
+  fields above. Existing databases created on 0.1.1 don't have these
+  columns; ingest against them will fail until the database is
+  re-created (`vcfclick db rm <name>` then `vcfclick db create <name>`
+  and re-ingest). Fresh databases on this version onward pick up the
+  new schema automatically.
 - `INFO_SCALAR`/`_PAIR`/`_FLAG`, `FORMAT_SCALAR`/`_PAIR`/`_TRIPLE`,
   and `classify_header()` moved from `ingest/vcf_load.py` into a
   dedicated `ingest/routing.py` module. `vcf_load`, `parallel`,

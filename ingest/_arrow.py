@@ -61,6 +61,12 @@ VARIANTS_ARROW_SCHEMA = pa.schema(
         _f("info_MLEAF", pa.float32()),
         _f("info_BaseQRankSum", pa.float32()),
         _f("info_ClippingRankSum", pa.float32()),
+        # DRAGEN-specific record-level INFO scalars.
+        _f("info_FractionInformativeReads", pa.float32()),
+        _f("info_HAPCOMP", pa.uint32()),
+        _f("info_HAPDOM", pa.float32()),
+        _f("info_DragenSnvHardQUAL", pa.float32()),
+        _f("info_DragenIndelHardQUAL", pa.float32()),
         _f("info_AD_ref", pa.uint32()),
         _f("info_AD_alt", pa.uint32()),
         _f("info_SOMATIC", pa.uint8(), False),

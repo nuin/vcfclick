@@ -59,6 +59,15 @@ CREATE TABLE variants (
     info_BaseQRankSum     Nullable(Float32),
     info_ClippingRankSum  Nullable(Float32),
 
+    -- DRAGEN-specific (germline + somatic). Promoted from info_extra
+    -- so DRAGEN cohorts can query QC metrics with the same typed-column
+    -- ergonomics as GATK cohorts.
+    info_FractionInformativeReads Nullable(Float32),
+    info_HAPCOMP                  Nullable(UInt32),
+    info_HAPDOM                   Nullable(Float32),
+    info_DragenSnvHardQUAL        Nullable(Float32),
+    info_DragenIndelHardQUAL      Nullable(Float32),
+
     -- Overflow for non-reserved INFO fields.
     info_extra   Map(String, String),
 

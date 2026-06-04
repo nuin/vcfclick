@@ -37,6 +37,14 @@ INFO_SCALAR = {
     "MLEAF": "info_MLEAF",
     "BaseQRankSum": "info_BaseQRankSum",
     "ClippingRankSum": "info_ClippingRankSum",
+    # DRAGEN-specific record-level INFO scalars (germline + somatic).
+    # Per-sample DRAGEN fields (ML_PROB etc.) stay in format_extra
+    # until we add a Float FORMAT routing path.
+    "FractionInformativeReads": "info_FractionInformativeReads",
+    "HAPCOMP": "info_HAPCOMP",
+    "HAPDOM": "info_HAPDOM",
+    "DragenSnvHardQUAL": "info_DragenSnvHardQUAL",
+    "DragenIndelHardQUAL": "info_DragenIndelHardQUAL",
 }
 
 INFO_PAIR = {
