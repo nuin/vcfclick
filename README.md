@@ -138,6 +138,15 @@ vcfclick db create my-cohort
 vcfclick db ingest my-cohort normalised.vcf.gz \
     --cohort demo --ingest-id batch_a
 
+# Or ingest many per-sample VCFs (DRAGEN, GATK -ERC GVCF, etc.) as one
+# cohort — each file becomes its own ingest_id, atomic per-file:
+vcfclick db ingest-batch my-cohort \
+    --from-dir per_sample_vcfs/ --cohort study1
+# ...or with an nf-core/Snakemake-style manifest (TSV with vcf_path
+# column; optional sample_id and cohort columns):
+vcfclick db ingest-batch my-cohort \
+    --manifest samples.tsv --cohort fallback
+
 # Inspect what's in it
 vcfclick db info my-cohort
 
@@ -259,21 +268,43 @@ worker gets approximately equal work regardless of where the data
 actually lives along the chromosome. Sparse-table compression
 empirically 6.2% of dense theoretical max.
 
-## TileDB-VCF comparison
+## Design comparison with TileDB-VCF
 
-End-to-end on the same 235k-variant / 3,202-sample workload, native
-arm64 (vcfclick) vs Rosetta-emulated linux/amd64 (TileDB-VCF Docker):
+vcfclick and TileDB-VCF have different design centres, not different
+points on the same axis. The categorical differences below are
+intrinsic to what each tool is built for:
 
 | | vcfclick | TileDB-VCF |
 |---|---|---|
-| Source VCF format | joint VCF ingested directly | per-sample VCFs only ("Combined VCFs are currently not supported") |
-| Pre-processing | none | bcftools +split + tabix × 3,202 ≈ 8+ min |
-| Source VCF disk | 114 MB | 15.1 GB (132× inflation) |
-| Ingest, best stable config | **69 s** (parallel-8) | **~79 min** projected (single-thread, multi-thread failed) |
-| End-to-end | **~1 min** | **~87 min** |
+| Intended input | joint VCF | per-sample VCFs |
+| Joint VCF support | native | not currently supported (`Combined VCFs are currently not supported` runtime error) |
+| Pre-processing for joint-VCF input | none | `bcftools +split` per sample + `tabix` × N |
+| Pre-processing disk overhead | none | per-sample VCFs duplicate headers — for the 235k-variant 1000G slice, 114 MB joint became 15.1 GB across 3,202 per-sample files |
+| Storage model | chDB MergeTree (ClickHouse engine) | TileDB 2D sparse array |
+| Query surface | SQL via chDB | `tiledbvcf-cli export` to VCF stream |
+| Cross-cohort comparison | `samples.cohort` JOIN in SQL | per-array; application-level |
+| Primary audience | joint-VCF cohort analysis | per-sample clinical pipelines |
 
-Full methodology, caveats (including the Rosetta penalty), and
-reproduction commands: [`bench/BENCHMARK.md`](bench/BENCHMARK.md).
+Neither shape is universally correct. Joint VCFs are the output of
+population-scale variant calling (1000G, gnomAD); per-sample VCFs are
+the output of single-patient clinical pipelines. The pre-processing
+row above is a *consequence* of the input-shape difference, not
+TileDB-VCF being slow.
+
+**Runtime — in our environment, with caveats:** on the same
+235k-variant / 3,202-sample workload, vcfclick parallel-8 ingested
+the joint VCF in 69 s end-to-end; the closest stable TileDB-VCF
+configuration was projected at ~79 min based on a 50-sample
+sub-run. Five things matter before quoting that comparison:
+TileDB-VCF ran under Rosetta emulation (`linux/amd64` image on
+arm64 host, typical 30–50% penalty); multi-threaded TileDB-VCF
+crashed with a coordinate-ordering race in our environment, so
+single-threaded was the only stable mode; the 79 min figure is a
+projection from a 50-sample run, not a complete measurement; the
+3,202-sample workload favours sparse encoding because every variant
+has many non-reference calls; and a tuned multi-threaded run on
+native arm64 was outside our scope. All five caveats and the
+reproduction commands are in [`bench/BENCHMARK.md`](bench/BENCHMARK.md).
 
 ## License
 

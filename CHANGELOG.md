@@ -7,6 +7,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `vcfclick db ingest-batch <name>` — multi-file ingest for per-sample
+  VCFs (DRAGEN, GATK `-ERC GVCF`, clinical-pipeline output). Takes
+  either `--from-dir <path>` (scans `*.vcf.gz`, derives ingest_id
+  from filename) or `--manifest <tsv>` (nf-core/Snakemake-style;
+  required `vcf_path` column, optional `sample_id`/`ingest_id` and
+  `cohort` overrides). Files are ingested sequentially via library
+  call (shared chDB session). Per-file atomic — a failure rolls back
+  only that file and the batch continues; the summary lists what
+  failed and exit code is non-zero if anything did.
 - `vcfclick db diff <name> --cohort-a A --cohort-b B [--top N]` —
   per-variant allele-frequency comparison across two cohorts in the
   same database. Computes AC, AN, AF, and AF difference for every
