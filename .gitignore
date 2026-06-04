@@ -58,3 +58,4 @@ paper/
 *.png
 *.jpeg
 *.jpg
+bench/.tiledbvcf-env/
