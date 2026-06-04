@@ -48,6 +48,11 @@ data/*.parquet
 # Marketing/landing site — lives on disk, not in the OSS repo.
 web/
 
+# Preprint / working manuscript drafts. Never push these — same lesson
+# as PLAN.md. When the bioRxiv version is final, push the rendered PDF
+# under a paper/v1/ subdirectory and leave the draft sources here.
+paper/
+
 # Browser-automation artefacts (Playwright MCP screenshots etc.)
 .playwright-mcp/
 *.png
