@@ -2,6 +2,8 @@
 
 [![test](https://github.com/nuin/vcfclick/actions/workflows/test.yml/badge.svg)](https://github.com/nuin/vcfclick/actions/workflows/test.yml)
 [![PyPI](https://img.shields.io/pypi/v/vcfclick.svg)](https://pypi.org/project/vcfclick/)
+[![PyPI downloads](https://img.shields.io/pypi/dm/vcfclick.svg)](https://pypistats.org/packages/vcfclick)
+[![GitHub stars](https://img.shields.io/github/stars/nuin/vcfclick.svg?style=flat)](https://github.com/nuin/vcfclick/stargazers)
 
 A modern VCF database for research labs and bioinformatics teams.
 Embedded chDB (ClickHouse engine, serverless) for sample data, embedded
