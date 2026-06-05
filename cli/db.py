@@ -393,7 +393,9 @@ def db_pull(name: str, source: str) -> None:
 
 @db.command(name="diff")
 @click.argument("name")
-@click.option("--cohort-a", required=True, help="First cohort name (as stored on samples.cohort).")
+@click.option(
+    "--cohort-a", required=True, help="First cohort name (as stored on samples.cohort)."
+)
 @click.option("--cohort-b", required=True, help="Second cohort name.")
 @click.option(
     "--top",
@@ -580,9 +582,7 @@ def _parse_manifest(path: Path, default_cohort: str) -> list[_BatchEntry]:
                 )
 
             ingest_id = (
-                row.get("ingest_id")
-                or row.get("sample_id")
-                or _derive_ingest_id(vcf)
+                row.get("ingest_id") or row.get("sample_id") or _derive_ingest_id(vcf)
             ).strip()
             if ingest_id in seen_ids:
                 raise click.ClickException(
@@ -726,12 +726,28 @@ def db_ingest_batch(
 # population stats because "what % of rows have chrom?" is uninteresting.
 _STATS_SKIP = {
     "variants": {
-        "ingest_id", "chrom", "pos", "ref", "alt", "vcf_id", "qual",
-        "filter", "info_extra", "ingested_at",
+        "ingest_id",
+        "chrom",
+        "pos",
+        "ref",
+        "alt",
+        "vcf_id",
+        "qual",
+        "filter",
+        "info_extra",
+        "ingested_at",
     },
     "genotypes": {
-        "ingest_id", "chrom", "pos", "ref", "alt", "sample_id", "gt",
-        "phased", "format_extra", "ingested_at",
+        "ingest_id",
+        "chrom",
+        "pos",
+        "ref",
+        "alt",
+        "sample_id",
+        "gt",
+        "phased",
+        "format_extra",
+        "ingested_at",
     },
 }
 
@@ -772,23 +788,22 @@ def _population_expr(col_name: str, col_type: str) -> str:
     return f"countIf(`{col_name}` != 0) AS `{col_name}`"
 
 
-def _query_population(sess, table: str, columns: list[tuple[str, str]]) -> dict[str, int]:
+def _query_population(
+    sess, table: str, columns: list[tuple[str, str]]
+) -> dict[str, int]:
     """One aggregation query for every typed column on `table`. Returns
     `{column_name: populated_row_count}`."""
     if not columns:
         return {}
     exprs = ", ".join(_population_expr(n, t) for n, t in columns)
-    out = (
-        sess.query(f"SELECT {exprs} FROM {table}", "TSV")
-        .bytes()
-        .decode()
-        .strip()
-    )
+    out = sess.query(f"SELECT {exprs} FROM {table}", "TSV").bytes().decode().strip()
     values = [int(v) for v in out.split("\t")]
     return dict(zip([n for n, _ in columns], values))
 
 
-def _query_map_keys(sess, table: str, map_col: str, top: int) -> tuple[list[tuple[str, int]], int]:
+def _query_map_keys(
+    sess, table: str, map_col: str, top: int
+) -> tuple[list[tuple[str, int]], int]:
     """Top-N most frequent keys in `map_col`. Returns ([(key, n), ...],
     total_distinct_keys)."""
     # Distinct key count first — drives the "top X of Y" header.
@@ -862,10 +877,7 @@ def db_stats(name: str, top: int) -> None:
 
     counts = {
         t: int(
-            sess.query(f"SELECT count() FROM {t}", "TSV")
-            .bytes()
-            .decode()
-            .strip()
+            sess.query(f"SELECT count() FROM {t}", "TSV").bytes().decode().strip()
             or "0"
         )
         for t in ("variants", "genotypes", "samples", "ingestions")

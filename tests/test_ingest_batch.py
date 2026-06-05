@@ -15,7 +15,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
@@ -25,7 +24,9 @@ PER_SAMPLE_B = FIXTURES / "per_sample_b.vcf.gz"
 MULTI = FIXTURES / "multiallelic.vcf.gz"
 
 
-def _vc(home: Path, *args: str, expect_failure: bool = False) -> subprocess.CompletedProcess:
+def _vc(
+    home: Path, *args: str, expect_failure: bool = False
+) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["VCFCLICK_HOME"] = str(home)
     env.pop("VCFCLICK_DB_NAME", None)
@@ -75,8 +76,14 @@ def test_from_dir_ingests_all_vcfs_in_directory(vcfclick_home, tmp_path):
 
     _vc(vcfclick_home, "db", "create", "demo")
     _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--from-dir", str(staging), "--cohort", "study1",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--from-dir",
+        str(staging),
+        "--cohort",
+        "study1",
     )
 
     # 2 ingestions in the catalog
@@ -85,14 +92,16 @@ def test_from_dir_ingests_all_vcfs_in_directory(vcfclick_home, tmp_path):
 
     # ingest_ids derived from filenames
     out = _query(
-        vcfclick_home, "demo",
+        vcfclick_home,
+        "demo",
         "SELECT ingest_id FROM ingestions ORDER BY ingest_id FORMAT TSV",
     )
     assert out.strip().splitlines() == ["per_sample_a", "per_sample_b"]
 
     # Both cohort labels are "study1"
     out = _query(
-        vcfclick_home, "demo",
+        vcfclick_home,
+        "demo",
         "SELECT DISTINCT cohort FROM samples FORMAT TSV",
     )
     assert out.strip() == "study1"
@@ -113,12 +122,19 @@ def test_manifest_with_custom_ingest_ids_and_per_row_cohort(vcfclick_home, tmp_p
 
     _vc(vcfclick_home, "db", "create", "demo")
     _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--manifest", str(manifest), "--cohort", "fallback",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--manifest",
+        str(manifest),
+        "--cohort",
+        "fallback",
     )
 
     out = _query(
-        vcfclick_home, "demo",
+        vcfclick_home,
+        "demo",
         "SELECT ingest_id, cohort FROM samples ORDER BY ingest_id FORMAT TSV",
     )
     rows = [line.split("\t") for line in out.strip().splitlines()]
@@ -128,20 +144,23 @@ def test_manifest_with_custom_ingest_ids_and_per_row_cohort(vcfclick_home, tmp_p
 def test_manifest_falls_back_to_cli_cohort_when_column_absent(vcfclick_home, tmp_path):
     """A manifest with no `cohort` column uses the --cohort flag."""
     manifest = tmp_path / "samples.tsv"
-    manifest.write_text(
-        "vcf_path\n"
-        f"{PER_SAMPLE_A}\n"
-        f"{PER_SAMPLE_B}\n"
-    )
+    manifest.write_text("vcf_path\n" f"{PER_SAMPLE_A}\n" f"{PER_SAMPLE_B}\n")
 
     _vc(vcfclick_home, "db", "create", "demo")
     _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--manifest", str(manifest), "--cohort", "shared",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--manifest",
+        str(manifest),
+        "--cohort",
+        "shared",
     )
 
     out = _query(
-        vcfclick_home, "demo",
+        vcfclick_home,
+        "demo",
         "SELECT DISTINCT cohort FROM samples FORMAT TSV",
     )
     assert out.strip() == "shared"
@@ -156,15 +175,18 @@ def test_manifest_paths_resolved_relative_to_manifest_dir(vcfclick_home, tmp_pat
     shutil.copy(PER_SAMPLE_A.with_suffix(".gz.tbi"), staging)
 
     manifest = tmp_path / "samples.tsv"
-    manifest.write_text(
-        "vcf_path\n"
-        "vcfs/per_sample_a.vcf.gz\n"
-    )
+    manifest.write_text("vcf_path\n" "vcfs/per_sample_a.vcf.gz\n")
 
     _vc(vcfclick_home, "db", "create", "demo")
     _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--manifest", str(manifest), "--cohort", "x",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--manifest",
+        str(manifest),
+        "--cohort",
+        "x",
     )
 
     out = _query(vcfclick_home, "demo", "SELECT count() FROM ingestions")
@@ -188,8 +210,14 @@ def test_continue_on_error_skips_bad_files_keeps_good(vcfclick_home, tmp_path):
 
     _vc(vcfclick_home, "db", "create", "demo")
     r = _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--manifest", str(manifest), "--cohort", "test",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--manifest",
+        str(manifest),
+        "--cohort",
+        "test",
         expect_failure=True,  # any failure → rc != 0
     )
 
@@ -202,13 +230,15 @@ def test_continue_on_error_skips_bad_files_keeps_good(vcfclick_home, tmp_path):
 
     # The two good files made it in; the bad one left no rows
     out = _query(
-        vcfclick_home, "demo",
+        vcfclick_home,
+        "demo",
         "SELECT ingest_id FROM ingestions ORDER BY ingest_id FORMAT TSV",
     )
     assert out.strip().splitlines() == ["good_a", "good_b"]
 
     out = _query(
-        vcfclick_home, "demo",
+        vcfclick_home,
+        "demo",
         "SELECT count() FROM variants WHERE ingest_id = 'bad_one'",
     )
     assert "│       0 │" in out
@@ -222,9 +252,16 @@ def test_from_dir_and_manifest_are_mutually_exclusive(vcfclick_home, tmp_path):
     manifest = tmp_path / "m.tsv"
     manifest.write_text("vcf_path\n")
     r = _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--from-dir", str(tmp_path), "--manifest", str(manifest),
-        "--cohort", "x",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--from-dir",
+        str(tmp_path),
+        "--manifest",
+        str(manifest),
+        "--cohort",
+        "x",
         expect_failure=True,
     )
     assert "mutually exclusive" in r.stderr
@@ -233,7 +270,12 @@ def test_from_dir_and_manifest_are_mutually_exclusive(vcfclick_home, tmp_path):
 def test_neither_from_dir_nor_manifest_errors(vcfclick_home):
     _vc(vcfclick_home, "db", "create", "demo")
     r = _vc(
-        vcfclick_home, "db", "ingest-batch", "demo", "--cohort", "x",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--cohort",
+        "x",
         expect_failure=True,
     )
     assert "--from-dir or --manifest" in r.stderr
@@ -245,8 +287,12 @@ def test_from_dir_requires_cohort(vcfclick_home, tmp_path):
     staging.mkdir()
     shutil.copy(PER_SAMPLE_A, staging)
     r = _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--from-dir", str(staging),
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--from-dir",
+        str(staging),
         expect_failure=True,
     )
     assert "--cohort is required" in r.stderr
@@ -257,8 +303,14 @@ def test_manifest_missing_vcf_path_column_errors(vcfclick_home, tmp_path):
     manifest = tmp_path / "m.tsv"
     manifest.write_text("sample_id\tcohort\nA\tcase\n")  # no vcf_path column
     r = _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--manifest", str(manifest), "--cohort", "x",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--manifest",
+        str(manifest),
+        "--cohort",
+        "x",
         expect_failure=True,
     )
     assert "vcf_path" in r.stderr
@@ -268,13 +320,17 @@ def test_manifest_rejects_duplicate_ingest_ids(vcfclick_home, tmp_path):
     _vc(vcfclick_home, "db", "create", "demo")
     manifest = tmp_path / "m.tsv"
     manifest.write_text(
-        "sample_id\tvcf_path\n"
-        f"dup\t{PER_SAMPLE_A}\n"
-        f"dup\t{PER_SAMPLE_B}\n"
+        "sample_id\tvcf_path\n" f"dup\t{PER_SAMPLE_A}\n" f"dup\t{PER_SAMPLE_B}\n"
     )
     r = _vc(
-        vcfclick_home, "db", "ingest-batch", "demo",
-        "--manifest", str(manifest), "--cohort", "x",
+        vcfclick_home,
+        "db",
+        "ingest-batch",
+        "demo",
+        "--manifest",
+        str(manifest),
+        "--cohort",
+        "x",
         expect_failure=True,
     )
     assert "duplicate ingest_id" in r.stderr

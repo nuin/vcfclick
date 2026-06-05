@@ -26,7 +26,9 @@ VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclic
 MULTI_VCF = Path(__file__).parent / "fixtures" / "multiallelic.vcf.gz"
 
 
-def _vc(home: Path, *args: str, expect_failure: bool = False) -> subprocess.CompletedProcess:
+def _vc(
+    home: Path, *args: str, expect_failure: bool = False
+) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["VCFCLICK_HOME"] = str(home)
     env.pop("VCFCLICK_DB_NAME", None)
@@ -54,8 +56,16 @@ def _query(home: Path, db: str, sql: str) -> str:
 def test_multi_allelic_ingest_fails_with_helpful_error(vcfclick_home):
     _vc(vcfclick_home, "db", "create", "smoke")
     r = _vc(
-        vcfclick_home, "db", "ingest", "smoke", str(MULTI_VCF),
-        "--cohort", "demo", "--ingest-id", "batch_a", "--serial",
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(MULTI_VCF),
+        "--cohort",
+        "demo",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
         expect_failure=True,
     )
     # The in-stream check's error message must surface the bcftools fix.
@@ -69,20 +79,29 @@ def test_failed_ingest_leaves_zero_rows(vcfclick_home):
     rows under the failed ingest_id."""
     _vc(vcfclick_home, "db", "create", "smoke")
     _vc(
-        vcfclick_home, "db", "ingest", "smoke", str(MULTI_VCF),
-        "--cohort", "demo", "--ingest-id", "batch_a", "--serial",
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(MULTI_VCF),
+        "--cohort",
+        "demo",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
         expect_failure=True,
     )
 
     for table in ("variants", "genotypes", "samples", "ingestions"):
         out = _query(
-            vcfclick_home, "smoke",
+            vcfclick_home,
+            "smoke",
             f"SELECT count() FROM {table} WHERE ingest_id = 'batch_a'",
         )
         # Output is a boxed count; "0" must be the only number on the line.
-        assert "│       0 │" in out or "│ 0 │" in out, (
-            f"rollback did not scrub {table}: {out!r}"
-        )
+        assert (
+            "│       0 │" in out or "│ 0 │" in out
+        ), f"rollback did not scrub {table}: {out!r}"
 
 
 def test_successful_ingest_after_failed_one(vcfclick_home, tiny_vcf):
@@ -92,14 +111,30 @@ def test_successful_ingest_after_failed_one(vcfclick_home, tiny_vcf):
     _vc(vcfclick_home, "db", "create", "smoke")
     # Failed ingest #1
     _vc(
-        vcfclick_home, "db", "ingest", "smoke", str(MULTI_VCF),
-        "--cohort", "demo", "--ingest-id", "batch_bad", "--serial",
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(MULTI_VCF),
+        "--cohort",
+        "demo",
+        "--ingest-id",
+        "batch_bad",
+        "--serial",
         expect_failure=True,
     )
     # Good ingest #2
     _vc(
-        vcfclick_home, "db", "ingest", "smoke", str(tiny_vcf),
-        "--cohort", "demo", "--ingest-id", "batch_good", "--serial",
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(tiny_vcf),
+        "--cohort",
+        "demo",
+        "--ingest-id",
+        "batch_good",
+        "--serial",
     )
 
     out = _query(vcfclick_home, "smoke", "SELECT count() FROM variants")

@@ -370,7 +370,9 @@ def ingest(
                     )
                 variants_batch.append(build_variant_row(variant, ingest_id))
                 genotypes_batch.extend(
-                    build_genotype_rows(variant, samples, extra_format_fields, ingest_id)
+                    build_genotype_rows(
+                        variant, samples, extra_format_fields, ingest_id
+                    )
                 )
                 n_variants += 1
 

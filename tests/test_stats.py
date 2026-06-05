@@ -24,7 +24,9 @@ VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclic
 ROUTING_VCF = Path(__file__).parent / "fixtures" / "routing.vcf.gz"
 
 
-def _vc(home: Path, *args: str, expect_failure: bool = False) -> subprocess.CompletedProcess:
+def _vc(
+    home: Path, *args: str, expect_failure: bool = False
+) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["VCFCLICK_HOME"] = str(home)
     env.pop("VCFCLICK_DB_NAME", None)
@@ -45,8 +47,16 @@ def _stats(home: Path, extra: list[str] | None = None, db: str = "demo") -> str:
     """Ingest the routing fixture and return `db stats` stdout."""
     _vc(home, "db", "create", db)
     _vc(
-        home, "db", "ingest", db, str(ROUTING_VCF),
-        "--cohort", "acme", "--ingest-id", "batch_a", "--serial",
+        home,
+        "db",
+        "ingest",
+        db,
+        str(ROUTING_VCF),
+        "--cohort",
+        "acme",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
     )
     return _vc(home, "db", "stats", db, *(extra or [])).stdout
 
@@ -78,7 +88,9 @@ def test_stats_reports_cohort_breakdown(vcfclick_home):
 def test_stats_reports_contig_breakdown(vcfclick_home):
     out = _stats(vcfclick_home)
     assert "contigs:" in out
-    chr1_line = next(line for line in out.splitlines() if "chr1" in line and "variants" in line)
+    chr1_line = next(
+        line for line in out.splitlines() if "chr1" in line and "variants" in line
+    )
     assert "2 variants" in chr1_line
 
 
@@ -115,7 +127,8 @@ def test_stats_lists_info_extra_overflow_keys(vcfclick_home):
     assert "info_extra" in out and "overflow keys" in out
     for key in ("MYRARETAG", "COSMICID", "CSQ"):
         line = next(
-            line for line in out.splitlines()
+            line
+            for line in out.splitlines()
             if line.strip().startswith(key) and "50.0%" in line
         )
         assert "1" in line, f"{key} should have count 1: {line!r}"
@@ -125,7 +138,9 @@ def test_stats_lists_format_extra_overflow_keys(vcfclick_home):
     """MYCUSTOM appears on the genotypes at pos 100 (both samples) but
     not pos 200 (only one sample stored). 2 of 3 genotype rows → 66.7%."""
     out = _stats(vcfclick_home)
-    line = next(line for line in out.splitlines() if line.strip().startswith("MYCUSTOM"))
+    line = next(
+        line for line in out.splitlines() if line.strip().startswith("MYCUSTOM")
+    )
     assert "2" in line and "66.7%" in line
 
 

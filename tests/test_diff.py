@@ -19,7 +19,6 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
@@ -27,7 +26,9 @@ TINY = Path(__file__).parent / "fixtures" / "tiny.vcf.gz"
 ROUTING = Path(__file__).parent / "fixtures" / "routing.vcf.gz"
 
 
-def _vc(home: Path, *args: str, expect_failure: bool = False) -> subprocess.CompletedProcess:
+def _vc(
+    home: Path, *args: str, expect_failure: bool = False
+) -> subprocess.CompletedProcess:
     env = os.environ.copy()
     env["VCFCLICK_HOME"] = str(home)
     env.pop("VCFCLICK_DB_NAME", None)
@@ -47,32 +48,62 @@ def _vc(home: Path, *args: str, expect_failure: bool = False) -> subprocess.Comp
 def _setup_two_cohort_db(home: Path, db: str = "demo") -> None:
     _vc(home, "db", "create", db)
     _vc(
-        home, "db", "ingest", db, str(TINY),
-        "--cohort", "case", "--ingest-id", "batch_case", "--serial",
+        home,
+        "db",
+        "ingest",
+        db,
+        str(TINY),
+        "--cohort",
+        "case",
+        "--ingest-id",
+        "batch_case",
+        "--serial",
     )
     _vc(
-        home, "db", "ingest", db, str(ROUTING),
-        "--cohort", "control", "--ingest-id", "batch_control", "--serial",
+        home,
+        "db",
+        "ingest",
+        db,
+        str(ROUTING),
+        "--cohort",
+        "control",
+        "--ingest-id",
+        "batch_control",
+        "--serial",
     )
 
 
 def _tsv_rows(home: Path, db: str, *flags: str) -> list[list[str]]:
     """Run db diff in TSV format and return parsed rows."""
-    out = _vc(home, "db", "diff", db,
-              "--cohort-a", "case", "--cohort-b", "control",
-              "--format", "TSV", *flags).stdout
+    out = _vc(
+        home,
+        "db",
+        "diff",
+        db,
+        "--cohort-a",
+        "case",
+        "--cohort-b",
+        "control",
+        "--format",
+        "TSV",
+        *flags,
+    ).stdout
     return [line.split("\t") for line in out.strip().splitlines() if line.strip()]
 
 
 def test_diff_reports_correct_af_for_overlap_variant(vcfclick_home):
     """chr1:100 A>G is in both fixtures:
-       case (tiny): S1=0/0 S2=0/1 S3=1/1 → 3 alt out of 6  → AF 0.5
-       control (routing): S1=0/1 S2=1/1 → 3 alt out of 4   → AF 0.75
-       diff = 0.5 - 0.75 = -0.25
+    case (tiny): S1=0/0 S2=0/1 S3=1/1 → 3 alt out of 6  → AF 0.5
+    control (routing): S1=0/1 S2=1/1 → 3 alt out of 4   → AF 0.75
+    diff = 0.5 - 0.75 = -0.25
     """
     _setup_two_cohort_db(vcfclick_home)
     rows = _tsv_rows(vcfclick_home, "demo")
-    overlap = [r for r in rows if r[0] == "chr1" and r[1] == "100" and r[2] == "A" and r[3] == "G"]
+    overlap = [
+        r
+        for r in rows
+        if r[0] == "chr1" and r[1] == "100" and r[2] == "A" and r[3] == "G"
+    ]
     assert len(overlap) == 1
     r = overlap[0]
     # Columns: chrom, pos, ref, alt, ac_a, an_a, af_a, ac_b, an_b, af_b, af_diff
@@ -128,8 +159,14 @@ def test_diff_top_n_limits_results(vcfclick_home):
 def test_diff_errors_on_unknown_cohort(vcfclick_home):
     _setup_two_cohort_db(vcfclick_home)
     r = _vc(
-        vcfclick_home, "db", "diff", "demo",
-        "--cohort-a", "case", "--cohort-b", "nope",
+        vcfclick_home,
+        "db",
+        "diff",
+        "demo",
+        "--cohort-a",
+        "case",
+        "--cohort-b",
+        "nope",
         expect_failure=True,
     )
     assert "unknown cohort" in r.stderr
@@ -138,8 +175,14 @@ def test_diff_errors_on_unknown_cohort(vcfclick_home):
 
 def test_diff_errors_when_db_missing(vcfclick_home):
     r = _vc(
-        vcfclick_home, "db", "diff", "nonexistent",
-        "--cohort-a", "case", "--cohort-b", "control",
+        vcfclick_home,
+        "db",
+        "diff",
+        "nonexistent",
+        "--cohort-a",
+        "case",
+        "--cohort-b",
+        "control",
         expect_failure=True,
     )
     assert "not found" in r.stderr

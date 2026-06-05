@@ -18,10 +18,8 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
-import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 # Prefer the installed entry-point script (handles the importlib shim in

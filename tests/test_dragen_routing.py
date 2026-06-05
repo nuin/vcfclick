@@ -48,8 +48,18 @@ def _tsv(home: Path, db: str, sql: str) -> list[list[str]]:
 
 def _ingest_dragen(home: Path, db: str = "dr") -> None:
     _vc(home, "db", "create", db)
-    _vc(home, "db", "ingest", db, str(DRAGEN_VCF),
-        "--cohort", "demo", "--ingest-id", "batch_a", "--serial")
+    _vc(
+        home,
+        "db",
+        "ingest",
+        db,
+        str(DRAGEN_VCF),
+        "--cohort",
+        "demo",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
+    )
 
 
 def test_classify_header_promotes_dragen_fields():
@@ -62,9 +72,15 @@ def test_classify_header_promotes_dragen_fields():
     cls = classify_header(VCF(str(DRAGEN_VCF)))
 
     expected_typed = {
-        "AC", "AF", "AN", "DP",
-        "FractionInformativeReads", "HAPCOMP", "HAPDOM",
-        "DragenSnvHardQUAL", "DragenIndelHardQUAL",
+        "AC",
+        "AF",
+        "AN",
+        "DP",
+        "FractionInformativeReads",
+        "HAPCOMP",
+        "HAPDOM",
+        "DragenSnvHardQUAL",
+        "DragenIndelHardQUAL",
     }
     assert expected_typed.issubset(set(cls["typed_info"]))
     # Lab-specific vendor tag is NOT in the routing tables → overflow.
@@ -76,7 +92,8 @@ def test_dragen_snv_fields_populate_typed_columns(vcfclick_home):
     and HAPDOM populated; DragenIndelHardQUAL is NULL (indel-only)."""
     _ingest_dragen(vcfclick_home)
     rows = _tsv(
-        vcfclick_home, "dr",
+        vcfclick_home,
+        "dr",
         "SELECT info_FractionInformativeReads, info_HAPCOMP, info_HAPDOM, "
         "info_DragenSnvHardQUAL, info_DragenIndelHardQUAL "
         "FROM variants WHERE pos = 100",
@@ -89,7 +106,8 @@ def test_dragen_indel_fields_populate_typed_columns(vcfclick_home):
     DragenSnvHardQUAL is NULL."""
     _ingest_dragen(vcfclick_home)
     rows = _tsv(
-        vcfclick_home, "dr",
+        vcfclick_home,
+        "dr",
         "SELECT info_FractionInformativeReads, info_HAPCOMP, info_HAPDOM, "
         "info_DragenSnvHardQUAL, info_DragenIndelHardQUAL "
         "FROM variants WHERE pos = 200",
@@ -102,7 +120,8 @@ def test_lab_specific_tag_still_lands_in_info_extra(vcfclick_home):
     overflow Map, not get silently dropped."""
     _ingest_dragen(vcfclick_home)
     rows = _tsv(
-        vcfclick_home, "dr",
+        vcfclick_home,
+        "dr",
         "SELECT info_extra['DRAGEN_VENDOR_TAG'] FROM variants WHERE pos = 100",
     )
     assert rows == [["batch_x"]]
@@ -113,17 +132,23 @@ def test_no_dragen_field_leaks_into_info_extra(vcfclick_home):
     after promotion. If they showed up there too we'd be double-storing."""
     _ingest_dragen(vcfclick_home)
     rows = _tsv(
-        vcfclick_home, "dr",
+        vcfclick_home,
+        "dr",
         "SELECT mapKeys(info_extra) FROM variants WHERE pos = 100",
     )
     keys = rows[0][0].strip("[]").replace("'", "").split(",") if rows else []
     keys = [k.strip() for k in keys if k.strip()]
 
-    for routed in ("FractionInformativeReads", "HAPCOMP", "HAPDOM",
-                   "DragenSnvHardQUAL", "DragenIndelHardQUAL"):
-        assert routed not in keys, (
-            f"{routed} leaked into info_extra: should be in typed column only"
-        )
+    for routed in (
+        "FractionInformativeReads",
+        "HAPCOMP",
+        "HAPDOM",
+        "DragenSnvHardQUAL",
+        "DragenIndelHardQUAL",
+    ):
+        assert (
+            routed not in keys
+        ), f"{routed} leaked into info_extra: should be in typed column only"
 
 
 def test_discover_lists_dragen_fields_as_typed():
@@ -131,15 +156,21 @@ def test_discover_lists_dragen_fields_as_typed():
     bucket, not in the overflow bucket with a promotion hint."""
     r = subprocess.run(
         [VCFCLICK_BIN, "discover", str(DRAGEN_VCF)],
-        cwd=REPO, capture_output=True, text=True,
+        cwd=REPO,
+        capture_output=True,
+        text=True,
     )
     assert r.returncode == 0
     # Walk the INFO section: each routed DRAGEN field must appear in the
     # `typed` line, NOT in the overflow lines.
     typed_line = next(
-        line for line in r.stdout.splitlines()
-        if "AC," in line and "DragenSnv" in line
+        line for line in r.stdout.splitlines() if "AC," in line and "DragenSnv" in line
     )
-    for fid in ("FractionInformativeReads", "HAPCOMP", "HAPDOM",
-                "DragenSnvHardQUAL", "DragenIndelHardQUAL"):
+    for fid in (
+        "FractionInformativeReads",
+        "HAPCOMP",
+        "HAPDOM",
+        "DragenSnvHardQUAL",
+        "DragenIndelHardQUAL",
+    ):
         assert fid in typed_line, f"{fid} not shown as typed in discover output"
