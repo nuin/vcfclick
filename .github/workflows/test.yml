@@ -71,7 +71,9 @@ jobs:
         run: uv sync --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
-        # The MCP stdio test spawns a subprocess and waits for the
-        # initialize handshake; 5 min ceiling protects against hangs.
-        timeout-minutes: 5
+        # Suite normally completes in 25–90s on CI. The chDB session-init
+        # retry wrapper (storage.db._open_session_with_retry) adds bounded
+        # backoff variance — 12 minutes gives the retries room without
+        # giving up real-hang detection.
+        timeout-minutes: 12
         run: uv run pytest tests/ -v
