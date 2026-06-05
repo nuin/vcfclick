@@ -7,6 +7,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `vcfclick db stats <name>` — schema-population stats for an ingested
+  cohort. Reports row counts (variants / genotypes / samples /
+  ingestions), per-cohort and per-contig breakdowns, the populated
+  fraction of every typed column on `variants` and `genotypes`
+  (sorted by population descending so the actually-used fields
+  surface first), and the most frequent `info_extra` / `format_extra`
+  overflow Map keys. `--top N` caps the overflow listings. Closes
+  the "I don't know what's in this DB" gap that the `discover`
+  command only closed for VCFs pre-ingest.
 - chDB session-init retry wrapper in `storage.db._open_session_with_retry`.
   Catches the known intermittent EmbeddedServer async-load race
   (`recursive_mutex lock failed: Invalid argument` → `BAD_ARGUMENTS` /

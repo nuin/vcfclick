@@ -157,6 +157,11 @@ vcfclick db query my-cohort "SELECT count() FROM variants"
 # Snowflake, BigQuery, Spark, Iceberg)
 vcfclick db dump my-cohort --out my-cohort-export/
 
+# Show what fields are actually populated in this cohort — the analog
+# of `vcfclick discover` (which works on a VCF) but operating on the
+# stored data after ingest.
+vcfclick db stats my-cohort
+
 # Compare allele frequencies across two cohorts in the same DB
 # (case-vs-control, drug-vs-placebo, population-vs-population)
 vcfclick db diff my-cohort --cohort-a case --cohort-b control --top 50

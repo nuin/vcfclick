@@ -716,3 +716,248 @@ def db_ingest_batch(
         for entry, err in failures:
             click.echo(f"  {entry.ingest_id} ({entry.vcf_path.name}): {err}")
         sys.exit(1)
+
+
+# ─── stats ──────────────────────────────────────────────────────────
+
+
+# Structural / Map columns that aren't "typed data" — keys, sort columns,
+# the overflow Maps themselves, ingest timestamps. We exclude these from
+# population stats because "what % of rows have chrom?" is uninteresting.
+_STATS_SKIP = {
+    "variants": {
+        "ingest_id", "chrom", "pos", "ref", "alt", "vcf_id", "qual",
+        "filter", "info_extra", "ingested_at",
+    },
+    "genotypes": {
+        "ingest_id", "chrom", "pos", "ref", "alt", "sample_id", "gt",
+        "phased", "format_extra", "ingested_at",
+    },
+}
+
+
+def _list_typed_columns(sess, table: str) -> list[tuple[str, str]]:
+    """Return [(name, type), ...] for typed (non-structural) columns
+    on `table`, in schema-declaration order."""
+    out = (
+        sess.query(
+            f"SELECT name, type FROM system.columns "
+            f"WHERE table = '{table}' AND database = currentDatabase() "
+            f"ORDER BY position",
+            "TSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+    )
+    skip = _STATS_SKIP.get(table, set())
+    cols: list[tuple[str, str]] = []
+    for line in out.splitlines():
+        name, type_str = line.split("\t", 1)
+        if name in skip:
+            continue
+        cols.append((name, type_str))
+    return cols
+
+
+def _population_expr(col_name: str, col_type: str) -> str:
+    """Build the per-column aggregation fragment. Nullable columns
+    count `IS NOT NULL`; non-nullable flag-style columns (UInt8 default
+    0) count non-zero — both align with the human intuition for "is
+    this field actually used in this data?"."""
+    if "Nullable" in col_type:
+        return f"countIf(`{col_name}` IS NOT NULL) AS `{col_name}`"
+    # Non-nullable: defaults to 0 in our schema. Count the non-default
+    # values, which for flag columns matches "% rows where the flag is set".
+    return f"countIf(`{col_name}` != 0) AS `{col_name}`"
+
+
+def _query_population(sess, table: str, columns: list[tuple[str, str]]) -> dict[str, int]:
+    """One aggregation query for every typed column on `table`. Returns
+    `{column_name: populated_row_count}`."""
+    if not columns:
+        return {}
+    exprs = ", ".join(_population_expr(n, t) for n, t in columns)
+    out = (
+        sess.query(f"SELECT {exprs} FROM {table}", "TSV")
+        .bytes()
+        .decode()
+        .strip()
+    )
+    values = [int(v) for v in out.split("\t")]
+    return dict(zip([n for n, _ in columns], values))
+
+
+def _query_map_keys(sess, table: str, map_col: str, top: int) -> tuple[list[tuple[str, int]], int]:
+    """Top-N most frequent keys in `map_col`. Returns ([(key, n), ...],
+    total_distinct_keys)."""
+    # Distinct key count first — drives the "top X of Y" header.
+    n_distinct = int(
+        sess.query(
+            f"SELECT count(DISTINCT k) FROM {table} "
+            f"ARRAY JOIN mapKeys({map_col}) AS k",
+            "TSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+        or "0"
+    )
+    if n_distinct == 0:
+        return [], 0
+    out = (
+        sess.query(
+            f"SELECT k, count() AS n FROM {table} "
+            f"ARRAY JOIN mapKeys({map_col}) AS k "
+            f"GROUP BY k ORDER BY n DESC, k LIMIT {int(top)}",
+            "TSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+    )
+    rows: list[tuple[str, int]] = []
+    for line in out.splitlines():
+        k, n = line.split("\t", 1)
+        rows.append((k, int(n)))
+    return rows, n_distinct
+
+
+def _pct(num: int, denom: int) -> str:
+    if denom == 0:
+        return "  0.0%"
+    return f"{100.0 * num / denom:>5.1f}%"
+
+
+@db.command(name="stats")
+@click.argument("name")
+@click.option(
+    "--top",
+    "top",
+    type=int,
+    default=20,
+    show_default=True,
+    help="Show at most TOP overflow-Map keys per table.",
+)
+def db_stats(name: str, top: int) -> None:
+    """Schema-population stats for an ingested cohort.
+
+    Reports row counts, cohort and contig breakdowns, the populated
+    fraction of every typed column, and the most frequent
+    overflow-Map keys. Use this when you want to know "what fields
+    are actually in this cohort's data?" — the discover command
+    answers the same question for a VCF before ingest; `db stats`
+    answers it for the stored data after.
+    """
+    from storage import db_disk_size, db_path, get_session
+
+    if not db_path(name).exists():
+        raise click.ClickException(f"db {name!r} not found")
+
+    path = db_path(name)
+    size_mb = db_disk_size(name) / 1_000_000
+
+    _set_db(name)
+    sess = get_session(name)
+
+    counts = {
+        t: int(
+            sess.query(f"SELECT count() FROM {t}", "TSV")
+            .bytes()
+            .decode()
+            .strip()
+            or "0"
+        )
+        for t in ("variants", "genotypes", "samples", "ingestions")
+    }
+
+    cohorts_out = (
+        sess.query(
+            "SELECT cohort, count(DISTINCT (ingest_id, sample_id)) AS n "
+            "FROM samples GROUP BY cohort ORDER BY n DESC, cohort",
+            "TSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+    )
+    cohorts = [line.split("\t") for line in cohorts_out.splitlines() if line]
+
+    contigs_out = (
+        sess.query(
+            "SELECT chrom, count() AS n FROM variants "
+            "GROUP BY chrom ORDER BY n DESC, chrom",
+            "TSV",
+        )
+        .bytes()
+        .decode()
+        .strip()
+    )
+    contigs = [line.split("\t") for line in contigs_out.splitlines() if line]
+
+    variants_cols = _list_typed_columns(sess, "variants")
+    variants_pop = _query_population(sess, "variants", variants_cols)
+    info_extra_top, info_extra_n = _query_map_keys(sess, "variants", "info_extra", top)
+
+    genotypes_cols = _list_typed_columns(sess, "genotypes")
+    genotypes_pop = _query_population(sess, "genotypes", genotypes_cols)
+    fmt_extra_top, fmt_extra_n = _query_map_keys(sess, "genotypes", "format_extra", top)
+
+    # ─── render ──────────────────────────────────────────────────────
+
+    click.echo(f"db:        {name}")
+    click.echo(f"path:      {path}")
+    click.echo(f"size:      {size_mb:.1f} MB")
+    click.echo()
+    click.echo("counts:")
+    for t in ("variants", "genotypes", "samples", "ingestions"):
+        click.echo(f"  {t:<12} {counts[t]:>10,}")
+
+    if cohorts:
+        click.echo()
+        click.echo("cohorts:")
+        for cohort, n in cohorts:
+            click.echo(f"  {cohort:<20} {int(n):>10,} samples")
+
+    if contigs:
+        click.echo()
+        click.echo("contigs:")
+        for chrom, n in contigs:
+            click.echo(f"  {chrom:<20} {int(n):>10,} variants")
+
+    v_total = counts["variants"]
+    click.echo()
+    click.echo(f"variants — typed INFO column population (of {v_total:,} rows):")
+    # Sort by population descending so populated columns surface first.
+    sorted_v = sorted(variants_pop.items(), key=lambda kv: (-kv[1], kv[0]))
+    for col, n in sorted_v:
+        click.echo(f"  {col:<32} {n:>10,}  ({_pct(n, v_total)})")
+
+    click.echo()
+    header = (
+        f"variants.info_extra — overflow keys "
+        f"(top {min(top, info_extra_n)} of {info_extra_n})"
+        if info_extra_n
+        else "variants.info_extra — overflow keys: (none)"
+    )
+    click.echo(header)
+    for key, n in info_extra_top:
+        click.echo(f"  {key:<32} {n:>10,}  ({_pct(n, v_total)})")
+
+    g_total = counts["genotypes"]
+    click.echo()
+    click.echo(f"genotypes — typed column population (of {g_total:,} rows):")
+    sorted_g = sorted(genotypes_pop.items(), key=lambda kv: (-kv[1], kv[0]))
+    for col, n in sorted_g:
+        click.echo(f"  {col:<32} {n:>10,}  ({_pct(n, g_total)})")
+
+    click.echo()
+    header = (
+        f"genotypes.format_extra — overflow keys "
+        f"(top {min(top, fmt_extra_n)} of {fmt_extra_n})"
+        if fmt_extra_n
+        else "genotypes.format_extra — overflow keys: (none)"
+    )
+    click.echo(header)
+    for key, n in fmt_extra_top:
+        click.echo(f"  {key:<32} {n:>10,}  ({_pct(n, g_total)})")
