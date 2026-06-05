@@ -7,6 +7,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `docs/SCHEMA.md` — flat reference for every column on every table
+  (`variants`, `genotypes`, `samples`, `ingestions`), plus the three
+  conventions SQL writers have to internalise (sparse genotypes,
+  cross-ingestion non-merging, the GQ/DP NULL silent-failure trap)
+  and the four-step promotion recipe for moving an overflow field
+  to a typed column. README links to it.
 - `vcfclick db stats <name>` — schema-population stats for an ingested
   cohort. Reports row counts (variants / genotypes / samples /
   ingestions), per-cohort and per-contig breakdowns, the populated

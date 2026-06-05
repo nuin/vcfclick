@@ -244,6 +244,13 @@ GENCODE updates yearly; ClinVar updates weekly. Re-run either command
 to refresh. Both default to downloading the canonical source; pass
 `--gff` or `--vcf` to load from a local file instead.
 
+## Schema reference
+
+Every column on `variants`, `genotypes`, `samples`, `ingestions`,
+plus the three conventions that matter at query time (sparse
+genotypes, cross-ingestion non-merging, the GQ/DP NULL trap):
+[`docs/SCHEMA.md`](docs/SCHEMA.md).
+
 ## Layout
 
 - `schema/` — ClickHouse DDL (chDB applies it unchanged).
