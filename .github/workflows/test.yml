@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+# Force GitHub Actions to run Node-20-built actions under Node 24,
+# ahead of the September 2026 hard cutover. Silences the deprecation
+# warning that fires on every run for actions/checkout@v4 and
+# astral-sh/setup-uv@v6 until those release Node-24-native versions.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 # A single push that lands fast wins over many runs of the same SHA.
 # Newer pushes to the same ref cancel any in-flight run.
 concurrency:
@@ -44,19 +51,12 @@ jobs:
         # 3.11 is our floor (requires-python in pyproject); 3.13 is the
         # current stable. 3.12 is the middle ground most users have.
         python-version: ["3.11", "3.12", "3.13"]
-        exclude:
-          # chDB 4.x hits `recursive_mutex lock failed: Invalid argument`
-          # during EmbeddedServer init on Linux under Python 3.12+,
-          # observed when re-opening a chDB session after an
-          # ALTER TABLE … DELETE mutation completes (the rollback path
-          # in storage.rollback_ingest). The mutation succeeds but the
-          # on-disk MergeTree state ends up in a form chDB can't reload.
-          # Reproducible upstream and intermittent on the runner, not a
-          # vcfclick bug. Re-enable when chDB ships a fix.
-          - os: ubuntu-latest
-            python-version: "3.12"
-          - os: ubuntu-latest
-            python-version: "3.13"
+        # Linux × 3.12 and 3.13 were previously excluded because chDB
+        # 4.x hit `recursive_mutex lock failed: Invalid argument` during
+        # EmbeddedServer init. Re-enabling now to see if the retry
+        # wrapper in storage.db._open_session_with_retry (commit 0136c74)
+        # handles those failures cleanly. Watch the next few CI runs
+        # and re-add the exclude block if the wrapper isn't enough.
 
     steps:
       - uses: actions/checkout@v4
