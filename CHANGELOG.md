@@ -7,6 +7,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- chDB session-init retry wrapper in `storage.db._open_session_with_retry`.
+  Catches the known intermittent EmbeddedServer async-load race
+  (`recursive_mutex lock failed: Invalid argument` → `BAD_ARGUMENTS` /
+  `ASYNC_LOAD_WAIT_FAILED`) and retries up to 3× with 0.1 / 0.3 / 0.9 s
+  backoff. Non-race exceptions propagate immediately so real failures
+  aren't masked. Logs a warning when a retry fires. 5 unit tests in
+  `tests/test_chdb_retry.py` lock the contract.
 - DRAGEN-specific INFO routing — `FractionInformativeReads`, `HAPCOMP`,
   `HAPDOM`, `DragenSnvHardQUAL`, `DragenIndelHardQUAL` now promote to
   typed columns on `variants` instead of landing in `info_extra`.

@@ -30,15 +30,19 @@ set VCFCLICK_DB_NAME.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import shutil
 import tempfile
+import time
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
 from chdb import session as _session
+
+log = logging.getLogger(__name__)
 
 
 VCFCLICK_HOME = Path(os.environ.get("VCFCLICK_HOME", Path.home() / ".vcfclick"))
@@ -75,6 +79,50 @@ def db_path(name: str | None = None) -> Path:
     return DB_ROOT / resolved
 
 
+# Substrings that flag the known chDB EmbeddedServer async-load race
+# (a `recursive_mutex` invalid-state failure during session init). The
+# race is intermittent — retrying with a small backoff has been enough
+# in observation to bring per-open success to effectively 100%. If
+# the exception message contains NONE of these substrings, we surface
+# it immediately so genuine errors aren't masked by the retry loop.
+_CHDB_RACE_MARKERS = (
+    "BAD_ARGUMENTS",
+    "recursive_mutex lock failed",
+    "ASYNC_LOAD_WAIT_FAILED",
+)
+
+# Backoff schedule. Total worst-case retry cost is ~1.3 s on cold open;
+# well under the chDB session-init baseline so retried opens still feel
+# instant in normal CLI use.
+_CHDB_RETRY_DELAYS_S = (0.1, 0.3, 0.9)
+
+
+def _open_session_with_retry(path: str) -> _session.Session:
+    """Open a chDB session, retrying through the known EmbeddedServer
+    async-load race. Non-race exceptions propagate immediately."""
+    last_exc: Exception | None = None
+    for attempt in range(len(_CHDB_RETRY_DELAYS_S) + 1):
+        try:
+            return _session.Session(path)
+        except Exception as exc:
+            msg = str(exc)
+            if not any(marker in msg for marker in _CHDB_RACE_MARKERS):
+                raise
+            last_exc = exc
+            if attempt < len(_CHDB_RETRY_DELAYS_S):
+                delay = _CHDB_RETRY_DELAYS_S[attempt]
+                log.warning(
+                    "[storage] chDB session open hit the async-load race "
+                    "(attempt %d/%d), retrying in %.1fs",
+                    attempt + 1,
+                    len(_CHDB_RETRY_DELAYS_S) + 1,
+                    delay,
+                )
+                time.sleep(delay)
+    assert last_exc is not None  # narrows for type-checkers
+    raise last_exc
+
+
 def get_session(name: str | None = None) -> _session.Session:
     """Open (and cache) the chDB session for a named DB."""
     resolved = _resolve_name(name)
@@ -82,7 +130,7 @@ def get_session(name: str | None = None) -> _session.Session:
     if cache_key not in _sessions:
         path = db_path(name)
         path.mkdir(parents=True, exist_ok=True)
-        _sessions[cache_key] = _session.Session(str(path))
+        _sessions[cache_key] = _open_session_with_retry(str(path))
     return _sessions[cache_key]
 
 
