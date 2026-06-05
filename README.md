@@ -4,14 +4,15 @@
 [![PyPI](https://img.shields.io/pypi/v/vcfclick.svg)](https://pypi.org/project/vcfclick/)
 
 A modern VCF database for research labs and bioinformatics teams.
-Embedded chDB (ClickHouse engine, no server) for sample data, embedded
-DuckDB for reference annotations, and a natural-language query layer
-that turns plain English into SQL you can read.
+Embedded chDB (ClickHouse engine, serverless) for sample data, embedded
+DuckDB for reference annotations, and a NL query layer
+that turns plain English into SQL for demonstration.
 
-Single binary. `uv run vcfclick`. No Docker, no port, no server, no
+Single binary. `uv run vcfclick`.  no port, no server, no
 Gatekeeper dialog. The headline demo runs from a clean `git clone`.
 
 Status: research preview. Architecture validated against real 1000 Genomes data.
+Next gnomAD.
 
 ## Why
 
@@ -20,7 +21,7 @@ Two complaints heard repeatedly in research bioinformatics:
 1. *"My cohort grew and `bcftools | pandas` stopped scaling."* When
    you have 500+ samples, ad-hoc cohort correlation queries become
    painfully slow. The standard answer is "go install Hail," which is
-   correct and operationally expensive.
+   correct and expensive.
 
 2. *"I can write the SQL, but I shouldn't have to type the boilerplate
    every time — and when it's written for me, I want to see it."*
@@ -66,8 +67,8 @@ Two embedded stores, distinct purposes:
 - **chDB** holds sample data: wide pre-declared schema for VCF 4.3
   reserved + common GATK INFO/FORMAT fields, with
   `Map(String, String)` overflow for anything else. **Same SQL surface,
-  same MergeTree engines, same projections as full ClickHouse — no
-  server.** Persistent on disk under `.chdb/`.
+  same MergeTree engines, same projections as full ClickHouse — serverless
+  .** Persistent on disk under `.chdb/`.
 - **DuckDB** holds reference data: RefSeq genes, ClinVar. Embedded,
   swappable, monthly refresh. Never touches sample data.
 
@@ -93,6 +94,7 @@ form instead:
 
 ```bash
 pip install vcfclick         # inside your own venv
+uv pip install vcfclick      # on a uv environment
 ```
 
 vcfclick is pure-Python; its native dependencies (`cyvcf2`, `chdb`,
@@ -105,7 +107,7 @@ Listing: <https://pypi.org/project/vcfclick/>.
 ## 30-second demo
 
 A pre-built 1000 Genomes Phase 3 BRCA1 cohort (3,014 variants × 3,202
-samples) ships as a release asset. Three commands from a clean machine:
+samples) included as an asset. Three commands from a clean machine:
 
 ```bash
 uv tool install vcfclick
@@ -127,7 +129,7 @@ Each cohort / study / VCF lives in its own small database under
 # Normalise the VCF (one-time per file)
 bcftools norm -m - input.vcf.gz | bgzip > normalised.vcf.gz
 
-# Preview which INFO/FORMAT fields will land in typed columns vs the
+# Preview which INFO/FORMAT fields will be stored in typed columns vs the
 # overflow Maps — and what DDL would promote an overflow field to typed
 vcfclick discover normalised.vcf.gz
 
@@ -182,7 +184,7 @@ byte-identical to a full ClickHouse server. Multiple databases sit side
 by side; each is cheap to create, dump, share, or delete.
 
 The ingester prints a classification of the VCF's INFO/FORMAT fields
-on startup — what landed in typed columns vs. the overflow Maps. That
+on startup — what is stored in typed columns vs. the overflow Maps. That
 log line is the "adapts to any VCF" claim made literally visible.
 
 **Per-ingestion identity inside a database.** Every row carries
@@ -311,7 +313,7 @@ vcfclick's own ingest configuration sweep is in
 Apache License 2.0. Full text in [`LICENSE`](LICENSE); rationale in
 [`LICENSING.md`](LICENSING.md).
 
-## Open work
+## TODO
 
 - Phase 2: transcript / exon / CDS hierarchy + corresponding MCP tools.
 - LLM-prompt stress-testing of `SCHEMA_DESCRIPTION` against a real
