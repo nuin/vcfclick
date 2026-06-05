@@ -99,9 +99,9 @@ def test_failed_ingest_leaves_zero_rows(vcfclick_home):
             f"SELECT count() FROM {table} WHERE ingest_id = 'batch_a'",
         )
         # Output is a boxed count; "0" must be the only number on the line.
-        assert (
-            "│       0 │" in out or "│ 0 │" in out
-        ), f"rollback did not scrub {table}: {out!r}"
+        assert "│       0 │" in out or "│ 0 │" in out, (
+            f"rollback did not scrub {table}: {out!r}"
+        )
 
 
 def test_successful_ingest_after_failed_one(vcfclick_home, tiny_vcf):

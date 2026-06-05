@@ -565,8 +565,7 @@ def _parse_manifest(path: Path, default_cohort: str) -> list[_BatchEntry]:
         reader = csv.DictReader(f, delimiter="\t")
         if reader.fieldnames is None or "vcf_path" not in reader.fieldnames:
             raise click.ClickException(
-                f"manifest must have a `vcf_path` column "
-                f"(found: {reader.fieldnames})"
+                f"manifest must have a `vcf_path` column (found: {reader.fieldnames})"
             )
 
         for line_no, row in enumerate(reader, start=2):  # 1 = header
@@ -688,8 +687,7 @@ def db_ingest_batch(
 
     for i, entry in enumerate(entries, start=1):
         click.echo(
-            f"[batch] [{i:>4}/{len(entries)}] {entry.ingest_id} "
-            f"(cohort={entry.cohort})"
+            f"[batch] [{i:>4}/{len(entries)}] {entry.ingest_id} (cohort={entry.cohort})"
         )
         try:
             _ingest(
@@ -809,8 +807,7 @@ def _query_map_keys(
     # Distinct key count first — drives the "top X of Y" header.
     n_distinct = int(
         sess.query(
-            f"SELECT count(DISTINCT k) FROM {table} "
-            f"ARRAY JOIN mapKeys({map_col}) AS k",
+            f"SELECT count(DISTINCT k) FROM {table} ARRAY JOIN mapKeys({map_col}) AS k",
             "TSV",
         )
         .bytes()

@@ -13,6 +13,24 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Lint runs once (not per matrix cell) and in parallel with `test`.
+  # Both must succeed for the workflow to pass. Lint failures are fast
+  # to surface and cheap to fix, so we don't gate `test` on `lint` —
+  # both run concurrently and the developer sees both signals at once.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - name: ruff format check
+        # uvx runs an ephemeral install of the named tool — no project
+        # sync required just for this check. Pinned to a specific
+        # version so CI and local (`uv run ruff` via the dev group in
+        # pyproject) format identically. Bump together when upgrading.
+        run: uvx ruff@0.15.16 format --check .
+      - name: ruff lint
+        run: uvx ruff@0.15.16 check .
+
   test:
     runs-on: ${{ matrix.os }}
     strategy:

@@ -144,7 +144,7 @@ def test_manifest_with_custom_ingest_ids_and_per_row_cohort(vcfclick_home, tmp_p
 def test_manifest_falls_back_to_cli_cohort_when_column_absent(vcfclick_home, tmp_path):
     """A manifest with no `cohort` column uses the --cohort flag."""
     manifest = tmp_path / "samples.tsv"
-    manifest.write_text("vcf_path\n" f"{PER_SAMPLE_A}\n" f"{PER_SAMPLE_B}\n")
+    manifest.write_text(f"vcf_path\n{PER_SAMPLE_A}\n{PER_SAMPLE_B}\n")
 
     _vc(vcfclick_home, "db", "create", "demo")
     _vc(
@@ -175,7 +175,7 @@ def test_manifest_paths_resolved_relative_to_manifest_dir(vcfclick_home, tmp_pat
     shutil.copy(PER_SAMPLE_A.with_suffix(".gz.tbi"), staging)
 
     manifest = tmp_path / "samples.tsv"
-    manifest.write_text("vcf_path\n" "vcfs/per_sample_a.vcf.gz\n")
+    manifest.write_text("vcf_path\nvcfs/per_sample_a.vcf.gz\n")
 
     _vc(vcfclick_home, "db", "create", "demo")
     _vc(
@@ -320,7 +320,7 @@ def test_manifest_rejects_duplicate_ingest_ids(vcfclick_home, tmp_path):
     _vc(vcfclick_home, "db", "create", "demo")
     manifest = tmp_path / "m.tsv"
     manifest.write_text(
-        "sample_id\tvcf_path\n" f"dup\t{PER_SAMPLE_A}\n" f"dup\t{PER_SAMPLE_B}\n"
+        f"sample_id\tvcf_path\ndup\t{PER_SAMPLE_A}\ndup\t{PER_SAMPLE_B}\n"
     )
     r = _vc(
         vcfclick_home,
