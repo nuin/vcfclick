@@ -258,11 +258,19 @@ def build_genotype_rows(
 
 def _import_parquet(table: str, parquet_path: Path) -> None:
     """Bulk-import a single Parquet file into a chDB table."""
+    from ingest._arrow import TABLE_COLUMNS, column_list_sql
+
     sess = get_session()
-    # `file()` resolves relative to the chDB user_files directory by
-    # default; passing an absolute path bypasses that. Wrap in single
-    # quotes for SQL safety (paths shouldn't contain quotes in practice).
-    sess.query(f"INSERT INTO {table} SELECT * FROM file('{parquet_path}', 'Parquet')")
+    cols = column_list_sql(TABLE_COLUMNS[table])
+    # Explicit column lists on both sides so the import is immune to
+    # chDB ever shifting Parquet handling from name-based to positional
+    # mapping. `file()` resolves relative to chDB's user_files directory
+    # by default; an absolute path bypasses that. Single-quote the path
+    # for SQL safety (Parquet paths aren't expected to contain quotes).
+    sess.query(
+        f"INSERT INTO {table} ({cols}) "
+        f"SELECT {cols} FROM file('{parquet_path}', 'Parquet')"
+    )
 
 
 def _ensure_schema() -> None:

@@ -230,7 +230,15 @@ def insert_via_parquet(table: str, schema: pa.Schema, rows: list[dict]) -> None:
             for field in schema
         ]
         pq.write_table(pa.Table.from_arrays(arrays, schema=schema), tmp_path)
-        sess.query(f"INSERT INTO {table} SELECT * FROM file('{tmp_path}', 'Parquet')")
+        # Explicit column list derived from the Arrow schema so the
+        # INSERT is immune to chDB shifting Parquet handling from
+        # name-based to positional mapping. Same rationale as the
+        # variants/genotypes loaders in ingest.vcf_load / ingest.parallel.
+        cols = ", ".join(f"`{f.name}`" for f in schema)
+        sess.query(
+            f"INSERT INTO {table} ({cols}) "
+            f"SELECT {cols} FROM file('{tmp_path}', 'Parquet')"
+        )
     finally:
         tmp_path.unlink(missing_ok=True)
 

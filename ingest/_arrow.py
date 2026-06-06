@@ -27,7 +27,11 @@ def _f(name: str, type_, nullable: bool = True) -> pa.Field:
     return pa.field(name, type_, nullable=nullable)
 
 
-# Order MUST match VARIANTS_COLUMNS in ingest.vcf_load.
+# Column order MUST match schema/01_variants.sql byte-for-byte. Both
+# the Parquet column ordering and the INSERT statements depend on
+# this agreement: chDB will silently misalign columns if a future
+# upstream change shifts Parquet imports from name-based to positional.
+# Build a quick diff against the SQL file if you touch this list.
 VARIANTS_ARROW_SCHEMA = pa.schema(
     [
         _f("ingest_id", pa.string(), False),
@@ -41,6 +45,8 @@ VARIANTS_ARROW_SCHEMA = pa.schema(
         _f("info_AC", pa.uint32()),
         _f("info_AF", pa.float32()),
         _f("info_AN", pa.uint32()),
+        _f("info_AD_ref", pa.uint32()),
+        _f("info_AD_alt", pa.uint32()),
         _f("info_DP", pa.uint32()),
         _f("info_MQ", pa.float32()),
         _f("info_MQ0", pa.uint32()),
@@ -50,6 +56,12 @@ VARIANTS_ARROW_SCHEMA = pa.schema(
         _f("info_END", pa.uint32()),
         _f("info_CIGAR", pa.string()),
         _f("info_AA", pa.string()),
+        _f("info_SOMATIC", pa.uint8(), False),
+        _f("info_VALIDATED", pa.uint8(), False),
+        _f("info_DB", pa.uint8(), False),
+        _f("info_H2", pa.uint8(), False),
+        _f("info_H3", pa.uint8(), False),
+        _f("info_1000G", pa.uint8(), False),
         _f("info_QD", pa.float32()),
         _f("info_FS", pa.float32()),
         _f("info_SOR", pa.float32()),
@@ -67,20 +79,13 @@ VARIANTS_ARROW_SCHEMA = pa.schema(
         _f("info_HAPDOM", pa.float32()),
         _f("info_DragenSnvHardQUAL", pa.float32()),
         _f("info_DragenIndelHardQUAL", pa.float32()),
-        _f("info_AD_ref", pa.uint32()),
-        _f("info_AD_alt", pa.uint32()),
-        _f("info_SOMATIC", pa.uint8(), False),
-        _f("info_VALIDATED", pa.uint8(), False),
-        _f("info_DB", pa.uint8(), False),
-        _f("info_H2", pa.uint8(), False),
-        _f("info_H3", pa.uint8(), False),
-        _f("info_1000G", pa.uint8(), False),
         _f("info_extra", pa.map_(pa.string(), pa.string()), False),
     ]
 )
 
 
-# Order MUST match GENOTYPES_COLUMNS in ingest.vcf_load.
+# Same agreement contract as VARIANTS_ARROW_SCHEMA — column order MUST
+# match schema/02_genotypes.sql byte-for-byte.
 GENOTYPES_ARROW_SCHEMA = pa.schema(
     [
         _f("ingest_id", pa.string(), False),
@@ -93,10 +98,6 @@ GENOTYPES_ARROW_SCHEMA = pa.schema(
         _f("phased", pa.uint8(), False),
         _f("gq", pa.uint16()),
         _f("dp", pa.uint16()),
-        _f("mq", pa.uint16()),
-        _f("ft", pa.string()),
-        _f("ps", pa.uint32()),
-        _f("pq", pa.uint16()),
         _f("ad_ref", pa.uint16()),
         _f("ad_alt", pa.uint16()),
         _f("adf_ref", pa.uint16()),
@@ -109,6 +110,10 @@ GENOTYPES_ARROW_SCHEMA = pa.schema(
         _f("gl_ref_ref", pa.float32()),
         _f("gl_ref_alt", pa.float32()),
         _f("gl_alt_alt", pa.float32()),
+        _f("mq", pa.uint16()),
+        _f("ft", pa.string()),
+        _f("ps", pa.uint32()),
+        _f("pq", pa.uint16()),
         _f("format_extra", pa.map_(pa.string(), pa.string()), False),
     ]
 )
@@ -142,6 +147,26 @@ VARIANTS_COLUMNS = column_names(VARIANTS_ARROW_SCHEMA)
 GENOTYPES_COLUMNS = column_names(GENOTYPES_ARROW_SCHEMA)
 SAMPLES_COLUMNS = column_names(SAMPLES_ARROW_SCHEMA)
 INGESTIONS_COLUMNS = column_names(INGESTIONS_ARROW_SCHEMA)
+
+
+# Used by every INSERT site to render an explicit (col1, col2, ...)
+# column list. Explicit lists make `INSERT INTO t (...) SELECT ...
+# FROM file(...)` immune to chDB ever shifting Parquet imports from
+# name-based mapping to positional. The Arrow/Parquet column order
+# AND the SQL DDL order both agree with the lists above, so this is
+# defense-in-depth, not a workaround for a current bug.
+def column_list_sql(columns: list[str]) -> str:
+    return ", ".join(f"`{c}`" for c in columns)
+
+
+# Look-up by table name. Callers pass `table` as a string (because that's
+# what their existing helpers take) and want the matching column list.
+TABLE_COLUMNS: dict[str, list[str]] = {
+    "variants": VARIANTS_COLUMNS,
+    "genotypes": GENOTYPES_COLUMNS,
+    "samples": SAMPLES_COLUMNS,
+    "ingestions": INGESTIONS_COLUMNS,
+}
 
 
 def write_parquet(rows: Iterable[list], schema: pa.Schema, path: Path) -> int:

@@ -7,6 +7,21 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Arrow ↔ SQL column-order drift in `ingest/_arrow.py`. The Arrow
+  schemas now match `schema/01_variants.sql` and
+  `schema/02_genotypes.sql` byte-for-byte (previously `info_AD_ref/_alt`
+  and the flag block were in the wrong position on the variants side,
+  and `mq/ft/ps/pq` were misplaced on the genotypes side). All four
+  `INSERT … SELECT … FROM file('*.parquet')` sites in `ingest/vcf_load.py`,
+  `ingest/parallel.py`, and `storage/db.py` now use explicit
+  `INSERT INTO t (col1, col2, ...) SELECT col1, col2, ... FROM file(...)`
+  column lists derived from the Arrow schema, so the import is immune
+  to any future chDB change shifting Parquet handling from name-based
+  to positional. A new drift-guard test in
+  `tests/test_schema_agreement.py` parses each schema/*.sql file and
+  asserts column-by-column agreement with the matching Arrow schema —
+  fails the build on any future drift. Spotted as P1 in the codex
+  CLI review.
 - `--ingest-id` reuse now truly replaces prior data, matching what the
   CLI help text always claimed. Previously the ingest path relied on
   `ReplacingMergeTree` dedup on the sorting key, so re-ingesting under

@@ -301,13 +301,24 @@ def ingest_parallel(
         parse_elapsed = time.time() - started_parse
 
         started_import = time.time()
+        # Explicit column lists on both sides — same rationale as
+        # ingest.vcf_load._import_parquet: immune to chDB ever shifting
+        # Parquet imports from name-based to positional mapping.
+        from ingest._arrow import (
+            GENOTYPES_COLUMNS,
+            VARIANTS_COLUMNS,
+            column_list_sql,
+        )
+
+        v_cols = column_list_sql(VARIANTS_COLUMNS)
+        g_cols = column_list_sql(GENOTYPES_COLUMNS)
         sess.query(
-            f"INSERT INTO variants "
-            f"SELECT * FROM file('{staging}/variants_*.parquet', 'Parquet')"
+            f"INSERT INTO variants ({v_cols}) "
+            f"SELECT {v_cols} FROM file('{staging}/variants_*.parquet', 'Parquet')"
         )
         sess.query(
-            f"INSERT INTO genotypes "
-            f"SELECT * FROM file('{staging}/genotypes_*.parquet', 'Parquet')"
+            f"INSERT INTO genotypes ({g_cols}) "
+            f"SELECT {g_cols} FROM file('{staging}/genotypes_*.parquet', 'Parquet')"
         )
         import_elapsed = time.time() - started_import
 
