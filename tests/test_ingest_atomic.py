@@ -141,6 +141,84 @@ def test_successful_ingest_after_failed_one(vcfclick_home, tiny_vcf):
     assert "5" in out
 
 
+def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
+    """Re-running ingest under the same `ingest_id` MUST delete any
+    rows from the previous run that aren't in the new VCF — not just
+    upsert via ReplacingMergeTree dedup on the sorting key.
+
+    Fixtures:
+      tiny.vcf.gz    — 5 variants at chr1:{100,250,500,750,900},
+                       3 samples (S1, S2, S3)
+      routing.vcf.gz — 2 variants at chr1:{100,200},
+                       2 samples (S1, S2)
+    Overlap at chr1:100 only.
+
+    After re-ingesting routing.vcf.gz under the same ingest_id:
+      - The 4 tiny-only variants (250, 500, 750, 900) must be GONE.
+      - Sample S3 (only in tiny) must be GONE.
+      - The 2 routing variants must be present.
+    """
+    from pathlib import Path as _Path
+
+    fixtures = _Path(__file__).parent / "fixtures"
+    tiny = fixtures / "tiny.vcf.gz"
+    routing = fixtures / "routing.vcf.gz"
+
+    _vc(vcfclick_home, "db", "create", "smoke")
+
+    # First ingest — tiny (5 variants, 3 samples)
+    _vc(
+        vcfclick_home, "db", "ingest", "smoke", str(tiny),
+        "--cohort", "x", "--ingest-id", "batch_a", "--serial",
+    )
+    out = _query(
+        vcfclick_home, "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
+    )
+    assert "│       5 │" in out, f"first ingest should land 5 variants, got: {out!r}"
+
+    # Re-ingest under the SAME id — routing (2 variants, 2 samples)
+    _vc(
+        vcfclick_home, "db", "ingest", "smoke", str(routing),
+        "--cohort", "x", "--ingest-id", "batch_a", "--serial",
+    )
+
+    out = _query(
+        vcfclick_home, "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
+    )
+    assert "│       2 │" in out, (
+        f"re-ingest should leave exactly 2 variants (replacement, not upsert), "
+        f"got: {out!r}"
+    )
+
+    # Tiny-only positions are gone
+    out = _query(
+        vcfclick_home, "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a' "
+        "AND pos IN (250, 500, 750, 900)",
+    )
+    assert "│       0 │" in out, (
+        f"tiny-only positions should be deleted, got: {out!r}"
+    )
+
+    # Routing variants present
+    out = _query(
+        vcfclick_home, "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a' "
+        "AND pos IN (100, 200)",
+    )
+    assert "│       2 │" in out, f"routing variants missing, got: {out!r}"
+
+    # Sample S3 (tiny-only) is gone
+    out = _query(
+        vcfclick_home, "smoke",
+        "SELECT count() FROM samples WHERE ingest_id = 'batch_a' "
+        "AND sample_id = 'S3'",
+    )
+    assert "│       0 │" in out, f"S3 should be gone after replace, got: {out!r}"
+
+
 def test_ingest_id_rejected_with_quotes():
     """Direct library-level test: rollback_ingest interpolates the
     ingest_id into the DELETE statement, so validate_ingest_id is the

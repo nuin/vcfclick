@@ -6,6 +6,18 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `--ingest-id` reuse now truly replaces prior data, matching what the
+  CLI help text always claimed. Previously the ingest path relied on
+  `ReplacingMergeTree` dedup on the sorting key, so re-ingesting under
+  an existing `ingest_id` was an upsert: rows from the prior ingest
+  that weren't in the new VCF stayed queryable. Both ingest paths
+  (`ingest.vcf_load.ingest`, `ingest.parallel.ingest_parallel`) now
+  call `rollback_ingest(ingest_id)` before writing, so the documented
+  "replace" semantics are literal. No-op on fresh IDs. Test in
+  `tests/test_ingest_atomic.py::test_reingest_same_id_truly_replaces_prior_data`
+  locks the contract. Spotted in an external code review by codex CLI.
+
 ## [0.1.2] — 2026-06-05
 
 ### Added

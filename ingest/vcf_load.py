@@ -296,12 +296,22 @@ def ingest(
     malformed row, batch flush error), every row already written under
     this `ingest_id` is deleted before the exception propagates. The DB
     is left in the same state it was in before the failed call.
+
+    Replacement semantics: re-running under an existing `ingest_id`
+    truly replaces. Prior rows are deleted before the new VCF loads,
+    so variants/samples that were present in the previous ingest but
+    are missing from the new one are gone after this call (not just
+    dedup-overlapped via ReplacingMergeTree). A no-op for fresh IDs.
     """
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
     validate_ingest_id(ingest_id)
 
     _ensure_schema()
+    # Scrub any rows from a previous ingest under this id BEFORE writing
+    # new ones. Makes "same ingest_id = full replace" the documented
+    # contract. Idempotent + cheap on fresh IDs (DELETE on no-match).
+    rollback_ingest(ingest_id)
 
     vcf = VCF(vcf_path)
     classification = classify_header(vcf)

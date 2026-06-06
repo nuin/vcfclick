@@ -217,6 +217,11 @@ def ingest_parallel(
     validate_ingest_id(ingest_id)
 
     _ensure_schema()
+    # Replacement semantics: see ingest.vcf_load.ingest docstring.
+    # Scrub any rows from a previous ingest under this id BEFORE writing
+    # new ones, so variants/samples missing from the new VCF are gone
+    # (not just dedup-overlapped via ReplacingMergeTree).
+    rollback_ingest(ingest_id)
     sess = get_session()
 
     vcf = VCF(vcf_path)
