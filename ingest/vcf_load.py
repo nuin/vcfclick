@@ -300,27 +300,34 @@ def ingest(
 ) -> str:
     """Load a normalised VCF into the embedded chDB store.
 
-    Atomic at the ingest_id level: if any record fails (multi-allelic,
-    malformed row, batch flush error), every row already written under
-    this `ingest_id` is deleted before the exception propagates. The DB
-    is left in the same state it was in before the failed call.
+    Atomic at the ingest_id level for the common failure modes:
+    if VCF open or header classification fails, the database is
+    untouched. If a record inside the variant loop fails (multi-
+    allelic, malformed row, batch flush error), every row already
+    written under this `ingest_id` is deleted before the exception
+    propagates — including rows from a previous ingest under the
+    same id (see Replacement semantics below).
 
     Replacement semantics: re-running under an existing `ingest_id`
-    truly replaces. Prior rows are deleted before the new VCF loads,
-    so variants/samples that were present in the previous ingest but
-    are missing from the new one are gone after this call (not just
-    dedup-overlapped via ReplacingMergeTree). A no-op for fresh IDs.
+    replaces. The rollback that wipes prior rows runs AFTER the new
+    VCF has been opened and classified, so a corrupt header or
+    classification failure leaves prior data intact. A failure
+    DURING the variant loop, however, deletes the prior rows and
+    leaves no new rows — net result is a wipe of that ingest_id.
+    For full atomicity against mid-stream failures, ingest into a
+    fresh ingest_id and remove the old one once the new ingest
+    succeeds.
     """
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
     validate_ingest_id(ingest_id)
 
     _ensure_schema()
-    # Scrub any rows from a previous ingest under this id BEFORE writing
-    # new ones. Makes "same ingest_id = full replace" the documented
-    # contract. Idempotent + cheap on fresh IDs (DELETE on no-match).
-    rollback_ingest(ingest_id)
 
+    # Open + classify BEFORE touching chDB. Bad headers / unreadable
+    # files raise here, before the rollback below runs, so a re-ingest
+    # under an existing id whose new VCF is corrupt leaves the prior
+    # rows queryable.
     vcf = VCF(vcf_path)
     classification = classify_header(vcf)
     extra_format_fields = classification["extra_format"]
@@ -346,6 +353,13 @@ def ingest(
         log.info("[ingest]   format_extra keys: %s", classification["extra_format"])
 
     try:
+        # Replace any prior data under this ingest_id NOW — the new VCF
+        # opened + classified successfully so we're committed to attempting
+        # the ingest. No-op on fresh IDs. If the variant loop below fails,
+        # the rollback in except cleans up partial new state; prior rows
+        # are gone in that case (see docstring).
+        rollback_ingest(ingest_id)
+
         # Samples + ingestions catalog go through the same Parquet-staged
         # bulk-insert as variants/genotypes. Avoids string-interpolating
         # sample IDs (which come from the VCF header) into SQL.

@@ -237,6 +237,75 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
     assert "│       0 │" in out, f"S3 should be gone after replace, got: {out!r}"
 
 
+def test_reingest_with_corrupt_vcf_preserves_prior_data(vcfclick_home, tmp_path):
+    """If the new VCF fails to open (corrupt header / unreadable file),
+    the re-ingest under an existing ingest_id MUST leave the prior data
+    intact. This is the contract codex flagged in the second review:
+    the previous fix called rollback BEFORE opening the new VCF, which
+    silently wiped good data on every failed re-ingest. Fix moved the
+    rollback inside the try block so a bad header raises before the
+    delete fires.
+    """
+    fixtures = Path(__file__).parent / "fixtures"
+    tiny = fixtures / "tiny.vcf.gz"
+
+    _vc(vcfclick_home, "db", "create", "smoke")
+
+    # First ingest — tiny (5 variants, 3 samples).
+    _vc(
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(tiny),
+        "--cohort",
+        "x",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
+    )
+    out = _query(
+        vcfclick_home,
+        "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
+    )
+    assert "│       5 │" in out
+
+    # Build a "corrupt" VCF — valid bgzip header but garbage content.
+    # cyvcf2 will fail when constructing the VCF reader.
+    corrupt = tmp_path / "corrupt.vcf.gz"
+    # Plain non-bgzip bytes; cyvcf2 opens via htslib which expects BGZF.
+    corrupt.write_bytes(b"this is not a VCF\n")
+
+    # Re-ingest under the SAME id with the corrupt VCF — must FAIL.
+    _vc(
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(corrupt),
+        "--cohort",
+        "x",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
+        expect_failure=True,
+    )
+
+    # Prior data MUST still be queryable. The fix moved rollback_ingest
+    # inside the try block so a bad-header VCF raises before the delete
+    # fires.
+    out = _query(
+        vcfclick_home,
+        "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
+    )
+    assert "│       5 │" in out, (
+        f"failed re-ingest with corrupt VCF wiped prior data — "
+        f"replacement should be atomic against bad headers: {out!r}"
+    )
+
+
 def test_ingest_id_rejected_with_quotes():
     """Direct library-level test: rollback_ingest interpolates the
     ingest_id into the DELETE statement, so validate_ingest_id is the

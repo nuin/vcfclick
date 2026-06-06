@@ -217,13 +217,13 @@ def ingest_parallel(
     validate_ingest_id(ingest_id)
 
     _ensure_schema()
-    # Replacement semantics: see ingest.vcf_load.ingest docstring.
-    # Scrub any rows from a previous ingest under this id BEFORE writing
-    # new ones, so variants/samples missing from the new VCF are gone
-    # (not just dedup-overlapped via ReplacingMergeTree).
-    rollback_ingest(ingest_id)
     sess = get_session()
 
+    # Open + classify BEFORE touching chDB. A corrupt header / bad
+    # classification raises here, before the rollback later runs, so a
+    # re-ingest under an existing id whose new VCF fails to read leaves
+    # the prior rows intact. See ingest.vcf_load.ingest docstring for
+    # the full replacement-semantics contract.
     vcf = VCF(vcf_path)
     classification = classify_header(vcf)
     extra_format_fields = classification["extra_format"]
@@ -270,6 +270,13 @@ def ingest_parallel(
     )
 
     try:
+        # Replace any prior data under this ingest_id NOW — VCF opened +
+        # classified + region-split successfully, so we're committed to
+        # attempting the ingest. No-op on fresh IDs. If a worker fails
+        # later (e.g., multi-allelic record), the rollback in except
+        # cleans up partial new state; prior rows are gone in that case.
+        rollback_ingest(ingest_id)
+
         # Samples table — safe Parquet-staged insert (no string interpolation
         # of VCF-supplied sample IDs).
         insert_via_parquet(

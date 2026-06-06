@@ -7,6 +7,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Fixed
+- Atomic `--ingest-id` replacement against early failures. The previous
+  fix called `rollback_ingest()` before opening the new VCF, which
+  silently wiped prior data on every failed re-ingest (corrupt header,
+  unreadable file, classification failure). The rollback now runs
+  inside the `try` block — only after the new VCF opens and classifies
+  successfully. A bad header raises before any deletion happens, so a
+  re-ingest under an existing id whose new VCF fails to read leaves
+  the prior rows intact. New test
+  `test_reingest_with_corrupt_vcf_preserves_prior_data` locks the
+  contract. Docstring updated to be honest about the residual gap:
+  failures during the variant loop still wipe prior data; for full
+  atomicity against mid-stream failures, use a fresh ingest_id.
+  Spotted by codex CLI in a second review pass.
 - Arrow ↔ SQL column-order drift in `ingest/_arrow.py`. The Arrow
   schemas now match `schema/01_variants.sql` and
   `schema/02_genotypes.sql` byte-for-byte (previously `info_AD_ref/_alt`
