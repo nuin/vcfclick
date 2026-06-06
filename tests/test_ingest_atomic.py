@@ -168,23 +168,41 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
 
     # First ingest — tiny (5 variants, 3 samples)
     _vc(
-        vcfclick_home, "db", "ingest", "smoke", str(tiny),
-        "--cohort", "x", "--ingest-id", "batch_a", "--serial",
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(tiny),
+        "--cohort",
+        "x",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
     )
     out = _query(
-        vcfclick_home, "smoke",
+        vcfclick_home,
+        "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
     assert "│       5 │" in out, f"first ingest should land 5 variants, got: {out!r}"
 
     # Re-ingest under the SAME id — routing (2 variants, 2 samples)
     _vc(
-        vcfclick_home, "db", "ingest", "smoke", str(routing),
-        "--cohort", "x", "--ingest-id", "batch_a", "--serial",
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(routing),
+        "--cohort",
+        "x",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
     )
 
     out = _query(
-        vcfclick_home, "smoke",
+        vcfclick_home,
+        "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
     assert "│       2 │" in out, (
@@ -194,17 +212,17 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
 
     # Tiny-only positions are gone
     out = _query(
-        vcfclick_home, "smoke",
+        vcfclick_home,
+        "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a' "
         "AND pos IN (250, 500, 750, 900)",
     )
-    assert "│       0 │" in out, (
-        f"tiny-only positions should be deleted, got: {out!r}"
-    )
+    assert "│       0 │" in out, f"tiny-only positions should be deleted, got: {out!r}"
 
     # Routing variants present
     out = _query(
-        vcfclick_home, "smoke",
+        vcfclick_home,
+        "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a' "
         "AND pos IN (100, 200)",
     )
@@ -212,9 +230,9 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
 
     # Sample S3 (tiny-only) is gone
     out = _query(
-        vcfclick_home, "smoke",
-        "SELECT count() FROM samples WHERE ingest_id = 'batch_a' "
-        "AND sample_id = 'S3'",
+        vcfclick_home,
+        "smoke",
+        "SELECT count() FROM samples WHERE ingest_id = 'batch_a' AND sample_id = 'S3'",
     )
     assert "│       0 │" in out, f"S3 should be gone after replace, got: {out!r}"
 
