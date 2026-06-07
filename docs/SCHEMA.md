@@ -11,7 +11,6 @@ flattens them for SQL writers.
   | [`genotypes`](#genotypes) | sparse — only non-reference calls | `(ingest_id, chrom, pos, ref, alt, sample_id)` |
   | [`samples`](#samples) | one row per `(ingest_id, sample_id)` | `(ingest_id, sample_id)` |
   | [`ingestions`](#ingestions) | one row per VCF upload | `ingest_id` |
-  | [`cohort_sizes_mv`](#cohort_sizes_mv) | materialised view; `cohort → n_samples` | `cohort` |
 
 All four tables use `ReplacingMergeTree` keyed by `ingested_at`. Re-
 ingesting under the same `ingest_id` is idempotent — chDB dedupes on
@@ -250,16 +249,21 @@ loaded?") and for the MCP server.
 
 ---
 
-## `cohort_sizes_mv`
+## Cohort allele frequency
 
-Materialised view (`SummingMergeTree`) giving each cohort's sample
-count. Use it as the denominator for cohort allele frequency:
+There is intentionally no materialised cohort-sizes view. An earlier
+draft of the schema carried a `cohort_sizes_mv` `SummingMergeTree`,
+but `SummingMergeTree` never decrements on DELETE — rolling back a
+samples insert (failed ingest, `--ingest-id` replacement) left the
+view's count permanently inflated, so any AF query that used it as
+the denominator produced wrong numbers after retries. Compute cohort
+size directly:
 
 ```sql
 SELECT
     sum(g.gt) AS ac,
-    (SELECT 2 * n_samples FROM cohort_sizes_mv WHERE cohort = 'study1') AS an,
-    sum(g.gt) / (SELECT 2 * n_samples FROM cohort_sizes_mv WHERE cohort = 'study1') AS af
+    2 * count(DISTINCT (s.ingest_id, s.sample_id)) AS an,
+    sum(g.gt) / (2 * count(DISTINCT (s.ingest_id, s.sample_id))) AS af
 FROM genotypes g
 INNER JOIN samples s
     ON s.ingest_id = g.ingest_id AND s.sample_id = g.sample_id
@@ -267,13 +271,9 @@ WHERE s.cohort = 'study1'
   AND g.chrom = 'chr17' AND g.pos BETWEEN 43044295 AND 43170245;
 ```
 
-`vcfclick db diff <db> --cohort-a A --cohort-b B` does this for you
-across two cohorts.
-
-| Column | Type | Meaning |
-|---|---|---|
-| `cohort` | `LowCardinality(String)` | |
-| `n_samples` | `UInt64` | distinct `(ingest_id, sample_id)` count |
+At realistic cohort scale (~10^4 samples) the `count(DISTINCT ...)`
+runs in microseconds. `vcfclick db diff <db> --cohort-a A --cohort-b B`
+already uses this pattern.
 
 ---
 

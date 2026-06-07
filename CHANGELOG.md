@@ -6,6 +6,22 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Removed
+- **`cohort_sizes_mv` materialized view** is no longer created on
+  fresh databases. `SummingMergeTree` never decrements on DELETE, so
+  rolling back a samples insert (failed ingest, `--ingest-id`
+  replacement) left the view's count permanently inflated and any
+  AF query that used it as the denominator produced wrong numbers
+  after retries. The MCP `SCHEMA_DESCRIPTION` briefing and
+  `docs/SCHEMA.md` now teach the direct
+  `count(DISTINCT (s.ingest_id, s.sample_id))` pattern instead;
+  `vcfclick db diff` already used it. At realistic cohort scale the
+  `count(DISTINCT)` runs in microseconds, so this is correctness
+  with no measurable cost. Existing 0.1.2 databases still have the
+  old view (`apply_schema` uses `CREATE … IF NOT EXISTS` semantics
+  and won't drop it) — harmless but stale; recreate the DB if you
+  want a clean 0.1.3 schema. Spotted in a codex CLI review.
+
 ### Fixed
 - Parallel ingest staging dir is now wiped before workers start, so a
   retry under the same `ingest_id` after a failed parallel parse can't

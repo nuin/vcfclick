@@ -11,16 +11,16 @@ CREATE TABLE samples (
 ENGINE = ReplacingMergeTree(ingested_at)
 ORDER BY (ingest_id, sample_id);
 
--- Cohort sizes view: cohort → n_samples. Counts distinct (ingest_id,
--- sample_id) pairs so the same cohort name across two ingestions sums
--- correctly. Use this as the denominator for cohort allele frequencies.
-CREATE MATERIALIZED VIEW cohort_sizes_mv
-ENGINE = SummingMergeTree()
-ORDER BY cohort
-AS SELECT cohort, count() AS n_samples
-   FROM samples
-   GROUP BY cohort;
-
+-- NOTE on cohort-size denominators: there is intentionally no
+-- materialized cohort_sizes view. An earlier version had a
+-- `cohort_sizes_mv` SummingMergeTree, but SummingMergeTree never
+-- decrements on DELETE — rolling back a samples insert (failed
+-- ingest, --ingest-id replacement) silently left the view's count
+-- inflated, breaking any AF query that used it as the denominator.
+-- Compute cohort size directly when you need it:
+--     SELECT cohort, count(DISTINCT (ingest_id, sample_id)) AS n
+--     FROM samples WHERE cohort = ... GROUP BY cohort
+-- At realistic cohort scale (~10^4 samples) this is microseconds.
 
 -- Ingestion catalog. One row per VCF upload. Useful for management
 -- queries ("what's loaded?") and for the MCP server's get_ingestions tool.

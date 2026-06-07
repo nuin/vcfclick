@@ -66,9 +66,6 @@ samples — (ingest_id, sample_id, cohort, sex).
 ingestions — catalog: (ingest_id, cohort, vcf_path, n_variants,
   n_samples, ingested_at). Query when the user asks "what's loaded?".
 
-cohort_sizes_mv — materialised view: cohort → n_samples. Denominator
-for cohort allele frequencies.
-
 ──────────────── ANNOTATION TOOLS (DuckDB, reference) ────────────
 
 position_for_gene(symbol)   → (chrom, start_pos, end_pos)
@@ -111,8 +108,13 @@ clin_sig columns in chDB — they do not exist there.
    cohort, JOIN samples to filter by cohort. If they name an ingest_id,
    filter directly.
 
-5. ALLELE FREQUENCY: sum(gt) / (2 * cohort_sizes_mv.n_samples). AF is
-   meaningful PER COHORT — always scope it.
+5. ALLELE FREQUENCY: sum(gt) / (2 * count(DISTINCT (s.ingest_id,
+   s.sample_id))), where the sample count comes from JOINing
+   `samples s` and filtering by cohort. There is intentionally no
+   materialized cohort_sizes view — SummingMergeTree wouldn't
+   decrement on rollback or replacement. AF is meaningful PER
+   COHORT — always scope it. See examples/brca1-cohort.md Q5 for
+   the canonical pattern.
 
 6. COORDINATES: GRCh38, UCSC-style ('chr' prefix).
 
