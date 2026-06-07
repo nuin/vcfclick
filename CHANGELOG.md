@@ -6,6 +6,26 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `storage.sql_quote_str` now escapes BACKSLASHES as well as single
+  quotes. ClickHouse/chDB recognises both `''` and `\\'` as quote
+  escapes inside string literals; a path containing `\\'` would,
+  under plain quote-doubling, become `\\''` — the engine reads the
+  first quote as backslash-escaped, the second as the string
+  terminator, and arbitrary SQL after it. Closes a remaining
+  injection bypass codex round 9 caught after the round-8 fix.
+  Round-trip test through chDB itself (FORMAT JSONCompact to
+  bypass TSV escaping) locks the contract for backslash + quote
+  payloads including the classic `\\'; DROP TABLE …` shape.
+- `storage.DB_ROOT` / `storage.VCFCLICK_HOME` now lazy at the
+  package level too. The round-8 fix made them lazy in
+  `storage.db` via module `__getattr__`, but `storage/__init__.py`
+  had already imported them eagerly — so reads through the public
+  `storage.DB_ROOT` API kept seeing the import-time value. Replaced
+  the eager imports with package-level `__getattr__` forwarding.
+  New `test_storage_db_root_reflects_env_change_at_call_time`
+  test locks the lazy contract end-to-end.
+
 ### Added
 - `storage.sql_quote_str(s)` — SQL-standard single-quoted literal with
   embedded quotes doubled. Used at every site where we interpolate a

@@ -71,6 +71,89 @@ def test_sql_quote_str_classic_injection_payload():
     assert quoted == "''' OR 1=1 --'"
 
 
+def test_sql_quote_str_handles_backslash_escape_bypass():
+    r"""ClickHouse parses \' as a single-quote escape, so plain
+    quote-doubling isn't enough. A payload like \'; DROP TABLE …
+    has to escape the backslash too — otherwise the engine reads
+    \' as the escaped quote and the next ' as the string
+    terminator, opening injection. Codex round 9 caught this.
+    """
+    from storage import sql_quote_str
+
+    # The body between the outer quotes must contain no UNESCAPED
+    # backslash and no UNDOUBLED single quote.
+    payload = "\\'; DROP TABLE variants; --"
+    quoted = sql_quote_str(payload)
+    assert quoted.startswith("'") and quoted.endswith("'")
+    body = quoted[1:-1]
+    # Strip every well-formed escape sequence; whatever remains must
+    # contain neither a raw backslash nor a raw single quote.
+    cleaned = body.replace("\\\\", "").replace("''", "")
+    assert "'" not in cleaned and "\\" not in cleaned, (
+        f"backslash or quote survived escaping: {quoted!r}"
+    )
+
+
+def test_sql_quote_str_roundtrips_through_chdb(vcfclick_home, monkeypatch):
+    """End-to-end check: chDB must accept the quoted form and return
+    a string of the right length. Uses FORMAT JSONCompact so the
+    decoder isn't fighting TSV's `\\'` escaping.
+    """
+    import json
+
+    monkeypatch.setenv("VCFCLICK_HOME", str(vcfclick_home))
+    monkeypatch.setenv("VCFCLICK_DB_NAME", "qs")
+    subprocess.run(
+        [VCFCLICK_BIN, "db", "create", "qs"],
+        env={**os.environ},
+        check=True,
+        capture_output=True,
+    )
+
+    from storage import get_session, sql_quote_str
+
+    sess = get_session("qs")
+    payloads = [
+        "plain",
+        "o'brien",
+        "' OR 1=1 --",
+        "embedded \\ chars",
+        "\\'; DROP TABLE variants; --",
+    ]
+    for p in payloads:
+        raw = (
+            sess.query(f"SELECT {sql_quote_str(p)} AS s FORMAT JSONCompact")
+            .bytes()
+            .decode()
+        )
+        parsed = json.loads(raw)
+        assert parsed["data"] == [[p]], (
+            f"chDB round-trip diverged for {p!r}: got {parsed['data']!r}"
+        )
+
+
+# ─────────────────────── lazy DB_ROOT / VCFCLICK_HOME ───────────────────────
+
+
+def test_storage_db_root_reflects_env_change_at_call_time(monkeypatch, tmp_path):
+    """`storage.DB_ROOT` (and VCFCLICK_HOME) must reflect the current
+    `VCFCLICK_HOME` env value at each access, not snapshot the value
+    at `import storage` time. Codex round 9 caught the package-level
+    `__init__.py` caching this even though `storage.db.__getattr__`
+    was lazy.
+    """
+    import storage
+
+    monkeypatch.setenv("VCFCLICK_HOME", str(tmp_path / "first"))
+    first = storage.DB_ROOT
+    monkeypatch.setenv("VCFCLICK_HOME", str(tmp_path / "second"))
+    second = storage.DB_ROOT
+    assert first != second, (
+        f"storage.DB_ROOT did not pick up the env change (both reads returned {first})"
+    )
+    assert second == tmp_path / "second" / "dbs"
+
+
 # ─────────────────────── ingest_id_lock ───────────────────────
 
 

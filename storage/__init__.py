@@ -1,6 +1,14 @@
+"""Public storage API.
+
+Functions are re-exported eagerly because they don't change between
+calls. The two PATH attributes (`DB_ROOT`, `VCFCLICK_HOME`) are
+forwarded via `__getattr__` instead — they depend on
+`os.environ["VCFCLICK_HOME"]` at lookup time, and importing them
+eagerly here would snapshot the env at import time and silently
+ignore any subsequent change. Codex round 9 caught this exact gap.
+"""
+
 from storage.db import (
-    DB_ROOT,
-    VCFCLICK_HOME,
     apply_schema,
     db_disk_size,
     db_path,
@@ -13,6 +21,16 @@ from storage.db import (
     sql_quote_str,
     validate_ingest_id,
 )
+
+
+def __getattr__(name: str):
+    """Lazy forward for env-dependent module attributes."""
+    if name in ("DB_ROOT", "VCFCLICK_HOME"):
+        from storage import db as _db
+
+        return getattr(_db, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 __all__ = [
     "get_session",

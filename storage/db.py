@@ -215,13 +215,23 @@ _INGESTION_SCOPED_TABLES = ("variants", "genotypes", "samples", "ingestions")
 
 
 def sql_quote_str(s: str) -> str:
-    """SQL-standard single-quoted string literal — embedded quotes
-    doubled. Use this anywhere we interpolate a string into a chDB
-    query (paths in `file('...')`, identifiers passed to library
-    code, etc.). Cheaper than parameterised binding (chDB doesn't
-    expose that for ALTER paths anyway) and the same defence.
+    """ClickHouse string literal — backslashes AND quotes both escaped.
+
+    ClickHouse / chDB recognises two escape forms inside string
+    literals: `''` is a single quote, and `\\'` is also a single
+    quote. Plain quote-doubling (the portable-SQL form) is therefore
+    NOT enough on its own: a payload like `\\'; DROP TABLE …` would,
+    after quote-doubling, become `\\''; DROP TABLE …` — the engine
+    reads the first quote as backslash-escaped, the second as the
+    string terminator, and arbitrary SQL after it. Codex round 9
+    caught exactly this.
+
+    Order of operations matters: escape backslashes FIRST (each `\\`
+    → `\\\\`), then quotes (each `'` → `''`). Doing it the other way
+    would double the just-added backslashes again.
     """
-    return "'" + s.replace("'", "''") + "'"
+    escaped = s.replace("\\", "\\\\").replace("'", "''")
+    return "'" + escaped + "'"
 
 
 @contextlib.contextmanager
