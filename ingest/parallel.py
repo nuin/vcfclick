@@ -59,8 +59,10 @@ from storage import (
     apply_schema,
     db_path,
     get_session,
+    ingest_id_lock,
     insert_via_parquet,
     rollback_ingest,
+    sql_quote_str,
     validate_ingest_id,
 )
 
@@ -216,6 +218,37 @@ def ingest_parallel(
         ingest_id = str(uuid.uuid4())
     validate_ingest_id(ingest_id)
 
+    # Serialise concurrent ingests under the same (DB, ingest_id) —
+    # see ingest.vcf_load.ingest. Without this two parallel runs sharing
+    # an ingest_id would race on the default staging dir, rollback_ingest,
+    # and the bulk-import glob, producing a mixed corrupt state.
+    with ingest_id_lock(ingest_id):
+        return _ingest_parallel_locked(
+            vcf_path,
+            cohort,
+            ingest_id=ingest_id,
+            workers=workers,
+            keep_staging=keep_staging,
+            staging_dir=staging_dir,
+            bucket_size=bucket_size,
+            batch_size=batch_size,
+        )
+
+
+def _ingest_parallel_locked(
+    vcf_path: str,
+    cohort: str,
+    *,
+    ingest_id: str,
+    workers: int,
+    keep_staging: bool,
+    staging_dir: str | None,
+    bucket_size: int,
+    batch_size: int,
+) -> str:
+    """Real parallel-ingest body — already holds the per-ingest_id
+    file lock. See ingest_parallel() for the public API."""
+
     _ensure_schema()
     sess = get_session()
 
@@ -336,13 +369,19 @@ def ingest_parallel(
 
         v_cols = column_list_sql(VARIANTS_COLUMNS)
         g_cols = column_list_sql(GENOTYPES_COLUMNS)
+        # SQL-quote the glob paths — `staging_dir` can come from user
+        # input (the ingest_parallel public API exposes it), so a
+        # single quote in the path would otherwise close the file()
+        # literal and let an attacker inject arbitrary SQL.
+        v_glob = sql_quote_str(f"{staging}/variants_*.parquet")
+        g_glob = sql_quote_str(f"{staging}/genotypes_*.parquet")
         sess.query(
             f"INSERT INTO variants ({v_cols}) "
-            f"SELECT {v_cols} FROM file('{staging}/variants_*.parquet', 'Parquet')"
+            f"SELECT {v_cols} FROM file({v_glob}, 'Parquet')"
         )
         sess.query(
             f"INSERT INTO genotypes ({g_cols}) "
-            f"SELECT {g_cols} FROM file('{staging}/genotypes_*.parquet', 'Parquet')"
+            f"SELECT {g_cols} FROM file({g_glob}, 'Parquet')"
         )
         import_elapsed = time.time() - started_import
 

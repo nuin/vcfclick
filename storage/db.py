@@ -30,6 +30,8 @@ set VCFCLICK_DB_NAME.
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import logging
 import os
 import re
@@ -45,10 +47,32 @@ from chdb import session as _session
 log = logging.getLogger(__name__)
 
 
-VCFCLICK_HOME = Path(os.environ.get("VCFCLICK_HOME", Path.home() / ".vcfclick"))
-DB_ROOT = VCFCLICK_HOME / "dbs"
+# Paths are computed at every call rather than cached at import time.
+# Tests (and any in-process flow that changes VCFCLICK_HOME after import)
+# depend on this — module-level caching was a footgun: a test that
+# monkeypatched the env after `import storage` would still see the
+# old path.
+def _vcfclick_home() -> Path:
+    return Path(os.environ.get("VCFCLICK_HOME", str(Path.home() / ".vcfclick")))
 
+
+def _db_root() -> Path:
+    return _vcfclick_home() / "dbs"
+
+
+# Backward-compatible attribute access — code that imports
+# `storage.VCFCLICK_HOME` / `storage.DB_ROOT` still works, but the
+# value is recomputed on every attribute lookup via __getattr__ below.
 LEGACY_DEFAULT_PATH = Path.cwd() / ".chdb"
+
+
+def __getattr__(name: str):
+    if name == "VCFCLICK_HOME":
+        return _vcfclick_home()
+    if name == "DB_ROOT":
+        return _db_root()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DB_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,62}$")
@@ -76,7 +100,7 @@ def db_path(name: str | None = None) -> Path:
             f"Unsafe DB name {resolved!r}; allowed: letter then letters, "
             "digits, underscores, or hyphens (max 63 chars)."
         )
-    return DB_ROOT / resolved
+    return _db_root() / resolved
 
 
 # Substrings that flag the known chDB EmbeddedServer async-load race
@@ -136,9 +160,10 @@ def get_session(name: str | None = None) -> _session.Session:
 
 def list_dbs() -> list[str]:
     """All named DBs under VCFCLICK_HOME/dbs/, sorted."""
-    if not DB_ROOT.exists():
+    root = _db_root()
+    if not root.exists():
         return []
-    return sorted(p.name for p in DB_ROOT.iterdir() if p.is_dir())
+    return sorted(p.name for p in root.iterdir() if p.is_dir())
 
 
 def drop_db(name: str) -> None:
@@ -189,6 +214,54 @@ def validate_ingest_id(ingest_id: str) -> None:
 _INGESTION_SCOPED_TABLES = ("variants", "genotypes", "samples", "ingestions")
 
 
+def sql_quote_str(s: str) -> str:
+    """SQL-standard single-quoted string literal — embedded quotes
+    doubled. Use this anywhere we interpolate a string into a chDB
+    query (paths in `file('...')`, identifiers passed to library
+    code, etc.). Cheaper than parameterised binding (chDB doesn't
+    expose that for ALTER paths anyway) and the same defence.
+    """
+    return "'" + s.replace("'", "''") + "'"
+
+
+@contextlib.contextmanager
+def ingest_id_lock(ingest_id: str):
+    """Serialize concurrent ingests under the same `(DB, ingest_id)`.
+
+    Without this, two `vcfclick db ingest` invocations sharing an
+    ingest_id (across subprocesses, or two threads, or a workflow
+    runner firing them in parallel) would race on the staging
+    directory, the rollback_ingest() call, and the bulk-import
+    glob — one run could delete or overwrite the other's Parquets
+    and import a mixed set.
+
+    Uses an exclusive `fcntl.flock` on a per-id lockfile under
+    `<DB>/locks/`. Blocking — the second caller waits until the
+    first releases. Auto-released when the context exits (process
+    death, exception, or normal completion all close the FD).
+
+    Unix-only: fcntl is a Linux + macOS API. Windows isn't a
+    supported target for vcfclick today.
+    """
+    validate_ingest_id(ingest_id)
+    lock_dir = db_path() / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    lock_path = lock_dir / f"{ingest_id}.lock"
+
+    fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        # LOCK_EX blocks until acquired. If the holding process dies
+        # mid-ingest, the kernel releases the lock automatically and
+        # the next caller proceeds.
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 def rollback_ingest(ingest_id: str) -> None:
     """Delete every row carrying `ingest_id` from the active DB.
 
@@ -237,7 +310,7 @@ def insert_via_parquet(table: str, schema: pa.Schema, rows: list[dict]) -> None:
         cols = ", ".join(f"`{f.name}`" for f in schema)
         sess.query(
             f"INSERT INTO {table} ({cols}) "
-            f"SELECT {cols} FROM file('{tmp_path}', 'Parquet')"
+            f"SELECT {cols} FROM file({sql_quote_str(str(tmp_path))}, 'Parquet')"
         )
     finally:
         tmp_path.unlink(missing_ok=True)

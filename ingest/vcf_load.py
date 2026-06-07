@@ -44,8 +44,10 @@ from storage import (
     apply_schema,
     db_path,
     get_session,
+    ingest_id_lock,
     insert_via_parquet,
     rollback_ingest,
+    sql_quote_str,
     validate_ingest_id,
 )
 
@@ -270,7 +272,7 @@ def _import_parquet(table: str, parquet_path: Path) -> None:
     # for SQL safety (Parquet paths aren't expected to contain quotes).
     sess.query(
         f"INSERT INTO {table} ({cols}) "
-        f"SELECT {cols} FROM file('{parquet_path}', 'Parquet')"
+        f"SELECT {cols} FROM file({sql_quote_str(str(parquet_path))}, 'Parquet')"
     )
 
 
@@ -325,6 +327,19 @@ def ingest(
     validate_ingest_id(ingest_id)
 
     _ensure_schema()
+
+    # Serialise concurrent ingests under the same (DB, ingest_id) —
+    # the file lock blocks a second invocation until the first
+    # finishes, so workflow runners firing parallel `vcfclick db
+    # ingest` calls can't race on the staging dir, rollback, or
+    # bulk-import. See storage.db.ingest_id_lock docstring.
+    with ingest_id_lock(ingest_id):
+        return _ingest_locked(vcf_path, cohort, ingest_id)
+
+
+def _ingest_locked(vcf_path: str, cohort: str, ingest_id: str) -> str:
+    """Real ingest body — already holds the per-ingest_id file lock.
+    See ingest() for the public docstring."""
 
     # Open + classify BEFORE touching chDB. Bad headers / unreadable
     # files raise here, before the rollback below runs, so a re-ingest

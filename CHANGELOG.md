@@ -6,6 +6,38 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `storage.sql_quote_str(s)` — SQL-standard single-quoted literal with
+  embedded quotes doubled. Used at every site where we interpolate a
+  string into a chDB query (parquet file paths in
+  `INSERT … FROM file('…')`, etc.). Defence against a single quote
+  in the `staging_dir` parameter to `ingest_parallel` closing the
+  `file()` literal and letting raw SQL through. Plain unit tests in
+  `tests/test_ingest_concurrency.py` lock the contract including the
+  classic `' OR 1=1 --` injection payload.
+- `storage.ingest_id_lock(ingest_id)` — `fcntl.flock`-based exclusive
+  per-`(DB, ingest_id)` file lock. Both ingest paths
+  (`ingest.vcf_load.ingest`, `ingest.parallel.ingest_parallel`)
+  acquire the lock at the start of the call and release on exit.
+  Two concurrent `vcfclick db ingest` invocations sharing an
+  `ingest_id` (workflow runner firing parallel jobs, retry script
+  racing the previous run) used to race on the staging dir,
+  rollback, and bulk-import glob, producing a mixed corrupt state.
+  Blocking acquisition means the second call waits until the first
+  finishes. Unix-only (Windows isn't a supported target).
+- `tests/test_ingest_concurrency.py` — 7 tests covering both
+  hardening pieces, including a multiprocessing test that asserts
+  the lock blocks concurrent holders across processes and a
+  same-DB-but-different-`ingest_id` test that asserts the locks
+  don't over-serialize.
+
+### Changed
+- `storage.VCFCLICK_HOME` and `storage.DB_ROOT` are now computed at
+  attribute-access time (module-level `__getattr__`) rather than
+  cached at import. Tests and in-process flows that change
+  `VCFCLICK_HOME` after `import storage` now see the new path
+  immediately. No effect on existing callers.
+
 ### Fixed
 - Allele-frequency briefing in `SCHEMA_DESCRIPTION` and `docs/SCHEMA.md`
   now teaches the correct denominator pattern: compute cohort size from

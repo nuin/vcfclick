@@ -6,9 +6,11 @@ from storage.db import (
     db_path,
     drop_db,
     get_session,
+    ingest_id_lock,
     insert_via_parquet,
     list_dbs,
     rollback_ingest,
+    sql_quote_str,
     validate_ingest_id,
 )
 
@@ -17,7 +19,9 @@ __all__ = [
     "apply_schema",
     "insert_via_parquet",
     "rollback_ingest",
+    "sql_quote_str",
     "validate_ingest_id",
+    "ingest_id_lock",
     "db_path",
     "list_dbs",
     "drop_db",
