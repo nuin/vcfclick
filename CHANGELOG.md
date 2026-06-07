@@ -6,6 +6,21 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Parallel ingest staging dir is now wiped before workers start, so a
+  retry under the same `ingest_id` after a failed parallel parse can't
+  pick up stale Parquet files from the previous run via the bulk-import
+  glob. Closes a corruption path codex flagged after the stage-then-
+  commit restructure.
+- Serial ingest staging now happens on the same volume as the
+  destination DB (`$VCFCLICK_HOME/dbs/`) rather than the system `/tmp`.
+  With stage-then-commit the whole VCF's Parquet is held on disk
+  before Phase 2; on systems where `/tmp` is a small ramdisk or a
+  separate partition smaller than the DB volume, a fresh large ingest
+  could fail before commit purely from staging-disk exhaustion. The
+  DB volume necessarily has room for the destination data, so it has
+  room for the staging equivalent. Also flagged by codex.
+
 ### Changed
 - Both ingest paths now use a **two-phase stage-then-commit** flow.
   Phase 1 reads the VCF, validates per-record invariants

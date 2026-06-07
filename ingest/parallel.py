@@ -230,6 +230,13 @@ def ingest_parallel(
     samples = list(vcf.samples)
 
     staging = Path(staging_dir) if staging_dir else db_path() / "staging" / ingest_id
+    # Wipe a stale staging directory from a previous failed run under
+    # the same ingest_id. Without this the bulk-import globs at the end
+    # of Phase 2 would pick up the old Parquets alongside the new ones —
+    # documented corruption path. Only clear when we chose the staging
+    # location ourselves; a user-supplied --staging-dir is theirs.
+    if not staging_dir and staging.exists():
+        shutil.rmtree(staging)
     staging.mkdir(parents=True, exist_ok=True)
 
     log.info("[parallel-ingest] %s", vcf_path)

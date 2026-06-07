@@ -42,6 +42,7 @@ from ingest.routing import FORMAT_PAIR, FORMAT_SCALAR, FORMAT_TRIPLE
 from ingest.routing import INFO_FLAG, INFO_PAIR, INFO_SCALAR, classify_header
 from storage import (
     apply_schema,
+    db_path,
     get_session,
     insert_via_parquet,
     rollback_ingest,
@@ -371,7 +372,19 @@ def ingest(
         n_variants = 0
         started = time.time()
 
-        with tempfile.TemporaryDirectory(prefix="vcfclick_ingest_") as staging:
+        # Stage on the same volume as the destination DB rather than
+        # the system /tmp. With the stage-then-commit flow the whole
+        # VCF's Parquet is held on disk before Phase 2 imports — on
+        # systems where /tmp is on a small ramdisk or a separate
+        # partition that's smaller than the DB volume, a fresh large
+        # ingest would otherwise fail before commit purely from
+        # staging-disk exhaustion. The DB volume necessarily has room
+        # for the destination data, so it has room for the staging
+        # equivalent.
+        db_dir = db_path()
+        with tempfile.TemporaryDirectory(
+            prefix="vcfclick_ingest_", dir=str(db_dir.parent)
+        ) as staging:
             staging_path = Path(staging)
 
             def flush_to_disk() -> None:
