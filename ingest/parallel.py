@@ -269,25 +269,18 @@ def ingest_parallel(
         len({r.split(":")[0] for r in regions}),
     )
 
+    # Tracks whether Phase 2 (chDB writes) has started — see the same
+    # flag in ingest.vcf_load.ingest. Determines whether the except arm
+    # rolls back at all.
+    commit_started = False
+
     try:
-        # Replace any prior data under this ingest_id NOW — VCF opened +
-        # classified + region-split successfully, so we're committed to
-        # attempting the ingest. No-op on fresh IDs. If a worker fails
-        # later (e.g., multi-allelic record), the rollback in except
-        # cleans up partial new state; prior rows are gone in that case.
-        rollback_ingest(ingest_id)
-
-        # Samples table — safe Parquet-staged insert (no string interpolation
-        # of VCF-supplied sample IDs).
-        insert_via_parquet(
-            "samples",
-            SAMPLES_ARROW_SCHEMA,
-            [
-                {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
-                for s in samples
-            ],
-        )
-
+        # ── Phase 1: workers stage Parquets to disk. NO chDB writes. ──
+        # If any worker raises (multi-allelic record, malformed row,
+        # subprocess crash), pool.map surfaces the exception and we
+        # exit the try block without ever touching chDB — prior data
+        # under this ingest_id stays intact. Matches the stage-then-
+        # commit contract documented in ingest.vcf_load.ingest.
         args_list = [
             (r, vcf_path, ingest_id, str(staging), extra_format_fields, batch_size)
             for r in regions
@@ -306,6 +299,23 @@ def ingest_parallel(
                         n_batches,
                     )
         parse_elapsed = time.time() - started_parse
+
+        # ── Phase 2: workers succeeded. Commit atomically. ──
+        # Wipe prior rows under this ingest_id, then bulk-import the
+        # staged Parquets (variants + genotypes), then write samples
+        # and the ingestions catalog. A chDB-side failure during any
+        # of these still wipes prior data but the window is narrow.
+        commit_started = True
+        rollback_ingest(ingest_id)
+
+        insert_via_parquet(
+            "samples",
+            SAMPLES_ARROW_SCHEMA,
+            [
+                {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
+                for s in samples
+            ],
+        )
 
         started_import = time.time()
         # Explicit column lists on both sides — same rationale as
@@ -343,16 +353,25 @@ def ingest_parallel(
             ],
         )
     except BaseException:
-        # Atomic guarantee at the ingest_id level. Workers only write
-        # Parquet to staging — they don't touch chDB — so the at-risk
-        # writes are the samples insert (line ~270), the
-        # variants/genotypes INSERT...SELECT, and the ingestions insert.
-        # Rollback scrubs them all so the DB stays usable.
-        log.warning("[parallel-ingest] failed — rolling back ingest_id=%s", ingest_id)
-        try:
-            rollback_ingest(ingest_id)
-        except Exception as rb_err:
-            log.error("[parallel-ingest] rollback FAILED: %s", rb_err)
+        # Only roll back if Phase 2 (chDB writes) actually started. If
+        # a worker raised during Phase 1, nothing was written to chDB
+        # and rolling back would destroy prior data under the same
+        # ingest_id and silently turn a "failed re-ingest" into a wipe.
+        if commit_started:
+            log.warning(
+                "[parallel-ingest] failed mid-commit — rolling back %s",
+                ingest_id,
+            )
+            try:
+                rollback_ingest(ingest_id)
+            except Exception as rb_err:
+                log.error("[parallel-ingest] rollback FAILED: %s", rb_err)
+        else:
+            log.warning(
+                "[parallel-ingest] failed during parse — no chDB writes "
+                "occurred, prior data under ingest_id=%s preserved",
+                ingest_id,
+            )
         raise
 
     if not keep_staging:

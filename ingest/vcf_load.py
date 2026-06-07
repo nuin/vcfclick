@@ -300,23 +300,24 @@ def ingest(
 ) -> str:
     """Load a normalised VCF into the embedded chDB store.
 
-    Atomic at the ingest_id level for the common failure modes:
-    if VCF open or header classification fails, the database is
-    untouched. If a record inside the variant loop fails (multi-
-    allelic, malformed row, batch flush error), every row already
-    written under this `ingest_id` is deleted before the exception
-    propagates — including rows from a previous ingest under the
-    same id (see Replacement semantics below).
+    Stage-then-commit: the variant loop only writes Parquet files to
+    a temp directory. chDB writes (delete prior rows under this
+    ingest_id, insert samples, bulk-import the staged Parquets,
+    insert into the ingestions catalog) all happen at the end, after
+    the full VCF has parsed successfully.
 
     Replacement semantics: re-running under an existing `ingest_id`
-    replaces. The rollback that wipes prior rows runs AFTER the new
-    VCF has been opened and classified, so a corrupt header or
-    classification failure leaves prior data intact. A failure
-    DURING the variant loop, however, deletes the prior rows and
-    leaves no new rows — net result is a wipe of that ingest_id.
-    For full atomicity against mid-stream failures, ingest into a
-    fresh ingest_id and remove the old one once the new ingest
-    succeeds.
+    truly replaces the prior data. The rollback runs only after Phase 1
+    (parsing) succeeds, so failures during parsing — bad header,
+    multi-allelic record, malformed row, KeyboardInterrupt — leave the
+    prior data intact. The narrow remaining window is a chDB-side
+    failure DURING the Phase 2 imports themselves (disk full mid-
+    import, chDB session crash); a failure there leaves the database
+    in the same state as any partial-commit DB system, and the
+    `except` arm's rollback still cleans up whatever new rows did
+    land. For belt-and-suspenders atomicity across that narrow
+    window, ingest into a fresh `ingest_id` and remove the old one
+    once the new ingest succeeds.
     """
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
@@ -352,26 +353,19 @@ def ingest(
     if classification["extra_format"]:
         log.info("[ingest]   format_extra keys: %s", classification["extra_format"])
 
+    # Tracks whether Phase 2 (chDB writes) has started. Determines
+    # whether the except arm runs rollback at all: if Phase 1 raises
+    # we've written nothing and rollback would destroy prior data
+    # belonging to this ingest_id.
+    commit_started = False
+
     try:
-        # Replace any prior data under this ingest_id NOW — the new VCF
-        # opened + classified successfully so we're committed to attempting
-        # the ingest. No-op on fresh IDs. If the variant loop below fails,
-        # the rollback in except cleans up partial new state; prior rows
-        # are gone in that case (see docstring).
-        rollback_ingest(ingest_id)
-
-        # Samples + ingestions catalog go through the same Parquet-staged
-        # bulk-insert as variants/genotypes. Avoids string-interpolating
-        # sample IDs (which come from the VCF header) into SQL.
-        insert_via_parquet(
-            "samples",
-            SAMPLES_ARROW_SCHEMA,
-            [
-                {"ingest_id": ingest_id, "sample_id": s, "cohort": cohort, "sex": None}
-                for s in samples
-            ],
-        )
-
+        # Two-phase stage-then-commit. Phase 1 writes Parquet files to
+        # a tempdir without touching chDB — if the variant loop raises
+        # (multi-allelic, malformed body, KeyboardInterrupt), prior data
+        # under this ingest_id is still untouched. Phase 2 runs only if
+        # the full VCF parsed successfully: rollback prior rows, then
+        # bulk-import the staged Parquets in one go.
         variants_batch: list[list] = []
         genotypes_batch: list[list] = []
         n_variants = 0
@@ -380,19 +374,17 @@ def ingest(
         with tempfile.TemporaryDirectory(prefix="vcfclick_ingest_") as staging:
             staging_path = Path(staging)
 
-            def flush() -> None:
+            def flush_to_disk() -> None:
                 if not variants_batch:
                     return
-                v_path = staging_path / f"v_{n_variants}.parquet"
-                g_path = staging_path / f"g_{n_variants}.parquet"
+                v_path = staging_path / f"v_{n_variants:09d}.parquet"
+                g_path = staging_path / f"g_{n_variants:09d}.parquet"
                 write_parquet(variants_batch, VARIANTS_ARROW_SCHEMA, v_path)
                 write_parquet(genotypes_batch, GENOTYPES_ARROW_SCHEMA, g_path)
-                _import_parquet("variants", v_path)
-                if g_path.stat().st_size > 0:
-                    _import_parquet("genotypes", g_path)
                 variants_batch.clear()
                 genotypes_batch.clear()
 
+            # ── Phase 1: parse VCF, stage Parquets, NO chDB writes. ──
             for variant in vcf:
                 if len(variant.ALT) != 1:
                     raise ValueError(
@@ -409,7 +401,7 @@ def ingest(
                 n_variants += 1
 
                 if len(variants_batch) >= BATCH_SIZE:
-                    flush()
+                    flush_to_disk()
                     elapsed = time.time() - started
                     log.info(
                         "[ingest] %s variants (%s/s)",
@@ -417,7 +409,35 @@ def ingest(
                         f"{n_variants / elapsed:>8,.0f}",
                     )
 
-            flush()
+            flush_to_disk()
+
+            # ── Phase 2: parse succeeded. Commit atomically. ──
+            # Prior rows under this ingest_id wiped; samples + staged
+            # variants + staged genotypes + ingestions catalog all
+            # written in one go. Any chDB failure here still leaves
+            # prior data gone, but the window is narrow vs. the parse.
+            commit_started = True
+            rollback_ingest(ingest_id)
+
+            insert_via_parquet(
+                "samples",
+                SAMPLES_ARROW_SCHEMA,
+                [
+                    {
+                        "ingest_id": ingest_id,
+                        "sample_id": s,
+                        "cohort": cohort,
+                        "sex": None,
+                    }
+                    for s in samples
+                ],
+            )
+
+            for v_path in sorted(staging_path.glob("v_*.parquet")):
+                _import_parquet("variants", v_path)
+                g_path = staging_path / v_path.name.replace("v_", "g_", 1)
+                if g_path.exists() and g_path.stat().st_size > 0:
+                    _import_parquet("genotypes", g_path)
 
         insert_via_parquet(
             "ingestions",
@@ -433,18 +453,26 @@ def ingest(
             ],
         )
     except BaseException:
-        # Atomic guarantee: on ANY failure (multi-allelic ValueError,
-        # batch flush error, KeyboardInterrupt) scrub everything written
-        # under this ingest_id so the DB is queryable and free of half-
-        # loaded rows. Catches BaseException (not just Exception) so
-        # Ctrl-C during a long ingest also cleans up.
-        log.warning("[ingest] failed — rolling back ingest_id=%s", ingest_id)
-        try:
-            rollback_ingest(ingest_id)
-        except Exception as rb_err:
-            # Surface rollback failures separately — the user needs to
-            # know the DB is dirty so they can manually `db rm`.
-            log.error("[ingest] rollback FAILED: %s", rb_err)
+        # Only roll back if Phase 2 (chDB writes) actually started. If
+        # Phase 1 raised (multi-allelic, malformed body, KeyboardInterrupt
+        # mid-parse) we wrote nothing to chDB — rolling back here would
+        # destroy prior data under the same ingest_id and silently turn
+        # a "failed re-ingest" into a wipe. Catches BaseException so
+        # Ctrl-C during Phase 2 still cleans up partial commits.
+        if commit_started:
+            log.warning("[ingest] failed mid-commit — rolling back %s", ingest_id)
+            try:
+                rollback_ingest(ingest_id)
+            except Exception as rb_err:
+                # Surface rollback failures separately — the user needs
+                # to know the DB is dirty so they can manually `db rm`.
+                log.error("[ingest] rollback FAILED: %s", rb_err)
+        else:
+            log.warning(
+                "[ingest] failed during parse — no chDB writes occurred, "
+                "prior data under ingest_id=%s preserved",
+                ingest_id,
+            )
         raise
 
     elapsed = time.time() - started

@@ -6,7 +6,28 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Both ingest paths now use a **two-phase stage-then-commit** flow.
+  Phase 1 reads the VCF, validates per-record invariants
+  (multi-allelic check fires here), and writes Parquet batches to a
+  tempdir — **no chDB writes happen during parsing**. Phase 2 runs only
+  if Phase 1 completes successfully: rollback prior rows under the
+  ingest_id, insert samples, bulk-import the staged Parquets in one
+  go, then write the ingestions catalog. A `commit_started` flag
+  controls the except arm: failures during Phase 1 (multi-allelic,
+  malformed body, corrupt header, Ctrl-C mid-parse) skip the rollback
+  so prior data under that ingest_id is preserved.
+
 ### Fixed
+- Mid-stream re-ingest failures no longer wipe prior data. Closes the
+  third codex CLI finding: a re-ingest under an existing ingest_id
+  whose new VCF opens fine but fails inside the variant loop (e.g.,
+  multi-allelic record encountered) used to delete the prior good
+  rows and leave no replacement. The stage-then-commit restructure
+  above means the multi-allelic check now raises in Phase 1, before
+  rollback ever runs. New test
+  `test_reingest_with_multi_allelic_preserves_prior_data` locks the
+  contract.
 - Atomic `--ingest-id` replacement against early failures. The previous
   fix called `rollback_ingest()` before opening the new VCF, which
   silently wiped prior data on every failed re-ingest (corrupt header,

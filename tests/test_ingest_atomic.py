@@ -306,6 +306,87 @@ def test_reingest_with_corrupt_vcf_preserves_prior_data(vcfclick_home, tmp_path)
     )
 
 
+def test_reingest_with_multi_allelic_preserves_prior_data(vcfclick_home):
+    """The hard case: re-ingest a VCF that opens + classifies fine but
+    fails MID-STREAM (multi-allelic record in the body) under an
+    existing ingest_id MUST leave the prior data intact. Closes the
+    gap codex flagged in the third review pass.
+
+    The stage-then-commit restructure means the variant loop only
+    writes Parquet files to a tempdir — no chDB writes happen until
+    the full VCF parses successfully. A multi-allelic record raises
+    in Phase 1, before the rollback or any chDB writes fire.
+    """
+    fixtures = Path(__file__).parent / "fixtures"
+    tiny = fixtures / "tiny.vcf.gz"
+    multi = fixtures / "multiallelic.vcf.gz"
+
+    _vc(vcfclick_home, "db", "create", "smoke")
+
+    # First ingest — tiny (5 variants, 3 samples).
+    _vc(
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(tiny),
+        "--cohort",
+        "x",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
+    )
+    out = _query(
+        vcfclick_home,
+        "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
+    )
+    assert "│       5 │" in out
+
+    # Re-ingest under same id with the multi-allelic fixture. The fixture
+    # has a valid header and three records: two bi-allelic flanking one
+    # multi-allelic in the middle. cyvcf2 opens it fine, classify_header
+    # succeeds, and the variant loop fires the multi-allelic check on
+    # record 2. Under stage-then-commit, that raise happens BEFORE any
+    # chDB write — prior data is untouched.
+    _vc(
+        vcfclick_home,
+        "db",
+        "ingest",
+        "smoke",
+        str(multi),
+        "--cohort",
+        "x",
+        "--ingest-id",
+        "batch_a",
+        "--serial",
+        expect_failure=True,
+    )
+
+    # Prior data MUST still be queryable.
+    out = _query(
+        vcfclick_home,
+        "smoke",
+        "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
+    )
+    assert "│       5 │" in out, (
+        f"mid-stream-failed re-ingest wiped prior data — stage-then-commit "
+        f"should preserve prior rows when Phase 1 (parse) raises: {out!r}"
+    )
+
+    # And the samples — S3 from the tiny ingest is only in the tiny VCF,
+    # so its presence confirms the previous samples row didn't get
+    # scrubbed by a premature rollback.
+    out = _query(
+        vcfclick_home,
+        "smoke",
+        "SELECT count() FROM samples WHERE ingest_id = 'batch_a' AND sample_id = 'S3'",
+    )
+    assert "│       1 │" in out, (
+        f"sample S3 from prior ingest should survive failed re-ingest: {out!r}"
+    )
+
+
 def test_ingest_id_rejected_with_quotes():
     """Direct library-level test: rollback_ingest interpolates the
     ingest_id into the DELETE statement, so validate_ingest_id is the
