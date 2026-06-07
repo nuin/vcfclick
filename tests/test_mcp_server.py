@@ -121,6 +121,13 @@ def test_briefing_includes_non_obvious_invariants():
     assert "NULL silently fails" in text
     # Cross-ingestion: rows are NOT merged across uploads.
     assert "NOT merged across ingestions" in text
+    # Cohort AF denominator: must teach the LLM to compute cohort size
+    # against `samples` ALONE, not through the join to sparse genotypes.
+    # Counting via the join only sees non-reference samples → inflated
+    # AF. Codex round 6 caught this exact failure mode in an earlier
+    # iteration of the briefing.
+    assert "cohort_size" in text or "FROM samples\n" in text
+    assert "CROSS JOIN" in text
 
 
 # ─────────────────────── DuckDB-backed tools ───────────────────────

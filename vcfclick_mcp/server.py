@@ -108,13 +108,37 @@ clin_sig columns in chDB — they do not exist there.
    cohort, JOIN samples to filter by cohort. If they name an ingest_id,
    filter directly.
 
-5. ALLELE FREQUENCY: sum(gt) / (2 * count(DISTINCT (s.ingest_id,
-   s.sample_id))), where the sample count comes from JOINing
-   `samples s` and filtering by cohort. There is intentionally no
-   materialized cohort_sizes view — SummingMergeTree wouldn't
-   decrement on rollback or replacement. AF is meaningful PER
-   COHORT — always scope it. See examples/brca1-cohort.md Q5 for
-   the canonical pattern.
+5. ALLELE FREQUENCY:
+       ac = sum(gt) over `genotypes` JOINed to cohort samples.
+       an = 2 * count(DISTINCT (ingest_id, sample_id)) computed
+            FROM `samples` ALONE, filtered by cohort — NOT from
+            the join with genotypes. Because genotypes is sparse
+            (0/0 calls are absent), counting samples through the
+            join only sees non-reference samples and gives a too-
+            small denominator → inflated AF. Compute the cohort
+            size as its own CTE / subquery against `samples` and
+            bring it in via CROSS JOIN.
+
+   Canonical pattern (this is what `vcfclick db diff` does):
+       WITH cohort_size AS (
+           SELECT 2 * count(DISTINCT (ingest_id, sample_id)) AS an
+           FROM samples WHERE cohort = 'study1'
+       )
+       SELECT
+           sum(g.gt) AS ac,
+           cs.an     AS an,
+           sum(g.gt) / cs.an AS af
+       FROM genotypes g
+       INNER JOIN samples s
+           ON s.ingest_id = g.ingest_id AND s.sample_id = g.sample_id
+       CROSS JOIN cohort_size cs
+       WHERE s.cohort = 'study1'
+         AND g.chrom = 'chr17' AND g.pos = 43044295
+       GROUP BY cs.an;
+
+   AF is meaningful PER COHORT — always scope it. There is
+   intentionally no materialized cohort_sizes view — SummingMergeTree
+   wouldn't decrement on rollback or replacement.
 
 6. COORDINATES: GRCh38, UCSC-style ('chr' prefix).
 

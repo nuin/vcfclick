@@ -256,24 +256,38 @@ draft of the schema carried a `cohort_sizes_mv` `SummingMergeTree`,
 but `SummingMergeTree` never decrements on DELETE — rolling back a
 samples insert (failed ingest, `--ingest-id` replacement) left the
 view's count permanently inflated, so any AF query that used it as
-the denominator produced wrong numbers after retries. Compute cohort
-size directly:
+the denominator produced wrong numbers after retries.
+
+The canonical AF pattern is to compute the cohort size against
+`samples` *alone* (not through the join to `genotypes`) and bring
+the resulting denominator in via a CROSS JOIN. Counting samples
+inside the genotypes-join only sees non-reference samples — because
+`genotypes` is sparse, `0/0` calls are absent — so the denominator
+shrinks to the non-reference set and AF gets inflated.
 
 ```sql
+WITH cohort_size AS (
+    SELECT 2 * count(DISTINCT (ingest_id, sample_id)) AS an
+    FROM samples
+    WHERE cohort = 'study1'
+)
 SELECT
     sum(g.gt) AS ac,
-    2 * count(DISTINCT (s.ingest_id, s.sample_id)) AS an,
-    sum(g.gt) / (2 * count(DISTINCT (s.ingest_id, s.sample_id))) AS af
+    cs.an     AS an,
+    sum(g.gt) / cs.an AS af
 FROM genotypes g
 INNER JOIN samples s
     ON s.ingest_id = g.ingest_id AND s.sample_id = g.sample_id
+CROSS JOIN cohort_size cs
 WHERE s.cohort = 'study1'
-  AND g.chrom = 'chr17' AND g.pos BETWEEN 43044295 AND 43170245;
+  AND g.chrom = 'chr17' AND g.pos BETWEEN 43044295 AND 43170245
+GROUP BY cs.an;
 ```
 
-At realistic cohort scale (~10^4 samples) the `count(DISTINCT ...)`
-runs in microseconds. `vcfclick db diff <db> --cohort-a A --cohort-b B`
-already uses this pattern.
+At realistic cohort scale (~10^4 samples) the `count(DISTINCT)`
+against `samples` runs in microseconds.
+`vcfclick db diff <db> --cohort-a A --cohort-b B` already uses
+this pattern.
 
 ---
 

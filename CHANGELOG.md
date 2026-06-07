@@ -6,6 +6,20 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Allele-frequency briefing in `SCHEMA_DESCRIPTION` and `docs/SCHEMA.md`
+  now teaches the correct denominator pattern: compute cohort size from
+  `samples` ALONE as a CTE/subquery, then bring it into the genotypes
+  aggregation via CROSS JOIN. The previous wording — added when
+  cohort_sizes_mv was dropped — implied counting `DISTINCT samples`
+  *through* the join to `genotypes`, which silently shrinks the
+  denominator to the non-reference set (the genotypes table is sparse)
+  and produces inflated AF. `vcfclick db diff` already uses the
+  correct pattern; the briefing now matches it explicitly. Test in
+  `tests/test_mcp_server.py::test_briefing_includes_non_obvious_invariants`
+  locks the contract — the briefing must mention `cohort_size` and
+  `CROSS JOIN`. Caught by codex in the sixth review pass.
+
 ### Removed
 - **`cohort_sizes_mv` materialized view** is no longer created on
   fresh databases. `SummingMergeTree` never decrements on DELETE, so
