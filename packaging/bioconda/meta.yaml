@@ -1,5 +1,5 @@
 {% set name = "vcfclick" %}
-{% set version = "0.3.0" %}
+{% set version = "0.3.1" %}
 
 package:
   name: {{ name|lower }}
@@ -7,10 +7,10 @@ package:
 
 source:
   url: https://pypi.io/packages/source/v/{{ name }}/{{ name }}-{{ version }}.tar.gz
-  # SHA256 of the v0.3.0 sdist published to PyPI on 2026-06-08.
-  # Verified to match `shasum -a 256 dist/vcfclick-0.3.0.tar.gz` from
+  # SHA256 of the v0.3.1 sdist published to PyPI on 2026-06-08.
+  # Verified to match `shasum -a 256 dist/vcfclick-0.3.1.tar.gz` from
   # the local `uv build` (deterministic for this version's metadata).
-  sha256: a94c17c2b79dbc5e60e61e12ce9deaf967bef1cbe1c2721614a17b55bdde3610
+  sha256: a2707612651b62c58452dfcbb3db6d3d78d90d9affa3852ca985e32981f1648f
 
 build:
   noarch: python
@@ -55,8 +55,8 @@ test:
     # works end-to-end inside the conda environment — catches the
     # case where one of duckdb / cyvcf2 / pyarrow / mcp has a
     # binary-incompatibility on a target platform.
-    - VCFCLICK_BACKEND=duckdb vcfclick db create _smoke
-    - VCFCLICK_BACKEND=duckdb vcfclick db rm --yes _smoke
+    - VCFCLICK_BACKEND=duckdb vcfclick db create smoke
+    - VCFCLICK_BACKEND=duckdb vcfclick db rm --yes smoke
 
 about:
   home: https://github.com/nuin/vcfclick

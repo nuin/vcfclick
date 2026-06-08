@@ -202,5 +202,5 @@ class DuckDBSession:
     def close(self) -> None:
         try:
             self._conn.close()
-        except Exception:
-            pass
+        except Exception as exc:
+            log.warning("DuckDB connection close failed for %s: %s", self._db_file, exc)

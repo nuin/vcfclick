@@ -45,8 +45,6 @@ import pyarrow.parquet as pq
 log = logging.getLogger(__name__)
 
 
-# Backend selection
-# ─────────────────
 # `VCFCLICK_BACKEND` picks the variant store:
 #   - "chdb"    → chDB (ClickHouse engine, requires the [chdb] extra)
 #   - "duckdb"  → DuckDB (no extra needed; always available)
@@ -172,10 +170,10 @@ def drop_db(name: str) -> None:
     path = db_path(name)
     if not path.exists():
         raise FileNotFoundError(f"db {name!r} does not exist at {path}")
-    if name in _sessions:
-        # chDB sessions can be GC'd implicitly; explicit close would be
-        # preferable but the API is stable enough that pop() suffices here.
-        _sessions.pop(name)
+    cache_key = f"{backend()}::{_resolve_name(name) or '_legacy'}"
+    session = _sessions.pop(cache_key, None)
+    if hasattr(session, "close"):
+        session.close()
     shutil.rmtree(path)
 
 
