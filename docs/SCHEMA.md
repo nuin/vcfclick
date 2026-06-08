@@ -291,6 +291,101 @@ this pattern.
 
 ---
 
+## Parquet as a public interchange format
+
+vcfclick reads and writes Parquet whose column-name set and types are
+the locked Arrow schemas defined in
+[`ingest/_arrow.py`](../ingest/_arrow.py) (`VARIANTS_ARROW_SCHEMA`,
+`GENOTYPES_ARROW_SCHEMA`, `SAMPLES_ARROW_SCHEMA`). That makes Parquet
+the interop format with the rest of the columnar genomics stack —
+DuckDB, polars, Spark — without going through cyvcf2.
+
+The symmetric pair of commands:
+
+```bash
+# Out: three Parquet files in dump_dir/
+vcfclick db dump cohort_a --out dump_dir/
+
+# In: same files, new (cohort, ingest_id) label
+vcfclick db create cohort_b
+vcfclick db ingest-parquet cohort_b dump_dir/ \
+    --cohort B --ingest-id batch_q2
+```
+
+### What gets written by `db dump`
+
+Three files in the output directory:
+
+- `variants.parquet` — every variant row, including the
+  `ingested_at` server-default column from the table DDL.
+- `genotypes.parquet` — every genotype row (sparse: `0/0`s
+  not stored), including `ingested_at`.
+- `samples.parquet` — `(ingest_id, sample_id, cohort, sex,
+  ingested_at)`.
+
+The ingestions-catalog table is *also* exported as
+`ingestions.parquet` for inspection but not consumed by
+`ingest-parquet` — provenance for the imported data is
+re-created against the new ingest_id at import time.
+
+### What `db ingest-parquet` accepts
+
+The same directory layout `db dump` produces, with the same column
+schemas. The required file is `variants.parquet`. `genotypes.parquet`
+and `samples.parquet` are optional.
+
+Sample handling, in order of precedence:
+
+1. `samples.parquet` present → imported as-is, with `ingest_id` and
+   `cohort` columns rewritten to the caller's `--ingest-id` and
+   `--cohort` (the source values are not honoured — this is what
+   makes round-tripping safe under a different label).
+2. `samples.parquet` missing but `genotypes.parquet` present → the
+   sample list is derived via `SELECT DISTINCT sample_id` against
+   the genotypes file; `sex` is left NULL.
+3. Neither present → no samples row is written. Valid for a
+   variants-only cohort summary (an external AF table without
+   per-sample genotypes).
+
+### Server-default columns
+
+Each table's DDL declares `ingested_at DateTime DEFAULT now()` as
+the version column for the `ReplacingMergeTree` engine. Dumps
+include it; ingest tolerates it on input but does NOT carry it
+through. chDB re-defaults `ingested_at` on the new INSERT, so the
+column always reflects "when was this row committed to *this*
+chDB store," never "when was it ingested upstream."
+
+Adding any other column the locked Arrow schema doesn't list is a
+schema-mismatch and is rejected during Phase 1 (before any chDB
+write happens). The schema-agreement test
+[`tests/test_schema_agreement.py`](../tests/test_schema_agreement.py)
+keeps the SQL DDL and the Arrow schemas in lockstep.
+
+### Producing conforming Parquet from external tools
+
+Any tool that can write Parquet matching the column-name set and
+type list in `ingest/_arrow.py` can be a Parquet source. The
+minimum-viable producer just needs the `variants.parquet` columns
+right. From DuckDB:
+
+```sql
+COPY (
+    SELECT
+        chrom, pos, ref, alt, ...        -- every Arrow column
+    FROM my_variants_view
+) TO 'variants.parquet' (FORMAT 'parquet');
+```
+
+Then:
+
+```bash
+vcfclick db ingest-parquet cohort_a /path/to/dir/ \
+    --cohort EXTERNAL --ingest-id from_duckdb
+```
+
+---
+
 ## Promoting an overflow field to typed
 
 If a field your VCFs always carry shows up under `info_extra` or

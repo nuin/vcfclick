@@ -171,6 +171,50 @@ def db_ingest(
         )
 
 
+# ─── ingest-parquet ─────────────────────────────────────────────────
+
+
+@db.command(name="ingest-parquet")
+@click.argument("name")
+@click.argument("dump_dir", type=click.Path(exists=True, file_okay=False))
+@click.option(
+    "--cohort",
+    default="default",
+    show_default=True,
+    help="Cohort label to assign to the imported data.",
+)
+@click.option(
+    "--ingest-id",
+    default=None,
+    help="Stable upload identifier (UUID4 if omitted). Reuse to replace prior data.",
+)
+def db_ingest_parquet(
+    name: str,
+    dump_dir: str,
+    cohort: str,
+    ingest_id: str | None,
+) -> None:
+    """Ingest a Parquet dump (produced by `db dump`) into NAME.
+
+    DUMP_DIR is a directory containing variants.parquet (required) and
+    optionally genotypes.parquet / samples.parquet. The ingest_id and
+    cohort columns of the source files are overridden with --ingest-id
+    and --cohort. Reuse an --ingest-id to replace prior data under it.
+    """
+    from storage import db_path
+
+    if not db_path(name).exists():
+        raise click.ClickException(
+            f"db {name!r} does not exist. Run `vcfclick db create {name}` first."
+        )
+
+    _set_db(name)
+
+    from ingest.parquet_load import ingest_from_parquet
+
+    ingest_from_parquet(dump_dir, cohort, ingest_id)
+
+
 # ─── query ──────────────────────────────────────────────────────────
 
 

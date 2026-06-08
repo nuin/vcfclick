@@ -6,6 +6,44 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.2.0] — 2026-06-08
+
+### Added
+- `vcfclick db ingest-parquet <db> <dump_dir>` — the symmetric
+  inverse of `db dump`. Reads variants/genotypes/samples Parquet
+  files matching the locked Arrow schemas in `ingest/_arrow.py`
+  and lands them in chDB under a new (cohort, ingest_id) label.
+  The full round-trip is `db dump → ingest-parquet` — the same
+  three Parquet files that fall out of a dump are the wire format
+  that comes back in.
+  - The source `ingest_id` and `cohort` columns are rewritten to
+    the caller's `--ingest-id` and `--cohort` via the SELECT list
+    of an `INSERT … SELECT FROM file()`, so moving a dump between
+    cohorts/labels is a single command.
+  - Samples are imported as-is when `samples.parquet` is present,
+    derived via `SELECT DISTINCT sample_id` against
+    `genotypes.parquet` when not, or skipped entirely for a
+    variants-only cohort-summary ingest.
+  - Phase-1 schema validation rejects files with the wrong column
+    set BEFORE the per-ingest_id file lock is acquired, so a bad
+    re-ingest under a stable id leaves the prior data intact —
+    same atomicity contract as the VCF path.
+  - The `ingested_at` `DEFAULT now()` ReplacingMergeTree version
+    column is tolerated on input but not carried through; chDB
+    re-defaults it on the new INSERT.
+  - 9 new tests in `tests/test_ingest_parquet.py`: round-trip
+    counts preservation, ingest_id/cohort override, replay-replace
+    semantics, ingestions-catalog provenance, variants-only valid,
+    samples-derived-from-genotypes, missing-variants rejection,
+    schema-mismatch rejection before chDB touch, ingest_id
+    validation.
+
+### Changed
+- `docs/SCHEMA.md` adds a "Parquet as a public interchange format"
+  section documenting the dump-ingest round-trip, the column-set
+  contract, server-default column handling, and how external tools
+  (DuckDB, polars, Spark) can produce conforming Parquet.
+
 ## [0.1.3] — 2026-06-07
 
 ### Fixed
@@ -308,7 +346,8 @@ Initial PyPI release.
 - GENCODE v45 gene-coordinates loader (`vcfclick annotations load`).
 - Apache 2.0 license.
 
-[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.1.3...HEAD
+[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/nuin/vcfclick/releases/tag/v0.2.0
 [0.1.3]: https://github.com/nuin/vcfclick/releases/tag/v0.1.3
 [0.1.2]: https://github.com/nuin/vcfclick/releases/tag/v0.1.2
 [0.1.1]: https://github.com/nuin/vcfclick/releases/tag/v0.1.1
