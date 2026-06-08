@@ -10,15 +10,21 @@ ignore any subsequent change. Codex round 9 caught this exact gap.
 
 from storage.db import (
     apply_schema,
+    backend,
+    count_expr,
     db_disk_size,
     db_path,
+    delete_where_sql,
     drop_db,
     get_session,
     ingest_id_lock,
     insert_via_parquet,
     list_dbs,
+    parquet_file_expr,
     rollback_ingest,
+    schema_dir_for_backend,
     sql_quote_str,
+    table_exists,
     validate_ingest_id,
 )
 
@@ -44,6 +50,12 @@ __all__ = [
     "list_dbs",
     "drop_db",
     "db_disk_size",
+    "backend",
+    "schema_dir_for_backend",
+    "delete_where_sql",
+    "parquet_file_expr",
+    "count_expr",
+    "table_exists",
     "DB_ROOT",
     "VCFCLICK_HOME",
 ]

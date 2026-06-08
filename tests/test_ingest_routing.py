@@ -143,8 +143,15 @@ def test_unknown_info_fields_land_in_info_extra(vcfclick_home):
 def test_info_extra_is_empty_when_no_unknown_fields(vcfclick_home):
     """A record with only reserved INFO fields → info_extra is {}."""
     _ingest_routing(vcfclick_home)
+    # Backend-portable empty-map check: chDB has `length(MAP)`, DuckDB
+    # has `cardinality(MAP)`. Pick at SQL build time.
+    fn = (
+        "cardinality"
+        if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb"
+        else "length"
+    )
     rows = _tsv(
-        vcfclick_home, "rt", "SELECT length(info_extra) FROM variants WHERE pos = 200"
+        vcfclick_home, "rt", f"SELECT {fn}(info_extra) FROM variants WHERE pos = 200"
     )
     assert rows == [["0"]]
 
@@ -152,9 +159,17 @@ def test_info_extra_is_empty_when_no_unknown_fields(vcfclick_home):
 def test_unknown_info_does_NOT_leak_into_typed_columns(vcfclick_home):
     """COSMICID and MYRARETAG must not appear as columns on `variants`."""
     _ingest_routing(vcfclick_home)
-    cols = _tsv(
-        vcfclick_home, "rt", "SELECT name FROM system.columns WHERE table = 'variants'"
-    )
+    # System-catalog tables differ between backends. chDB exposes
+    # `system.columns`; DuckDB uses the SQL-standard
+    # `information_schema.columns` (column `column_name`, not `name`).
+    if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb":
+        sql = (
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'variants'"
+        )
+    else:
+        sql = "SELECT name FROM system.columns WHERE table = 'variants'"
+    cols = _tsv(vcfclick_home, "rt", sql)
     col_names = {row[0] for row in cols}
     for forbidden in ("info_COSMICID", "info_MYRARETAG", "info_CSQ"):
         assert forbidden not in col_names
@@ -226,9 +241,14 @@ def test_dp_populates_when_FORMAT_order_changes_mid_vcf(vcfclick_home):
 
 def test_format_extra_empty_when_only_reserved_fields(vcfclick_home):
     _ingest_routing(vcfclick_home)
+    fn = (
+        "cardinality"
+        if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb"
+        else "length"
+    )
     rows = _tsv(
         vcfclick_home,
         "rt",
-        "SELECT length(format_extra) FROM genotypes WHERE pos = 200",
+        f"SELECT {fn}(format_extra) FROM genotypes WHERE pos = 200",
     )
     assert rows == [["0"]]

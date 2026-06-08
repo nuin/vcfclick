@@ -106,6 +106,25 @@ on `$PATH`.
 
 Listing: <https://pypi.org/project/vcfclick/>.
 
+### Storage backend
+
+vcfclick runs on either of two embedded SQL engines: **chDB**
+(ClickHouse) or **DuckDB**. The choice is per-process via
+`VCFCLICK_BACKEND=chdb|duckdb`; if unset, auto-detect picks chDB
+when its import succeeds and otherwise falls back to DuckDB.
+
+| Install path | What you get |
+|---|---|
+| `pip install vcfclick` / `uv tool install vcfclick` | Both backends installed; default to chDB |
+| `conda install -c bioconda vcfclick` | DuckDB only (chDB is not packageable for conda; see `packaging/bioconda/README.md`); auto-detect picks DuckDB |
+| `pip install vcfclick && pip uninstall chdb` | DuckDB only on pip; auto-detect picks DuckDB |
+
+The two backends use distinct on-disk formats (chDB writes a
+ClickHouse data directory; DuckDB writes a single `store.duckdb`
+file), so a database created under one backend is NOT readable by
+the other. Move data between them with `db dump` → `db ingest-parquet`
+under the destination backend.
+
 ## 30-second demo
 
 A pre-built 1000 Genomes Phase 3 BRCA1 cohort (3,014 variants × 3,202

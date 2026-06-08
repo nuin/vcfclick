@@ -131,8 +131,7 @@ def split_via_tbi(
     if not tbi_path.exists():
         return None
 
-    # Import here to avoid a circular import (parallel.py imports us).
-    from ingest.parallel import _split_contig_balanced
+    from ingest.parallel_split import _split_contig_balanced
 
     contig_offsets = parse_tbi(tbi_path)
     regions: list[str] = []

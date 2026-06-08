@@ -53,91 +53,22 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
+from ingest.parallel_split import DEFAULT_BUCKET_SIZE, split_by_variant_count
 from ingest.routing import classify_header
-from ingest.vcf_load import BATCH_SIZE, build_genotype_rows, build_variant_row
+from ingest.vcf_load import BATCH_SIZE
+from ingest.vcf_rows import build_genotype_rows, build_variant_row
 from storage import (
     apply_schema,
     db_path,
     get_session,
     ingest_id_lock,
     insert_via_parquet,
+    parquet_file_expr,
     rollback_ingest,
-    sql_quote_str,
     validate_ingest_id,
 )
 
 log = logging.getLogger(__name__)
-
-DEFAULT_BUCKET_SIZE = 100_000  # 100Kb position buckets for the splitter
-SPARSE_CONTIG_THRESHOLD = 1_000  # skip splitting if a contig has fewer
-
-
-def split_by_variant_count(
-    vcf_path: str,
-    n_workers: int,
-    bucket_size: int = DEFAULT_BUCKET_SIZE,
-) -> list[str]:
-    """Single-pass count of variants per position bucket → balanced ranges.
-
-    Cost: one VCF iteration without genotype access (`for variant in vcf`
-    only touches the binary record header, not the per-sample arrays).
-    For the chr17 10Mb / 235k-variant test slice this is ~10 seconds.
-    """
-    vcf = VCF(vcf_path)
-    counts: dict[str, dict[int, int]] = {}
-    for variant in vcf:
-        contig = variant.CHROM
-        bucket = variant.POS // bucket_size
-        c = counts.setdefault(contig, {})
-        c[bucket] = c.get(bucket, 0) + 1
-
-    regions: list[str] = []
-    for contig in vcf.seqnames:
-        bucket_counts = counts.get(contig)
-        if not bucket_counts:
-            continue
-        regions.extend(
-            _split_contig_balanced(contig, bucket_counts, n_workers, bucket_size)
-        )
-    return regions
-
-
-def _split_contig_balanced(
-    contig: str,
-    bucket_counts: dict[int, int],
-    n_workers: int,
-    bucket_size: int,
-) -> list[str]:
-    sorted_buckets = sorted(bucket_counts.keys())
-    if not sorted_buckets:
-        return []
-
-    total = sum(bucket_counts.values())
-    if total < SPARSE_CONTIG_THRESHOLD or n_workers <= 1:
-        start = sorted_buckets[0] * bucket_size + 1
-        end = (sorted_buckets[-1] + 1) * bucket_size
-        return [f"{contig}:{start}-{end}"]
-
-    target = total / n_workers
-    regions: list[str] = []
-    cur_start = sorted_buckets[0]
-    cur_count = 0
-
-    for i, b in enumerate(sorted_buckets):
-        cur_count += bucket_counts[b]
-        is_last_region = len(regions) == n_workers - 1
-        is_last_bucket = i == len(sorted_buckets) - 1
-
-        # Cut here if we hit the target AND we have remaining workers,
-        # OR if this is the last bucket (must emit the final region).
-        if (cur_count >= target and not is_last_region) or is_last_bucket:
-            start = cur_start * bucket_size + 1
-            end = (b + 1) * bucket_size
-            regions.append(f"{contig}:{start}-{end}")
-            cur_start = b + 1
-            cur_count = 0
-
-    return regions
 
 
 def _worker(args: tuple) -> tuple[str, int, int]:
@@ -189,19 +120,10 @@ def _worker(args: tuple) -> tuple[str, int, int]:
 
 
 def _ensure_schema() -> None:
-    sess = get_session()
-    n = (
-        sess.query(
-            "SELECT count() FROM system.tables "
-            "WHERE database = currentDatabase() AND name = 'variants'",
-            "CSV",
-        )
-        .bytes()
-        .decode()
-        .strip()
-    )
-    if n == "0":
-        apply_schema(Path(__file__).parent.parent / "schema")
+    from storage import table_exists
+
+    if not table_exists("variants"):
+        apply_schema()
 
 
 def ingest_parallel(
@@ -373,16 +295,10 @@ def _ingest_parallel_locked(
         # input (the ingest_parallel public API exposes it), so a
         # single quote in the path would otherwise close the file()
         # literal and let an attacker inject arbitrary SQL.
-        v_glob = sql_quote_str(f"{staging}/variants_*.parquet")
-        g_glob = sql_quote_str(f"{staging}/genotypes_*.parquet")
-        sess.query(
-            f"INSERT INTO variants ({v_cols}) "
-            f"SELECT {v_cols} FROM file({v_glob}, 'Parquet')"
-        )
-        sess.query(
-            f"INSERT INTO genotypes ({g_cols}) "
-            f"SELECT {g_cols} FROM file({g_glob}, 'Parquet')"
-        )
+        v_expr = parquet_file_expr(f"{staging}/variants_*.parquet")
+        g_expr = parquet_file_expr(f"{staging}/genotypes_*.parquet")
+        sess.query(f"INSERT INTO variants ({v_cols}) SELECT {v_cols} FROM {v_expr}")
+        sess.query(f"INSERT INTO genotypes ({g_cols}) SELECT {g_cols} FROM {g_expr}")
         import_elapsed = time.time() - started_import
 
         insert_via_parquet(

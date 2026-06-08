@@ -44,9 +44,11 @@ from ingest._arrow import (
     column_list_sql,
 )
 from storage import (
+    count_expr,
     get_session,
     ingest_id_lock,
     insert_via_parquet,
+    parquet_file_expr,
     rollback_ingest,
     sql_quote_str,
     validate_ingest_id,
@@ -111,12 +113,12 @@ def _import_with_override(
         elif c == "cohort" and cohort is not None:
             select_exprs.append(f"{sql_quote_str(cohort)} AS cohort")
         else:
-            select_exprs.append(f"`{c}`")
+            select_exprs.append(f'"{c}"')
     sess = get_session()
     sess.query(
         f"INSERT INTO {table} ({column_list_sql(cols)}) "
         f"SELECT {', '.join(select_exprs)} "
-        f"FROM file({sql_quote_str(str(src))}, 'Parquet')"
+        f"FROM {parquet_file_expr(str(src))}"
     )
 
 
@@ -124,7 +126,7 @@ def _count_under_ingest(table: str, ingest_id: str) -> int:
     sess = get_session()
     raw = (
         sess.query(
-            f"SELECT count() FROM {table} WHERE ingest_id = "
+            f"SELECT {count_expr()} FROM {table} WHERE ingest_id = "
             f"{sql_quote_str(ingest_id)} FORMAT JSONCompact"
         )
         .bytes()
@@ -137,8 +139,7 @@ def _distinct_samples_from_genotypes_pq(path: Path) -> list[str]:
     sess = get_session()
     raw = (
         sess.query(
-            f"SELECT DISTINCT sample_id FROM file("
-            f"{sql_quote_str(str(path))}, 'Parquet') "
+            f"SELECT DISTINCT sample_id FROM {parquet_file_expr(str(path))} "
             f"ORDER BY sample_id FORMAT JSONCompact"
         )
         .bytes()
@@ -190,9 +191,6 @@ def ingest_from_parquet(
     log.info("[parquet-ingest] ingest_id: %s", ingest_id)
     log.info("[parquet-ingest] cohort:    %s", cohort)
 
-    # Phase 1: validate every present file BEFORE acquiring the lock or
-    # touching chDB. Bad input rejected here leaves prior ingest_id
-    # data fully intact.
     _validate_parquet_schema(variants_pq, "variants")
     if genotypes_pq.exists():
         _validate_parquet_schema(genotypes_pq, "genotypes")

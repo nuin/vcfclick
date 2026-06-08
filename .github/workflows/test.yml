@@ -95,3 +95,50 @@ jobs:
         # giving up real-hang detection.
         timeout-minutes: 12
         run: uv run pytest tests/ -v
+
+  # DuckDB backend coverage. Smaller matrix than the chDB one because
+  # the DuckDB path is pure-Python on top of duckdb's manylinux wheels;
+  # any platform-specific regression is overwhelmingly likely to surface
+  # on either cell here. Both backends are exercised on every push so
+  # bioconda users (DuckDB only) get the same gate as pip users (chDB
+  # default).
+  test_duckdb:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-14]
+        python-version: ["3.11", "3.13"]
+
+    env:
+      VCFCLICK_BACKEND: duckdb
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bgzip + tabix (htslib utilities)
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            sudo apt-get update -qq
+            sudo apt-get install -y --no-install-recommends tabix
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            brew install htslib
+          fi
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Install project + dev deps
+        run: uv sync --group dev --python ${{ matrix.python-version }}
+
+      - name: Run tests (DuckDB backend)
+        # Faster than the chDB matrix because there is no EmbeddedServer
+        # init race to retry through. test_stats and the chDB-specific
+        # quote-roundtrip test self-skip on this backend.
+        timeout-minutes: 8
+        run: uv run pytest tests/ -v

@@ -50,7 +50,17 @@ def _vc(
 
 
 def _query(home: Path, db: str, sql: str) -> str:
+    """Return TabSeparated output so the value is just the cell content,
+    not a chDB or DuckDB box-drawing rendering. Assertions then read
+    the integer directly rather than matching engine-specific glyphs."""
+    if "FORMAT " not in sql.upper():
+        sql = sql + " FORMAT TabSeparated"
     return _vc(home, "db", "query", db, sql).stdout
+
+
+def _scalar(home: Path, db: str, sql: str) -> str:
+    """Run a SELECT that returns a single cell. Returns the stripped value."""
+    return _query(home, db, sql).strip()
 
 
 def test_multi_allelic_ingest_fails_with_helpful_error(vcfclick_home):
@@ -99,9 +109,7 @@ def test_failed_ingest_leaves_zero_rows(vcfclick_home):
             f"SELECT count() FROM {table} WHERE ingest_id = 'batch_a'",
         )
         # Output is a boxed count; "0" must be the only number on the line.
-        assert "│       0 │" in out or "│ 0 │" in out, (
-            f"rollback did not scrub {table}: {out!r}"
-        )
+        assert out.strip() == "0", f"rollback did not scrub {table}: {out!r}"
 
 
 def test_successful_ingest_after_failed_one(vcfclick_home, tiny_vcf):
@@ -138,7 +146,7 @@ def test_successful_ingest_after_failed_one(vcfclick_home, tiny_vcf):
     )
 
     out = _query(vcfclick_home, "smoke", "SELECT count() FROM variants")
-    assert "5" in out
+    assert out.strip() == "5"
 
 
 def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
@@ -184,7 +192,7 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
         "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
-    assert "│       5 │" in out, f"first ingest should land 5 variants, got: {out!r}"
+    assert out.strip() == "5", f"first ingest should land 5 variants, got: {out!r}"
 
     # Re-ingest under the SAME id — routing (2 variants, 2 samples)
     _vc(
@@ -205,7 +213,7 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
         "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
-    assert "│       2 │" in out, (
+    assert out.strip() == "2", (
         f"re-ingest should leave exactly 2 variants (replacement, not upsert), "
         f"got: {out!r}"
     )
@@ -217,7 +225,7 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a' "
         "AND pos IN (250, 500, 750, 900)",
     )
-    assert "│       0 │" in out, f"tiny-only positions should be deleted, got: {out!r}"
+    assert out.strip() == "0", f"tiny-only positions should be deleted, got: {out!r}"
 
     # Routing variants present
     out = _query(
@@ -226,7 +234,7 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a' "
         "AND pos IN (100, 200)",
     )
-    assert "│       2 │" in out, f"routing variants missing, got: {out!r}"
+    assert out.strip() == "2", f"routing variants missing, got: {out!r}"
 
     # Sample S3 (tiny-only) is gone
     out = _query(
@@ -234,7 +242,7 @@ def test_reingest_same_id_truly_replaces_prior_data(vcfclick_home):
         "smoke",
         "SELECT count() FROM samples WHERE ingest_id = 'batch_a' AND sample_id = 'S3'",
     )
-    assert "│       0 │" in out, f"S3 should be gone after replace, got: {out!r}"
+    assert out.strip() == "0", f"S3 should be gone after replace, got: {out!r}"
 
 
 def test_reingest_with_corrupt_vcf_preserves_prior_data(vcfclick_home, tmp_path):
@@ -269,7 +277,7 @@ def test_reingest_with_corrupt_vcf_preserves_prior_data(vcfclick_home, tmp_path)
         "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
-    assert "│       5 │" in out
+    assert out.strip() == "5"
 
     # Build a "corrupt" VCF — valid bgzip header but garbage content.
     # cyvcf2 will fail when constructing the VCF reader.
@@ -300,7 +308,7 @@ def test_reingest_with_corrupt_vcf_preserves_prior_data(vcfclick_home, tmp_path)
         "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
-    assert "│       5 │" in out, (
+    assert out.strip() == "5", (
         f"failed re-ingest with corrupt VCF wiped prior data — "
         f"replacement should be atomic against bad headers: {out!r}"
     )
@@ -341,7 +349,7 @@ def test_reingest_with_multi_allelic_preserves_prior_data(vcfclick_home):
         "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
-    assert "│       5 │" in out
+    assert out.strip() == "5"
 
     # Re-ingest under same id with the multi-allelic fixture. The fixture
     # has a valid header and three records: two bi-allelic flanking one
@@ -369,7 +377,7 @@ def test_reingest_with_multi_allelic_preserves_prior_data(vcfclick_home):
         "smoke",
         "SELECT count() FROM variants WHERE ingest_id = 'batch_a'",
     )
-    assert "│       5 │" in out, (
+    assert out.strip() == "5", (
         f"mid-stream-failed re-ingest wiped prior data — stage-then-commit "
         f"should preserve prior rows when Phase 1 (parse) raises: {out!r}"
     )
@@ -382,7 +390,7 @@ def test_reingest_with_multi_allelic_preserves_prior_data(vcfclick_home):
         "smoke",
         "SELECT count() FROM samples WHERE ingest_id = 'batch_a' AND sample_id = 'S3'",
     )
-    assert "│       1 │" in out, (
+    assert out.strip() == "1", (
         f"sample S3 from prior ingest should survive failed re-ingest: {out!r}"
     )
 

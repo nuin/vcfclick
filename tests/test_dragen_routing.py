@@ -131,10 +131,16 @@ def test_no_dragen_field_leaks_into_info_extra(vcfclick_home):
     """All five DRAGEN-routed fields should be ABSENT from info_extra
     after promotion. If they showed up there too we'd be double-storing."""
     _ingest_dragen(vcfclick_home)
+    # chDB exposes `mapKeys(MAP)`; DuckDB names it `map_keys(MAP)`.
+    fn = (
+        "map_keys"
+        if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb"
+        else "mapKeys"
+    )
     rows = _tsv(
         vcfclick_home,
         "dr",
-        "SELECT mapKeys(info_extra) FROM variants WHERE pos = 100",
+        f"SELECT {fn}(info_extra) FROM variants WHERE pos = 100",
     )
     keys = rows[0][0].strip("[]").replace("'", "").split(",") if rows else []
     keys = [k.strip() for k in keys if k.strip()]

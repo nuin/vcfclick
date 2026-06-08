@@ -31,20 +31,51 @@ set VCFCLICK_DB_NAME.
 from __future__ import annotations
 
 import contextlib
-import fcntl
+import importlib
 import logging
 import os
 import re
 import shutil
 import tempfile
-import time
 from pathlib import Path
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from chdb import session as _session
 
 log = logging.getLogger(__name__)
+
+
+# Backend selection
+# ─────────────────
+# `VCFCLICK_BACKEND` picks the variant store:
+#   - "chdb"    → chDB (ClickHouse engine, requires the [chdb] extra)
+#   - "duckdb"  → DuckDB (no extra needed; always available)
+# If unset, auto-detect: prefer chdb (legacy default; existing user
+# DBs are chdb-format) when the import succeeds; fall back to duckdb.
+# A future major release may flip the default once duckdb is the
+# common case via bioconda. Until then no user gets surprised by a
+# silent backend change.
+_VALID_BACKENDS = ("chdb", "duckdb")
+
+
+def backend() -> str:
+    """Return the active storage backend name."""
+    raw = os.environ.get("VCFCLICK_BACKEND")
+    if raw:
+        b = raw.strip().lower()
+        if b not in _VALID_BACKENDS:
+            raise ValueError(
+                f"VCFCLICK_BACKEND={raw!r} not recognised; "
+                f"expected one of {_VALID_BACKENDS}"
+            )
+        return b
+    # Auto-detect: chdb wins if importable (legacy default), else duckdb.
+    try:
+        import chdb  # noqa: F401
+
+        return "chdb"
+    except ImportError:
+        return "duckdb"
 
 
 # Paths are computed at every call rather than cached at import time.
@@ -77,7 +108,7 @@ def __getattr__(name: str):
 _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DB_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,62}$")
 
-_sessions: dict[str, _session.Session] = {}
+_sessions: dict[str, object] = {}
 
 
 def _resolve_name(name: str | None) -> str | None:
@@ -103,58 +134,28 @@ def db_path(name: str | None = None) -> Path:
     return _db_root() / resolved
 
 
-# Substrings that flag the known chDB EmbeddedServer async-load race
-# (a `recursive_mutex` invalid-state failure during session init). The
-# race is intermittent — retrying with a small backoff has been enough
-# in observation to bring per-open success to effectively 100%. If
-# the exception message contains NONE of these substrings, we surface
-# it immediately so genuine errors aren't masked by the retry loop.
-_CHDB_RACE_MARKERS = (
-    "BAD_ARGUMENTS",
-    "recursive_mutex lock failed",
-    "ASYNC_LOAD_WAIT_FAILED",
-)
+def _open_session(path: Path):
+    """Open a backend-specific session at `path`."""
+    if backend() == "duckdb":
+        from storage._duckdb import DuckDBSession
 
-# Backoff schedule. Total worst-case retry cost is ~1.3 s on cold open;
-# well under the chDB session-init baseline so retried opens still feel
-# instant in normal CLI use.
-_CHDB_RETRY_DELAYS_S = (0.1, 0.3, 0.9)
+        return DuckDBSession(path)
+    from storage._chdb import open_session as _open_chdb
+
+    return _open_chdb(path)
 
 
-def _open_session_with_retry(path: str) -> _session.Session:
-    """Open a chDB session, retrying through the known EmbeddedServer
-    async-load race. Non-race exceptions propagate immediately."""
-    last_exc: Exception | None = None
-    for attempt in range(len(_CHDB_RETRY_DELAYS_S) + 1):
-        try:
-            return _session.Session(path)
-        except Exception as exc:
-            msg = str(exc)
-            if not any(marker in msg for marker in _CHDB_RACE_MARKERS):
-                raise
-            last_exc = exc
-            if attempt < len(_CHDB_RETRY_DELAYS_S):
-                delay = _CHDB_RETRY_DELAYS_S[attempt]
-                log.warning(
-                    "[storage] chDB session open hit the async-load race "
-                    "(attempt %d/%d), retrying in %.1fs",
-                    attempt + 1,
-                    len(_CHDB_RETRY_DELAYS_S) + 1,
-                    delay,
-                )
-                time.sleep(delay)
-    assert last_exc is not None  # narrows for type-checkers
-    raise last_exc
-
-
-def get_session(name: str | None = None) -> _session.Session:
-    """Open (and cache) the chDB session for a named DB."""
+def get_session(name: str | None = None):
+    """Open (and cache) the storage session for a named DB."""
     resolved = _resolve_name(name)
-    cache_key = resolved or "_legacy"
+    # Cache key includes the backend so the same Python process
+    # juggling both engines (tests, in-process backend switch)
+    # doesn't hand back the wrong handle.
+    cache_key = f"{backend()}::{resolved or '_legacy'}"
     if cache_key not in _sessions:
         path = db_path(name)
         path.mkdir(parents=True, exist_ok=True)
-        _sessions[cache_key] = _open_session_with_retry(str(path))
+        _sessions[cache_key] = _open_session(path)
     return _sessions[cache_key]
 
 
@@ -234,6 +235,11 @@ def sql_quote_str(s: str) -> str:
     return "'" + escaped + "'"
 
 
+def _fcntl_module():
+    """Load POSIX fcntl only where the ingest lock is used."""
+    return importlib.import_module("fcntl")
+
+
 @contextlib.contextmanager
 def ingest_id_lock(ingest_id: str):
     """Serialize concurrent ingests under the same `(DB, ingest_id)`.
@@ -259,6 +265,7 @@ def ingest_id_lock(ingest_id: str):
     lock_path = lock_dir / f"{ingest_id}.lock"
 
     fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl = _fcntl_module()
     try:
         # LOCK_EX blocks until acquired. If the holding process dies
         # mid-ingest, the kernel releases the lock automatically and
@@ -279,17 +286,68 @@ def rollback_ingest(ingest_id: str) -> None:
     fails partway — without this, a half-loaded ingest_id stays
     queryable and the user has to `db rm` the whole cohort to recover.
 
-    Runs synchronously (`mutations_sync = 2`) so callers can rely on
-    the cleanup having completed before they re-raise the original
-    error.
+    Backend-specific:
+      * chDB uses `ALTER TABLE … DELETE WHERE` with
+        `mutations_sync = 2` so the deletion is observable before
+        the next INSERT runs.
+      * DuckDB uses standard `DELETE FROM … WHERE`; deletions are
+        synchronous and observable in the same transaction.
     """
     validate_ingest_id(ingest_id)
     sess = get_session()
     for table in _INGESTION_SCOPED_TABLES:
-        sess.query(
-            f"ALTER TABLE {table} DELETE WHERE ingest_id = '{ingest_id}' "
-            f"SETTINGS mutations_sync = 2"
+        sess.query(delete_where_sql(table, f"ingest_id = '{ingest_id}'"))
+
+
+def delete_where_sql(table: str, where: str) -> str:
+    """Return the backend-specific synchronous DELETE statement."""
+    if backend() == "duckdb":
+        return f"DELETE FROM {table} WHERE {where}"
+    return f"ALTER TABLE {table} DELETE WHERE {where} SETTINGS mutations_sync = 2"
+
+
+def parquet_file_expr(path: str) -> str:
+    """Return the backend-specific SQL fragment for reading a Parquet file.
+
+      * chDB:    `file('/abs/path.parquet', 'Parquet')`
+      * DuckDB:  `read_parquet('/abs/path.parquet')`
+
+    Pass the value already wrapped in a quoted string literal — the
+    caller is responsible for using `sql_quote_str` on the path.
+    """
+    if backend() == "duckdb":
+        return f"read_parquet({sql_quote_str(path)})"
+    return f"file({sql_quote_str(path)}, 'Parquet')"
+
+
+def count_expr() -> str:
+    """ClickHouse permits `count()`; DuckDB requires `count(*)`."""
+    return "count(*)" if backend() == "duckdb" else "count()"
+
+
+def table_exists(name: str) -> bool:
+    """Return True if `name` is a table in the active database.
+
+    chDB exposes a `system.tables` table; DuckDB exposes the SQL-standard
+    `information_schema.tables`. Wrap the dialect difference here.
+    """
+    if not _TABLE_NAME_RE.match(name):
+        raise ValueError(f"Unsafe table name: {name!r}")
+    sess = get_session()
+    if backend() == "duckdb":
+        sql = (
+            "SELECT count(*) FROM information_schema.tables "
+            f"WHERE table_name = '{name}'"
         )
+    else:
+        sql = (
+            "SELECT count() FROM system.tables "
+            f"WHERE database = currentDatabase() AND name = '{name}'"
+        )
+    result = sess.query(sql, "CSV").bytes().decode().strip()
+    # Strip a possible CSV header on the DuckDB path (chDB CSV is headerless).
+    last = result.splitlines()[-1].strip() if result else "0"
+    return int(last) > 0
 
 
 def insert_via_parquet(table: str, schema: pa.Schema, rows: list[dict]) -> None:
@@ -314,29 +372,45 @@ def insert_via_parquet(table: str, schema: pa.Schema, rows: list[dict]) -> None:
         ]
         pq.write_table(pa.Table.from_arrays(arrays, schema=schema), tmp_path)
         # Explicit column list derived from the Arrow schema so the
-        # INSERT is immune to chDB shifting Parquet handling from
-        # name-based to positional mapping. Same rationale as the
+        # INSERT is immune to either engine shifting Parquet handling
+        # from name-based to positional mapping. Same rationale as the
         # variants/genotypes loaders in ingest.vcf_load / ingest.parallel.
-        cols = ", ".join(f"`{f.name}`" for f in schema)
+        # Double-quoted identifiers work on both chDB and DuckDB.
+        cols = ", ".join(f'"{f.name}"' for f in schema)
         sess.query(
             f"INSERT INTO {table} ({cols}) "
-            f"SELECT {cols} FROM file({sql_quote_str(str(tmp_path))}, 'Parquet')"
+            f"SELECT {cols} FROM {parquet_file_expr(str(tmp_path))}"
         )
     finally:
         tmp_path.unlink(missing_ok=True)
 
 
+def schema_dir_for_backend() -> Path:
+    """Return the SQL-file directory matching the active backend.
+
+      * chDB    → repo/schema/*.sql       (the original chDB-flavoured DDL)
+      * DuckDB  → repo/schema/duckdb/*.sql
+
+    The two directories carry the same set of CREATE TABLE statements
+    and the same column names and column ORDER; only the type names
+    and engine clauses differ.
+    """
+    base = Path(__file__).parent.parent / "schema"
+    if backend() == "duckdb":
+        return base / "duckdb"
+    return base
+
+
 def apply_schema(schema_dir: Path | None = None) -> None:
-    """Apply every .sql file in schema_dir in name order.
+    """Apply every .sql file in `schema_dir` in name order.
 
     Strips `--` line comments before splitting on `;` so multi-statement
-    files (with comments) apply cleanly. Idempotent: CREATE TABLE
-    statements should be IF NOT EXISTS-friendly OR caller should run
-    this against a fresh DB.
+    files apply cleanly. Idempotent against a fresh DB; CREATE TABLE
+    statements are not IF NOT EXISTS, so callers are expected to invoke
+    this once at db_create.
     """
     if schema_dir is None:
-        # Default: the repo's schema/ directory next to this module.
-        schema_dir = Path(__file__).parent.parent / "schema"
+        schema_dir = schema_dir_for_backend()
 
     sess = get_session()
     for f in sorted(Path(schema_dir).glob("*.sql")):

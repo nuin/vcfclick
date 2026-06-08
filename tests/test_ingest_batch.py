@@ -44,6 +44,10 @@ def _vc(
 
 
 def _query(home: Path, db: str, sql: str) -> str:
+    """TabSeparated output so assertions check the value directly, not
+    the engine's box-drawing render."""
+    if "FORMAT " not in sql.upper():
+        sql = sql + " FORMAT TabSeparated"
     return _vc(home, "db", "query", db, sql).stdout
 
 
@@ -88,7 +92,7 @@ def test_from_dir_ingests_all_vcfs_in_directory(vcfclick_home, tmp_path):
 
     # 2 ingestions in the catalog
     out = _query(vcfclick_home, "demo", "SELECT count() FROM ingestions")
-    assert "│       2 │" in out
+    assert out.strip() == "2"
 
     # ingest_ids derived from filenames
     out = _query(
@@ -190,7 +194,7 @@ def test_manifest_paths_resolved_relative_to_manifest_dir(vcfclick_home, tmp_pat
     )
 
     out = _query(vcfclick_home, "demo", "SELECT count() FROM ingestions")
-    assert "│       1 │" in out
+    assert out.strip() == "1"
 
 
 # ─── continue-on-error ───────────────────────────────────────────────
@@ -241,7 +245,7 @@ def test_continue_on_error_skips_bad_files_keeps_good(vcfclick_home, tmp_path):
         "demo",
         "SELECT count() FROM variants WHERE ingest_id = 'bad_one'",
     )
-    assert "│       0 │" in out
+    assert out.strip() == "0"
 
 
 # ─── argv validation ─────────────────────────────────────────────────

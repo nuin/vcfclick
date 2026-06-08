@@ -6,6 +6,75 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.0] — 2026-06-08
+
+### Added
+- **DuckDB storage backend.** vcfclick now runs on either chDB
+  (ClickHouse engine, the original) or DuckDB. Selection is via
+  `VCFCLICK_BACKEND=chdb|duckdb`; the default auto-detects (chDB
+  wins when importable, otherwise DuckDB). The DuckDB backend is
+  what unblocks distribution through bioconda, where chDB is not
+  available as a conda package.
+  - New: `storage/_duckdb.py` (session wrapper that mimics
+    `chdb.session.Session.query(sql, format)` so most call sites
+    are backend-agnostic — JSONCompact / TabSeparated / CSV /
+    Vertical / Pretty renderers reproduce chDB's output shapes
+    including the `\N` NULL marker and Float32 precision).
+  - New: `storage/_chdb.py` (extracted chDB session open with the
+    EmbeddedServer async-load retry, lazy-imports `chdb` so
+    DuckDB-only installs don't error at import time).
+  - New: `schema/duckdb/{01_variants,02_genotypes,03_samples}.sql`
+    — DuckDB-flavoured DDL with identical column names and order
+    to the chDB schemas. `LowCardinality(X)` becomes `VARCHAR`,
+    `Nullable(X)` collapses to `X`, `ReplacingMergeTree` engine
+    config drops entirely (the application-level
+    `rollback_ingest()` already enforces the same idempotent-
+    replace semantics across both backends).
+  - New: `storage.backend()`, `storage.parquet_file_expr()`,
+    `storage.delete_where_sql()`, `storage.count_expr()`,
+    `storage.table_exists()`, `storage.schema_dir_for_backend()`
+    — dialect helpers used by ingest, export, CLI, and MCP code
+    so SQL emission picks the right form per backend without
+    spreading `if backend() == "duckdb"` everywhere.
+- **Bioconda recipe** at `packaging/bioconda/meta.yaml`. Lists
+  cyvcf2, pyarrow, duckdb, mcp, click as run requirements;
+  omits chdb (unavailable on conda-forge as of 2026-06; see the
+  closed upstream issue chdb-io/chdb#189 for why). Auto-detect
+  picks DuckDB when chDB isn't installed, so `conda install
+  -c bioconda vcfclick` followed by `vcfclick db create` works
+  with no extra environment-variable setup.
+- CI matrix gains a `VCFCLICK_BACKEND=duckdb` cell so every push
+  exercises both backends.
+
+### Changed
+- `ingest/_arrow.py` column-list helper switched from backtick
+  identifier quoting to double quotes. DuckDB rejects backticks;
+  chDB accepts both. Same INSERT contracts otherwise.
+- `cli/db_diff.py` cohort allele-frequency SQL switched from
+  chDB's `sumIf()` to standard-SQL `sum() FILTER (WHERE …)` with
+  `COALESCE(..., 0)` so cohorts with no matching rows produce 0
+  rather than NULL on either engine.
+- `export/parquet.py` (`db dump`) emits `COPY … TO 'path' (FORMAT
+  'parquet')` on DuckDB and the existing `INTO OUTFILE 'path'
+  TRUNCATE FORMAT Parquet` on chDB.
+- `cli/db_stats.py` raises a clear ClickException on the DuckDB
+  backend (the chDB-specific SQL — `system.columns`, `countIf`,
+  `ARRAY JOIN mapKeys`, type-string `Nullable` inspection — has
+  not been ported yet). The 10 `test_stats.py` tests are skipped
+  on the DuckDB cell of the CI matrix until the port lands.
+
+### Internal
+- CLI commands split out of the monolithic `cli/db.py` into
+  focused modules (`cli/db_basic.py`, `cli/db_batch.py`,
+  `cli/db_bundle.py`, `cli/db_diff.py`, `cli/db_stats.py`).
+  `cli/db.py` is now an importlib shim that loads them by side
+  effect, matching the pattern the project's quality gate
+  expects for per-file size. No user-visible behaviour change.
+- Ingest module similarly split: `ingest/parallel_split.py`
+  (variant-count-aware region splitter) and `ingest/vcf_rows.py`
+  (row builders) factored out of `ingest/parallel.py` and
+  `ingest/vcf_load.py`.
+
 ## [0.2.0] — 2026-06-08
 
 ### Added
@@ -346,7 +415,8 @@ Initial PyPI release.
 - GENCODE v45 gene-coordinates loader (`vcfclick annotations load`).
 - Apache 2.0 license.
 
-[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/nuin/vcfclick/releases/tag/v0.3.0
 [0.2.0]: https://github.com/nuin/vcfclick/releases/tag/v0.2.0
 [0.1.3]: https://github.com/nuin/vcfclick/releases/tag/v0.1.3
 [0.1.2]: https://github.com/nuin/vcfclick/releases/tag/v0.1.2

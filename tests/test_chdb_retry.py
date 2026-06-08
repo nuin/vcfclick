@@ -17,12 +17,12 @@ from unittest.mock import patch
 import pytest
 
 
-# Reach into storage.db internals — these are the contracts the retry
-# wrapper guarantees, and we want to lock them in.
 def test_non_race_error_propagates_without_retry():
     """A garden-variety exception (e.g., disk full) must not get
     retried — that would mask real failures behind the same wrapper."""
-    import storage.db as sdb
+    import chdb.session as cdb_session
+
+    import storage._chdb as sdb
 
     call_count = {"n": 0}
 
@@ -30,9 +30,9 @@ def test_non_race_error_propagates_without_retry():
         call_count["n"] += 1
         raise RuntimeError("Disk full, no retry please")
 
-    with patch.object(sdb._session, "Session", side_effect=fake_session):
+    with patch.object(cdb_session, "Session", side_effect=fake_session):
         with pytest.raises(RuntimeError, match="Disk full"):
-            sdb._open_session_with_retry("/tmp/whatever")
+            sdb.open_session("/tmp/whatever")
 
     assert call_count["n"] == 1, "non-race error must NOT be retried"
 
@@ -40,7 +40,9 @@ def test_non_race_error_propagates_without_retry():
 def test_race_error_retried_until_success():
     """A race-marker error twice in a row, then success: wrapper
     returns the success-attempt session."""
-    import storage.db as sdb
+    import chdb.session as cdb_session
+
+    import storage._chdb as sdb
 
     calls = {"n": 0}
 
@@ -56,8 +58,8 @@ def test_race_error_retried_until_success():
 
     # Zero out the backoff delays so the test doesn't sleep 1.3s.
     with patch.object(sdb, "_CHDB_RETRY_DELAYS_S", (0, 0, 0)):
-        with patch.object(sdb._session, "Session", side_effect=fake_session):
-            result = sdb._open_session_with_retry("/tmp/test")
+        with patch.object(cdb_session, "Session", side_effect=fake_session):
+            result = sdb.open_session("/tmp/test")
 
     assert calls["n"] == 3, "should have retried twice before success"
     assert result is not None
@@ -66,7 +68,9 @@ def test_race_error_retried_until_success():
 def test_race_error_exhausts_retries_then_raises():
     """If every attempt loses the race, the last exception surfaces
     with the original message so the caller can see what happened."""
-    import storage.db as sdb
+    import chdb.session as cdb_session
+
+    import storage._chdb as sdb
 
     def fake_session(path):
         raise RuntimeError(
@@ -75,16 +79,16 @@ def test_race_error_exhausts_retries_then_raises():
         )
 
     with patch.object(sdb, "_CHDB_RETRY_DELAYS_S", (0, 0, 0)):
-        with patch.object(sdb._session, "Session", side_effect=fake_session):
+        with patch.object(cdb_session, "Session", side_effect=fake_session):
             with pytest.raises(RuntimeError, match="recursive_mutex"):
-                sdb._open_session_with_retry("/tmp/test")
+                sdb.open_session("/tmp/test")
 
 
 def test_race_markers_cover_observed_chdb_error_patterns():
     """Sanity-pin the marker list against the exact phrasings we've
     seen on CI so a chDB version bump silently dropping one marker
     doesn't disable the retry."""
-    import storage.db as sdb
+    import storage._chdb as sdb
 
     expected_markers = {
         "BAD_ARGUMENTS",
@@ -98,7 +102,7 @@ def test_backoff_is_capped_at_reasonable_total():
     """The retry loop shouldn't be able to burn an open-ended amount
     of time — keep the cumulative budget tight enough that a CLI
     invocation hitting persistent failure still surfaces it quickly."""
-    import storage.db as sdb
+    import storage._chdb as sdb
 
     total = sum(sdb._CHDB_RETRY_DELAYS_S)
     assert total < 2.0, f"retry budget {total}s is too long for interactive use"

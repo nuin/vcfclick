@@ -41,6 +41,8 @@ def export_table(table: str, out_path: Path, where: str | None = None) -> None:
         callers (HTTP, etc.) without first switching to a parameterised
         query builder.
     """
+    from storage import backend
+
     if table not in TABLES:
         raise ValueError(f"Unknown table {table}; expected one of {TABLES}")
     out_path = Path(out_path).resolve()
@@ -52,13 +54,17 @@ def export_table(table: str, out_path: Path, where: str | None = None) -> None:
     ) as f:
         staging = Path(f.name)
     try:
-        sql = f"SELECT * FROM {table}"
+        select_sql = f"SELECT * FROM {table}"
         if where:
-            sql += f" WHERE {where}"
+            select_sql += f" WHERE {where}"
         # staging is from tempfile (path is controlled, no quotes).
-        # TRUNCATE lets chDB overwrite the empty file tempfile created
-        # for us — otherwise FILE_ALREADY_EXISTS.
-        sql += f" INTO OUTFILE '{staging}' TRUNCATE FORMAT Parquet"
+        if backend() == "duckdb":
+            # COPY ... TO uses single-quoted file path; TO overwrites by default.
+            sql = f"COPY ({select_sql}) TO '{staging}' (FORMAT 'parquet')"
+        else:
+            # chDB: TRUNCATE lets it overwrite the empty file tempfile
+            # created for us — otherwise FILE_ALREADY_EXISTS.
+            sql = f"{select_sql} INTO OUTFILE '{staging}' TRUNCATE FORMAT Parquet"
         sess.query(sql)
         staging.replace(out_path)
     except Exception:

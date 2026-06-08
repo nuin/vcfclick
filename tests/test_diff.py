@@ -131,15 +131,17 @@ def test_diff_includes_variants_unique_to_each_cohort(vcfclick_home):
     # control-only position
     assert ("chr1", "200") in positions, "missing control-only chr1:200"
 
-    # chr1:200 must have ac_a=0
+    # chr1:200 must have ac_a=0 (and therefore af_a=0).
+    # Compare numerically: chDB renders 0 integer division as "0",
+    # DuckDB renders the same value as "0.0".
     chr1_200 = next(r for r in rows if r[0] == "chr1" and r[1] == "200")
-    assert chr1_200[4] == "0"  # ac_a
-    assert chr1_200[6] == "0"  # af_a
+    assert float(chr1_200[4]) == 0  # ac_a
+    assert float(chr1_200[6]) == 0  # af_a
 
     # chr1:250 must have ac_b=0
     chr1_250 = next(r for r in rows if r[0] == "chr1" and r[1] == "250")
-    assert chr1_250[7] == "0"  # ac_b
-    assert chr1_250[9] == "0"  # af_b
+    assert float(chr1_250[7]) == 0  # ac_b
+    assert float(chr1_250[9]) == 0  # af_b
 
 
 def test_diff_sorted_by_absolute_af_difference_desc(vcfclick_home):

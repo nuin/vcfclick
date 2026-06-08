@@ -156,7 +156,10 @@ INGESTIONS_COLUMNS = column_names(INGESTIONS_ARROW_SCHEMA)
 # AND the SQL DDL order both agree with the lists above, so this is
 # defense-in-depth, not a workaround for a current bug.
 def column_list_sql(columns: list[str]) -> str:
-    return ", ".join(f"`{c}`" for c in columns)
+    # Double quotes are the SQL-standard identifier quote and are
+    # accepted by both chDB (in addition to backticks) and DuckDB
+    # (which rejects backticks). Use them for backend portability.
+    return ", ".join(f'"{c}"' for c in columns)
 
 
 # Look-up by table name. Callers pass `table` as a string (because that's

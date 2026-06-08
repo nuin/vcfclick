@@ -20,6 +20,8 @@ import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
@@ -94,6 +96,10 @@ def test_sql_quote_str_handles_backslash_escape_bypass():
     )
 
 
+@pytest.mark.skipif(
+    os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb",
+    reason="explicitly exercises chDB quote-handling via JSONCompact roundtrip",
+)
 def test_sql_quote_str_roundtrips_through_chdb(vcfclick_home, monkeypatch):
     """End-to-end check: chDB must accept the quoted form and return
     a string of the right length. Uses FORMAT JSONCompact so the
