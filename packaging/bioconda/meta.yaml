@@ -7,9 +7,10 @@ package:
 
 source:
   url: https://pypi.io/packages/source/v/{{ name }}/{{ name }}-{{ version }}.tar.gz
-  # Filled in at submission time (`shasum -a 256 dist/vcfclick-0.3.0.tar.gz`)
-  # against the sdist published to PyPI; bioconda's submission bot verifies it.
-  sha256: PUT_SHA256_HERE_AT_SUBMISSION_TIME
+  # SHA256 of the v0.3.0 sdist published to PyPI on 2026-06-08.
+  # Verified to match `shasum -a 256 dist/vcfclick-0.3.0.tar.gz` from
+  # the local `uv build` (deterministic for this version's metadata).
+  sha256: a94c17c2b79dbc5e60e61e12ce9deaf967bef1cbe1c2721614a17b55bdde3610
 
 build:
   noarch: python
