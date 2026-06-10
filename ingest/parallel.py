@@ -7,11 +7,17 @@ Architecture:
     [worker 2] parse region 2 → variants_*.parquet   │  main:
                               → genotypes_*.parquet  │  INSERT INTO t
     [worker N] parse region N → variants_*.parquet   │  SELECT * FROM
-                              → genotypes_*.parquet  ┘  file('staging/*.parquet')
+                              → genotypes_*.parquet  ┘  parquet_file_expr(
+                                                          'staging/*.parquet')
 
-Workers have NO chDB dependency — they only need cyvcf2 + pyarrow.
-Concurrent writers to one chDB session aren't safe; concurrent writers
-to N independent Parquet files are trivial.
+Workers have NO storage-engine dependency — they only need cyvcf2 and
+pyarrow. The only step that touches the active backend is the main
+process Phase 2 `INSERT … SELECT FROM <parquet_file_expr>` against the
+staged glob, which is rendered per-backend by storage.parquet_file_expr
+(`file('p', 'Parquet')` for chDB, `read_parquet('p')` for DuckDB).
+The path works identically on either backend; concurrent writers to
+one engine session aren't safe, but concurrent writers to N
+independent Parquet files are trivial.
 
 Two design choices the earlier version got wrong, fixed here:
 
@@ -174,7 +180,7 @@ def _ingest_parallel_locked(
     _ensure_schema()
     sess = get_session()
 
-    # Open + classify BEFORE touching chDB. A corrupt header / bad
+    # Open + classify BEFORE touching the engine. A corrupt header / bad
     # classification raises here, before the rollback later runs, so a
     # re-ingest under an existing id whose new VCF fails to read leaves
     # the prior rows intact. See ingest.vcf_load.ingest docstring for
@@ -217,7 +223,13 @@ def _ingest_parallel_locked(
 
     started_split = time.time()
     regions = split_via_tbi(vcf_path, workers, bucket_size)
-    if regions is None:
+    # Tabix-derived split returns None when no .tbi is present and an
+    # empty list when the index exists but the linear-index buckets are
+    # too sparse to balance (typical for tiny VCFs — a 5-record fixture
+    # may fit in a single 16Kb bucket with no measurable density to
+    # split on). Both cases fall back to the cyvcf2 count pre-pass,
+    # which can split any non-empty VCF into at least one region.
+    if not regions:
         regions = split_by_variant_count(vcf_path, workers, bucket_size)
         split_source = "cyvcf2 pre-pass"
     else:
@@ -231,16 +243,16 @@ def _ingest_parallel_locked(
         len({r.split(":")[0] for r in regions}),
     )
 
-    # Tracks whether Phase 2 (chDB writes) has started — see the same
+    # Tracks whether Phase 2 (engine writes) have started — see the same
     # flag in ingest.vcf_load.ingest. Determines whether the except arm
     # rolls back at all.
     commit_started = False
 
     try:
-        # ── Phase 1: workers stage Parquets to disk. NO chDB writes. ──
+        # ── Phase 1: workers stage Parquets to disk. NO engine writes. ──
         # If any worker raises (multi-allelic record, malformed row,
         # subprocess crash), pool.map surfaces the exception and we
-        # exit the try block without ever touching chDB — prior data
+        # exit the try block without ever touching the engine — prior data
         # under this ingest_id stays intact. Matches the stage-then-
         # commit contract documented in ingest.vcf_load.ingest.
         args_list = [
@@ -265,7 +277,7 @@ def _ingest_parallel_locked(
         # ── Phase 2: workers succeeded. Commit atomically. ──
         # Wipe prior rows under this ingest_id, then bulk-import the
         # staged Parquets (variants + genotypes), then write samples
-        # and the ingestions catalog. A chDB-side failure during any
+        # and the ingestions catalog. An engine-side failure during any
         # of these still wipes prior data but the window is narrow.
         commit_started = True
         rollback_ingest(ingest_id)
@@ -281,7 +293,7 @@ def _ingest_parallel_locked(
 
         started_import = time.time()
         # Explicit column lists on both sides — same rationale as
-        # ingest.vcf_load._import_parquet: immune to chDB ever shifting
+        # ingest.vcf_load._import_parquet: immune to either engine ever shifting
         # Parquet imports from name-based to positional mapping.
         from ingest._arrow import (
             GENOTYPES_COLUMNS,
@@ -315,8 +327,8 @@ def _ingest_parallel_locked(
             ],
         )
     except BaseException:
-        # Only roll back if Phase 2 (chDB writes) actually started. If
-        # a worker raised during Phase 1, nothing was written to chDB
+        # Only roll back if Phase 2 (engine writes) actually started. If
+        # a worker raised during Phase 1, nothing was written to the engine
         # and rolling back would destroy prior data under the same
         # ingest_id and silently turn a "failed re-ingest" into a wipe.
         if commit_started:
@@ -330,7 +342,7 @@ def _ingest_parallel_locked(
                 log.error("[parallel-ingest] rollback FAILED: %s", rb_err)
         else:
             log.warning(
-                "[parallel-ingest] failed during parse — no chDB writes "
+                "[parallel-ingest] failed during parse — no engine writes "
                 "occurred, prior data under ingest_id=%s preserved",
                 ingest_id,
             )

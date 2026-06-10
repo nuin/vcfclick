@@ -6,6 +6,41 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- Parallel ingest works on the DuckDB backend. The docstring already
+  claimed it was backend-agnostic but two latent splitter bugs
+  prevented it from ever actually running through the workers:
+  - `ingest._tabix.variant_density()` set the FINAL 16Kb
+    linear-index bucket's byte_cost to 0, then filtered out zero-cost
+    buckets, dropping the trailing position bucket on every contig.
+    On 1000G phase 3 chr21 that silently lost the 134 variants past
+    position 48,100,000. Now uses placeholder cost 1 so the final
+    bucket survives.
+  - `ingest.parallel.ingest_parallel()` checked `if regions is None`
+    to fall back from the tabix splitter to the cyvcf2 pre-pass
+    splitter. The tabix splitter actually returns `[]` (empty list,
+    not None) when the linear index is too sparse to balance — typical
+    for VCFs under a few hundred variants. Empty-list silently meant
+    "0 workers, 0 variants ingested." Switched to `if not regions`.
+- New `tests/test_ingest_parallel.py` locks both fixes in: the
+  end-to-end test exercises parallel ingest on the 5-variant tiny
+  fixture (catches the empty-list bug — without the fix, 0 rows
+  land); a direct unit test on `variant_density()` catches the
+  trailing-bucket bug.
+
+### Changed
+- `ingest/parallel.py` docstring + in-body comments reframed away
+  from chDB-specific language now that the path is exercised on both
+  backends. Architecture diagram updated to show
+  `parquet_file_expr()` instead of the literal `file('p', 'Parquet')`
+  fragment.
+
+### Performance
+- Parallel ingest on 1000 Genomes phase 3 chr21 (1.11M variants,
+  2,504 samples) under DuckDB: **163 s with 8 workers vs 944 s
+  serial — 5.8× speedup.** Per-region throughput is ~1,000 v/s per
+  worker, dominated by Python row construction inside the workers.
+
 ## [0.3.1] — 2026-06-08
 
 ### Fixed

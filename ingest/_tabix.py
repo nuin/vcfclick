@@ -106,7 +106,14 @@ def variant_density(
         b = linear_offsets[i + 1] >> 16
         deltas.append(max(b - a, 0))
     if linear_offsets:
-        deltas.append(0)  # final 16Kb bucket has no successor
+        # Final 16Kb bucket has no successor to compute byte_cost
+        # against, but it is in the index because at least one variant
+        # falls inside it (tabix never writes trailing empty buckets).
+        # Use a placeholder cost of 1 so it appears in the rolled-up
+        # density map — otherwise the splitter's last region cuts off
+        # before this bucket and any variants in it are silently
+        # dropped from the parallel ingest.
+        deltas.append(1)
 
     counts: dict[int, int] = {}
     for linear_idx, byte_cost in enumerate(deltas):
