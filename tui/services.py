@@ -8,7 +8,6 @@ testable without a terminal event loop.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 import re
 from typing import Any, Literal
 
@@ -110,7 +109,9 @@ def parse_locus_input(raw: str) -> ParsedLocus:
         start_pos = int(range_match.group("start").replace(",", ""))
         end_pos = int(range_match.group("end").replace(",", ""))
         if start_pos < 1 or end_pos < start_pos:
-            raise LocusInputError("Range must use positive coordinates with start <= end.")
+            raise LocusInputError(
+                "Range must use positive coordinates with start <= end."
+            )
         label = f"{chrom}:{start_pos}-{end_pos}"
         return ParsedLocus(
             kind="range",
