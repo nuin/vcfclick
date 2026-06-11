@@ -53,16 +53,84 @@ def _scalar(home: Path, db: str, sql: str) -> str:
     return _vc(home, "db", "query", db, sql + " FORMAT TabSeparated").stdout.strip()
 
 
-def test_parallel_ingest_lands_same_rows_as_serial(vcfclick_home):
-    """The parallel default with 2 workers on the tiny fixture (5
-    variants, 3 samples) must land EXACTLY the same counts as the
-    serial path. Catches both:
-      * The empty-list fallback bug (tabix splitter returns []
-        on tiny VCFs; if the caller doesn't fall back, zero rows
-        land and the test fails immediately).
-      * Any future regression in the worker → pool.map → bulk-import
-        chain (e.g. workers writing to a different staging dir).
+def test_parallel_ingest_falls_back_when_tabix_returns_empty(
+    vcfclick_home, monkeypatch
+):
+    """Lock the empty-list fallback specifically. Without forcing the
+    tabix splitter to return [], we can't reliably observe the
+    regression — after the variant_density fix, the tabix path on the
+    tiny fixture returns a non-empty list. To prove the `if not regions`
+    branch is the load-bearing change, monkeypatch split_via_tbi to
+    return [] and require the ingest to still succeed via the cyvcf2
+    pre-pass fallback.
+
+    Done in-process (not via the CLI subprocess) because monkeypatches
+    do not cross the process boundary. `ingest_parallel()` lazy-imports
+    `split_via_tbi` from `ingest._tabix` inside the function body, so
+    the patch has to land on the source module.
     """
+    monkeypatch.setenv("VCFCLICK_DB_NAME", "par")
+    monkeypatch.setenv("VCFCLICK_BACKEND", os.environ.get("VCFCLICK_BACKEND", "chdb"))
+
+    # Both backends enforce a single live session per (process, DB).
+    # Clear any session cache state leaked from earlier tests in the
+    # same pytest process so the chdb EmbeddedServer can re-init under
+    # the tmp_path VCFCLICK_HOME this test was handed.
+    import storage.db as sdb
+
+    sdb._sessions.clear()
+
+    from storage import apply_schema, db_path, get_session
+
+    db_path("par").mkdir(parents=True, exist_ok=True)
+    apply_schema()
+
+    import ingest._tabix as tabix_mod
+    from ingest.parallel import ingest_parallel
+
+    monkeypatch.setattr(tabix_mod, "split_via_tbi", lambda *a, **k: [])
+
+    # If the fallback is broken (regions == [] is not None-checked),
+    # this call surfaces the failure either as an exception during the
+    # bulk-import phase ("no files match the pattern variants_*.parquet")
+    # or as zero rows landed when the workers loop got no work to do.
+    # Either way the assertions below catch it.
+    ingest_parallel(
+        str(TINY_VCF),
+        cohort="A",
+        ingest_id="t1",
+        workers=2,
+    )
+
+    # Query through the live in-process session — both backends enforce
+    # one-writer-per-DB-file, so spawning a CLI subprocess to query
+    # would collide with this process's session.
+    sess = get_session("par")
+    raw = sess.query("SELECT count(*) FROM variants", "CSV").bytes().decode().strip()
+    last = [ln for ln in raw.splitlines() if ln.strip()]
+    assert last and last[-1] == "5", f"variants count {last!r}"
+
+    raw = sess.query("SELECT count(*) FROM genotypes", "CSV").bytes().decode().strip()
+    last = [ln for ln in raw.splitlines() if ln.strip()]
+    assert last and last[-1] == "10", f"genotypes count {last!r}"
+
+    raw = (
+        sess.query("SELECT count(DISTINCT sample_id) FROM samples", "CSV")
+        .bytes()
+        .decode()
+        .strip()
+    )
+    last = [ln for ln in raw.splitlines() if ln.strip()]
+    assert last and last[-1] == "3", f"samples count {last!r}"
+
+
+def test_parallel_ingest_lands_same_rows_as_serial(vcfclick_home):
+    """Smoke test: parallel default with 2 workers on the tiny fixture
+    must land the same counts as the serial path. Covers the end-to-end
+    worker → pool.map → bulk-import chain on both backends. Does NOT by
+    itself lock the empty-list fallback — see the monkeypatched test
+    above for that — because after the variant_density fix the tiny
+    fixture's tabix splitter no longer returns []."""
     _vc(vcfclick_home, "db", "create", "par")
     _vc(
         vcfclick_home,
@@ -78,10 +146,6 @@ def test_parallel_ingest_lands_same_rows_as_serial(vcfclick_home):
         "2",
     )
 
-    # The tiny fixture: 5 variants, 3 samples.
-    # Non-reference genotype rows are sparse (~10 across 5 variants × 3
-    # samples per the test_ingest_atomic baseline). Compare to the
-    # serial path's numbers exactly.
     assert _scalar(vcfclick_home, "par", "SELECT count(*) FROM variants") == "5"
     assert (
         _scalar(vcfclick_home, "par", "SELECT count(DISTINCT sample_id) FROM samples")
@@ -92,45 +156,38 @@ def test_parallel_ingest_lands_same_rows_as_serial(vcfclick_home):
 
 def test_variant_density_includes_final_linear_bucket():
     """Direct unit test on the helper that used to drop the final
-    16Kb linear-index bucket. With offsets indicating 3 successive
-    buckets all containing variants, the density map must include
-    the position bucket corresponding to the final linear bucket."""
+    16Kb linear-index bucket — the trailing-bucket regression that
+    silently lost 134 variants on 1000G chr21.
+
+    The bug-exposing shape: a run of empty (delta-zero) buckets,
+    then ONE non-zero delta whose linear-index position maps to a
+    different rolled-up position bucket than the trailing bucket.
+    Under the old code the trailing bucket gets byte_cost=0 and is
+    dropped by the zero-filter, so its position bucket vanishes.
+    Under the fix the trailing bucket gets a placeholder cost of 1
+    and its position bucket survives.
+    """
     from ingest._tabix import variant_density
 
-    # Three 16Kb buckets, each with non-trivial byte cost between
-    # them. The final bucket has no successor so its byte_cost
-    # can't be computed from a delta — the helper has to insert a
-    # placeholder cost (not 0) so the final position bucket survives
-    # the zero-filter.
+    # Seven identical entries (delta=0 from index 0 through 5), then a
+    # jump at index 6, then the trailing entry at index 7.
     #
-    # Synthetic linear offsets: bgzf_block | uoffset
-    # (1 << 16) → block 1, offset 0; (2 << 16) → block 2, offset 0; …
-    offsets = [
-        (1 << 16),  # bucket 0 begins at block 1
-        (5 << 16),  # bucket 1 begins at block 5 (cost 4 bytes-of-blocks)
-        (9 << 16),  # bucket 2 begins at block 9 (cost 4)
-    ]
+    #   linear_idx 0..5: delta = 0  → skipped under old code
+    #   linear_idx 6:    delta = 10 → counted, pos_bucket = 6 * 16384 // 100_000 = 0
+    #   linear_idx 7:    trailing   → pos_bucket = 7 * 16384 // 100_000 = 1
+    #
+    # Under the old code, only linear_idx 6 contributes (pos bucket 0).
+    # Pos bucket 1 has no contributor and is absent from the density map.
+    # Under the fix, linear_idx 7's placeholder cost of 1 makes pos
+    # bucket 1 appear.
+    offsets = [(10 << 16)] * 7 + [(20 << 16), (20 << 16)]
+    assert len(offsets) == 9
     density = variant_density(offsets, position_bucket_size=100_000)
 
-    # All three linear buckets (0, 1, 2) map to position bucket 0
-    # at 100Kb granularity (0 * 16384 / 100000 == 0, 1 * 16384 / 100000
-    # == 0, 2 * 16384 / 100000 == 0). The fact that bucket 0 of the
-    # density map exists at all is what we need to assert — under the
-    # pre-fix code path the final linear bucket would be skipped, but
-    # because the first two contribute non-zero deltas the map would
-    # still have bucket 0. To actually exercise the trailing-bucket
-    # path we need offsets where the final linear bucket is the ONLY
-    # contribution to its position bucket.
-    assert 0 in density, "density map lost position bucket 0"
-
-    # Now the load-bearing case: a long run of empty (delta-zero)
-    # buckets followed by a single trailing bucket. Under the old
-    # code, every middle bucket has byte_cost=0 (so skipped) and the
-    # final bucket also gets byte_cost=0 (so also skipped) — the
-    # contig's last position bucket vanished. Under the fix the
-    # trailing bucket gets a placeholder cost and the position bucket
-    # survives.
-    long_run = [(10 << 16)] * 11 + [(20 << 16)]  # 11 empty deltas + final
-    density2 = variant_density(long_run, position_bucket_size=100_000)
-    # Linear bucket 11 = position 11 * 16384 = 180_224 → pos bucket 1.
-    assert 1 in density2, f"density map dropped the trailing linear bucket: {density2}"
+    # Sanity: pos bucket 0 was already present pre-fix (from linear_idx 6).
+    assert 0 in density, f"pre-existing bucket vanished: {density}"
+    # Load-bearing: pos bucket 1 only appears because the trailing
+    # linear bucket gets a placeholder cost.
+    assert 1 in density, (
+        f"trailing-bucket fix regressed — pos bucket 1 missing: {density}"
+    )
