@@ -6,6 +6,17 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.3.2] — 2026-06-10
+
+### Added
+- Zenodo integration. `.zenodo.json` ships rich DOI metadata
+  (title, description, keywords, license, author ORCID
+  0000-0003-4915-664X, related-identifier links to GitHub and
+  PyPI) so the DOI mints clean instead of with Zenodo's
+  GitHub-fallback defaults. New `docs/CITATION.md` documents the
+  citation format and the one-time OAuth setup steps. The first
+  Zenodo webhook fires on this release tag.
+
 ### Fixed
 - Parallel ingest works on the DuckDB backend. The docstring already
   claimed it was backend-agnostic but two latent splitter bugs
@@ -461,7 +472,8 @@ Initial PyPI release.
 - GENCODE v45 gene-coordinates loader (`vcfclick annotations load`).
 - Apache 2.0 license.
 
-[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.3.2...HEAD
+[0.3.2]: https://github.com/nuin/vcfclick/releases/tag/v0.3.2
 [0.3.1]: https://github.com/nuin/vcfclick/releases/tag/v0.3.1
 [0.3.0]: https://github.com/nuin/vcfclick/releases/tag/v0.3.0
 [0.2.0]: https://github.com/nuin/vcfclick/releases/tag/v0.2.0

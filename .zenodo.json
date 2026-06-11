@@ -6,7 +6,7 @@
     {
       "name": "Nuin, Paulo A. F.",
       "affiliation": "Bioinformat",
-      "orcid": "0000-0000-0000-0000"
+      "orcid": "0000-0003-4915-664X"
     }
   ],
   "keywords": [
@@ -41,5 +41,5 @@
   "communities": [
     {"identifier": "bioinformatics"}
   ],
-  "notes": "Author ORCID placeholder pending — replace the 0000-0000-0000-0000 above before the next release if you have one."
+  "notes": "vcfclick is single-author software developed at Bioinformat. Source archived from the GitHub release; runtime depends on cyvcf2 (htslib), chDB or DuckDB as the embedded SQL engine, and pyarrow for Parquet interchange."
 }
