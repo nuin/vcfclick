@@ -14,14 +14,22 @@ placeholder below with the real one.
 
 ```bibtex
 @software{nuin_vcfclick,
-  author       = {Nuin, Paulo A. F.},
+  author       = {Nuin, Paulo A S},
   title        = {vcfclick: embedded VCF databases with
                   auditable natural-language queries},
   publisher    = {Zenodo},
-  doi          = {10.5281/zenodo.PLACEHOLDER},
+  doi          = {10.5281/zenodo.20636069},
   url          = {https://github.com/nuin/vcfclick}
 }
 ```
+
+The DOI `10.5281/zenodo.20636069` is the **concept DOI** — it always
+resolves to the latest release. Use this one when citing vcfclick in
+a paper.
+
+If you need to pin to a specific version for reproducibility, use
+the version-specific DOI instead. v0.3.2 is `10.5281/zenodo.20636070`;
+each future release gets its own number on the same record series.
 
 ## Setup notes
 
