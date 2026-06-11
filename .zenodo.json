@@ -1,0 +1,45 @@
+{
+  "upload_type": "software",
+  "title": "vcfclick: embedded VCF databases with auditable natural-language queries",
+  "description": "<p>Small VCF databases, one per cohort. Variants, genotypes, and samples live in either chDB (embedded ClickHouse) or DuckDB; gene and ClinVar annotations live in a sibling DuckDB file. A bundled Model Context Protocol server exposes a small set of tools so a language-model client can query the cohort in natural language and see the SQL it generated.</p><p>Designed for the gap between bcftools/cyvcf2 (single-file, no persistence) and Hail/TileDB-VCF (cluster-scale). Atomic two-phase ingest with rollback, sparse-aware cohort allele-frequency math, parallel ingest with index-aware region splitting, and Arrow/Parquet as a public interchange format via <code>db dump</code> and <code>db ingest-parquet</code>.</p>",
+  "creators": [
+    {
+      "name": "Nuin, Paulo A. F.",
+      "affiliation": "Bioinformat",
+      "orcid": "0000-0000-0000-0000"
+    }
+  ],
+  "keywords": [
+    "VCF",
+    "variant calling",
+    "genomics",
+    "bioinformatics",
+    "Python",
+    "ClickHouse",
+    "DuckDB",
+    "chDB",
+    "Arrow",
+    "Parquet",
+    "Model Context Protocol",
+    "cohort analysis",
+    "allele frequency"
+  ],
+  "license": "Apache-2.0",
+  "access_right": "open",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/nuin/vcfclick",
+      "relation": "isSupplementTo",
+      "resource_type": "software"
+    },
+    {
+      "identifier": "https://pypi.org/project/vcfclick/",
+      "relation": "isPartOf",
+      "resource_type": "software"
+    }
+  ],
+  "communities": [
+    {"identifier": "bioinformatics"}
+  ],
+  "notes": "Author ORCID placeholder pending — replace the 0000-0000-0000-0000 above before the next release if you have one."
+}
