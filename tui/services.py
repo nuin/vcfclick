@@ -208,6 +208,19 @@ def database_summary(name: str) -> DatabaseSummary:
     )
 
 
+def stats_summary(name: str, top: int = 20) -> dict[str, Any]:
+    """Return stats payload where supported by the active backend."""
+    from storage import backend, get_session
+
+    validate_database(name)
+    if backend() == "duckdb":
+        raise UnsupportedFeatureError("Stats are not implemented on DuckDB yet.")
+
+    from cli.db_stats import _stats_payload
+
+    return _stats_payload(get_session(name), top)
+
+
 _RANGE_RE = re.compile(
     r"^(?P<chrom>[A-Za-z0-9_.-]+):(?P<start>[0-9,]+)-(?P<end>[0-9,]+)$"
 )

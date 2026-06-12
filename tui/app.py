@@ -5,6 +5,7 @@ from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Static
 
 from tui.screens.locus import LocusPane
+from tui.screens.operations import OperationsPane
 from tui.screens.sql import SqlPane
 
 
@@ -54,8 +55,7 @@ class VcfclickTuiApp(App):
     def action_show_operations(self) -> None:
         main = self.query_one("#main", Vertical)
         main.remove_children()
-        main.mount(Static("Operations", id="mode-title"))
-        main.mount(Static("Database operations will appear here.", id="empty-state"))
+        main.mount(OperationsPane())
 
     def action_show_sql(self) -> None:
         main = self.query_one("#main", Vertical)

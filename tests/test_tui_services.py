@@ -11,12 +11,14 @@ from tui.services import (
     ParsedLocus,
     ResolvedLocus,
     TuiServiceError,
+    UnsupportedFeatureError,
     build_locus_summary,
     database_summary,
     execute_sql,
     list_database_names,
     parse_locus_input,
     resolve_locus,
+    stats_summary,
     validate_database,
 )
 
@@ -127,6 +129,15 @@ def test_database_summary_counts_empty_schema(vcfclick_home, monkeypatch):
     assert summary.genotypes == 0
     assert summary.samples == 0
     assert summary.ingestions == 0
+
+
+def test_stats_summary_reports_duckdb_unsupported(monkeypatch, vcfclick_home):
+    name = "smoke"
+    (vcfclick_home / "dbs" / name).mkdir(parents=True)
+    monkeypatch.setenv("VCFCLICK_BACKEND", "duckdb")
+
+    with pytest.raises(UnsupportedFeatureError):
+        stats_summary(name)
 
 
 def test_resolve_range_without_annotations():

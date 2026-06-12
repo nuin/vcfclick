@@ -87,6 +87,19 @@ def test_open_sql_sets_editor_text():
     asyncio.run(run())
 
 
+def test_operations_screen_lists_databases(vcfclick_home):
+    (vcfclick_home / "dbs" / "smoke").mkdir(parents=True)
+
+    async def run() -> None:
+        app = VcfclickTuiApp()
+        async with app.run_test() as pilot:
+            app.action_show_operations()
+            await pilot.pause()
+            assert "smoke" in app.query_one("#operations-body", Static).content
+
+    asyncio.run(run())
+
+
 def test_locus_submit_renders_missing_db_error():
     async def run() -> None:
         app = VcfclickTuiApp()
