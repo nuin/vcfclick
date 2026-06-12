@@ -140,6 +140,28 @@ def test_stats_summary_reports_duckdb_unsupported(monkeypatch, vcfclick_home):
         stats_summary(name)
 
 
+def test_stats_summary_wraps_backend_failures(monkeypatch, vcfclick_home):
+    name = "stats-failure"
+    (vcfclick_home / "dbs" / name).mkdir(parents=True)
+
+    import cli.db_stats
+    import storage
+
+    cause = RuntimeError("catalog failure")
+    monkeypatch.setattr(storage, "backend", lambda: "chdb")
+    monkeypatch.setattr(storage, "get_session", lambda db_name: object())
+
+    def fail_stats_payload(sess, top: int):
+        raise cause
+
+    monkeypatch.setattr(cli.db_stats, "_stats_payload", fail_stats_payload)
+
+    with pytest.raises(TuiServiceError) as exc_info:
+        stats_summary(name)
+
+    assert exc_info.value.__cause__ is cause
+
+
 def test_resolve_range_without_annotations():
     parsed = parse_locus_input("chr1:100-200")
     assert resolve_locus(parsed) == ResolvedLocus(

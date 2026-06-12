@@ -33,11 +33,12 @@ class OperationsPane(Vertical):
 
         if event.button.id == "use-db":
             try:
-                self.app.active_db = services.validate_database(name)
-                summary = services.database_summary(name)
+                validated_name = services.validate_database(name)
+                summary = services.database_summary(validated_name)
             except services.TuiServiceError as exc:
                 body.update(str(exc))
                 return
+            self.app.active_db = validated_name
             body.update(
                 f"Active DB: {summary.name}\n"
                 f"Path: {summary.path}\n"

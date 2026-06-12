@@ -218,7 +218,12 @@ def stats_summary(name: str, top: int = 20) -> dict[str, Any]:
 
     from cli.db_stats import _stats_payload
 
-    return _stats_payload(get_session(name), top)
+    try:
+        return _stats_payload(get_session(name), top)
+    except TuiServiceError:
+        raise
+    except Exception as exc:
+        raise TuiServiceError(f"Unable to summarize stats for {name!r}: {exc}") from exc
 
 
 _RANGE_RE = re.compile(

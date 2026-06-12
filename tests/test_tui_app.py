@@ -100,6 +100,30 @@ def test_operations_screen_lists_databases(vcfclick_home):
     asyncio.run(run())
 
 
+def test_operations_use_db_keeps_active_db_when_summary_fails(monkeypatch):
+    monkeypatch.setattr(services, "list_database_names", lambda: ["broken"])
+    monkeypatch.setattr(services, "validate_database", lambda name: name)
+
+    def fail_database_summary(name: str) -> services.DatabaseSummary:
+        raise services.TuiServiceError("summary failed")
+
+    monkeypatch.setattr(services, "database_summary", fail_database_summary)
+
+    async def run() -> None:
+        app = VcfclickTuiApp(initial_db="stable")
+        async with app.run_test() as pilot:
+            app.action_show_operations()
+            await pilot.pause()
+            app.query_one("#db-name-input", Input).value = "broken"
+            await pilot.click("#use-db")
+            await pilot.pause()
+
+            assert app.active_db == "stable"
+            assert "summary failed" in app.query_one("#operations-body", Static).content
+
+    asyncio.run(run())
+
+
 def test_locus_submit_renders_missing_db_error():
     async def run() -> None:
         app = VcfclickTuiApp()
