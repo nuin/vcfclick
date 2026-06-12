@@ -17,7 +17,14 @@ class LocusPane(Vertical):
         yield Button("Open SQL", id="open-locus-sql", disabled=True)
         yield DataTable(id="locus-preview")
 
+    def _reset_handoff(self) -> None:
+        self.query_one("#open-locus-sql", Button).disabled = True
+        self.query_one("#locus-preview", DataTable).clear(columns=True)
+        if hasattr(self, "_last_sql"):
+            del self._last_sql
+
     def on_input_submitted(self, event: Input.Submitted) -> None:
+        self._reset_handoff()
         active_db = getattr(self.app, "active_db", None)
         if active_db is None:
             self.query_one("#locus-status", Static).update("Select a database first.")
