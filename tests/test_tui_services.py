@@ -16,6 +16,11 @@ from tui.services import (
 )
 
 
+@pytest.fixture(autouse=True)
+def force_duckdb_backend(monkeypatch):
+    monkeypatch.setenv("VCFCLICK_BACKEND", "duckdb")
+
+
 def test_parse_range_with_commas():
     locus = parse_locus_input("chr17:43,044,295-43,125,483")
     assert locus == ParsedLocus(
