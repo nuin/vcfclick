@@ -102,7 +102,10 @@ def validate_database(name: str) -> str:
     """Return `name` when it exists, otherwise raise a recoverable error."""
     from storage import db_path
 
-    path = db_path(name)
+    try:
+        path = db_path(name)
+    except ValueError as exc:
+        raise DatabaseError(str(exc)) from exc
     if not path.exists():
         raise DatabaseError(f"Database {name!r} does not exist.")
     return name
@@ -131,7 +134,38 @@ def execute_sql(name: str, sql: str) -> QueryResult:
     cleaned = sql.strip()
     if not cleaned:
         raise TuiServiceError("Enter a SQL query.")
-    return _query_json(name, cleaned)
+    try:
+        return _query_json(name, cleaned)
+    except TuiServiceError:
+        raise
+    except Exception as exc:
+        raise TuiServiceError(f"Unable to execute SQL: {exc}") from exc
+
+
+_TABLE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _table_exists(name: str, table: str) -> bool:
+    """Return whether `table` exists in the explicitly named database."""
+    from storage import backend, get_session
+
+    if not _TABLE_RE.fullmatch(table):
+        raise TuiServiceError(f"Unsafe table name: {table!r}")
+
+    sess = get_session(name)
+    if backend() == "duckdb":
+        sql = (
+            "SELECT count(*) FROM information_schema.tables "
+            f"WHERE table_name = '{table}'"
+        )
+    else:
+        sql = (
+            "SELECT count() FROM system.tables "
+            f"WHERE database = currentDatabase() AND name = '{table}'"
+        )
+    result = sess.query(sql, "CSV").bytes().decode().strip()
+    last = result.splitlines()[-1].strip() if result else "0"
+    return int(last) > 0
 
 
 def _scalar_count(name: str, table: str) -> int | None:
@@ -152,9 +186,16 @@ def database_summary(name: str) -> DatabaseSummary:
     counts: dict[str, int | None] = {}
     for table in ("variants", "genotypes", "samples", "ingestions"):
         try:
+            if not _table_exists(name, table):
+                counts[table] = None
+                continue
             counts[table] = _scalar_count(name, table)
-        except Exception:
-            counts[table] = None
+        except TuiServiceError:
+            raise
+        except Exception as exc:
+            raise TuiServiceError(
+                f"Unable to summarize database {name!r}: {exc}"
+            ) from exc
 
     return DatabaseSummary(
         name=name,

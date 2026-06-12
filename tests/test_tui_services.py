@@ -7,6 +7,7 @@ from tui.services import (
     DatabaseError,
     LocusInputError,
     ParsedLocus,
+    TuiServiceError,
     database_summary,
     execute_sql,
     list_database_names,
@@ -59,6 +60,11 @@ def test_validate_database_rejects_missing(vcfclick_home):
         validate_database("missing")
 
 
+def test_validate_database_wraps_unsafe_name(vcfclick_home):
+    with pytest.raises(DatabaseError):
+        validate_database("../unsafe")
+
+
 def test_execute_sql_returns_structured_rows(vcfclick_home, monkeypatch):
     name = "smoke-sql"
     validate_home = vcfclick_home / "dbs" / name
@@ -72,6 +78,30 @@ def test_execute_sql_returns_structured_rows(vcfclick_home, monkeypatch):
     assert result.columns == ["n"]
     assert result.rows == [[0]]
     assert result.row_count == 1
+
+
+def test_execute_sql_wraps_malformed_sql(vcfclick_home, monkeypatch):
+    name = "bad-sql"
+    validate_home = vcfclick_home / "dbs" / name
+    validate_home.mkdir(parents=True)
+    monkeypatch.setenv("VCFCLICK_DB_NAME", name)
+    get_session(name)
+    apply_schema()
+
+    with pytest.raises(TuiServiceError):
+        execute_sql(name, "SELECT FROM")
+
+
+def test_database_summary_counts_missing_schema_as_none(vcfclick_home):
+    name = "schema-missing"
+    (vcfclick_home / "dbs" / name).mkdir(parents=True)
+
+    summary = database_summary(name)
+    assert summary.name == name
+    assert summary.variants is None
+    assert summary.genotypes is None
+    assert summary.samples is None
+    assert summary.ingestions is None
 
 
 def test_database_summary_counts_empty_schema(vcfclick_home, monkeypatch):
