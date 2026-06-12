@@ -6,6 +6,20 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] — 2026-06-12
+
+### Added
+- Optional Textual terminal UI via `vcfclick tui [--db NAME]`,
+  installable with the `tui` extra. The first screen is a
+  genomics-first Locus view for gene symbols and `chrom:start-end`
+  ranges, with generated SQL available for inspection/editing.
+- TUI service layer for locus parsing/resolution, database metadata,
+  SQL execution, locus summaries, and backend-aware stats handling.
+- Operations and SQL TUI panes. Operations lists local databases,
+  switches the active database after metadata validation, shows
+  basic counts/path information, and reports unsupported stats on
+  DuckDB as a recoverable UI error.
+
 ## [0.3.2] — 2026-06-10
 
 ### Added
@@ -472,7 +486,8 @@ Initial PyPI release.
 - GENCODE v45 gene-coordinates loader (`vcfclick annotations load`).
 - Apache 2.0 license.
 
-[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.3.2...HEAD
+[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nuin/vcfclick/releases/tag/v0.4.0
 [0.3.2]: https://github.com/nuin/vcfclick/releases/tag/v0.3.2
 [0.3.1]: https://github.com/nuin/vcfclick/releases/tag/v0.3.1
 [0.3.0]: https://github.com/nuin/vcfclick/releases/tag/v0.3.0
