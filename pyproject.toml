@@ -44,6 +44,11 @@ dependencies = [
     "click>=8.1.0",
 ]
 
+[project.optional-dependencies]
+tui = [
+    "textual>=0.89",
+]
+
 [project.urls]
 Homepage = "https://github.com/nuin/vcfclick"
 Repository = "https://github.com/nuin/vcfclick"
@@ -71,6 +76,7 @@ packages = [
     "ingest",
     "schema",
     "storage",
+    "tui",
     "vcfclick_mcp",
 ]
 
@@ -82,6 +88,7 @@ include = [
     "ingest",
     "schema",
     "storage",
+    "tui",
     "vcfclick_mcp",
     "bench/BENCHMARK.md",
     "bench/run.sh",

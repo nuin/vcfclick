@@ -125,6 +125,19 @@ file), so a database created under one backend is NOT readable by
 the other. Move data between them with `db dump` → `db ingest-parquet`
 under the destination backend.
 
+### Optional terminal UI
+
+vcfclick also has an optional Textual terminal UI for local exploration:
+
+```bash
+uv tool install "vcfclick[tui]"   # or: pipx install "vcfclick[tui]"
+vcfclick tui --db my-cohort
+```
+
+The TUI starts with a genomics-first Locus view: enter a gene symbol such as
+`BRCA1` or a range such as `chr17:43044295-43125483`, inspect the summary, then
+open the generated SQL when you want to inspect or edit it.
+
 ## 30-second demo
 
 A pre-built 1000 Genomes Phase 3 BRCA1 cohort (3,014 variants × 3,202

@@ -55,6 +55,8 @@ paper/
 
 # Browser-automation artefacts (Playwright MCP screenshots etc.)
 .playwright-mcp/
+.superpowers/
+.worktrees/
 *.png
 *.jpeg
 *.jpg
