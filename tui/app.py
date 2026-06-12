@@ -4,6 +4,7 @@ from textual.app import App, ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.widgets import Button, Footer, Header, Static
 
+from tui.screens.locus import LocusPane
 from tui.screens.sql import SqlPane
 
 
@@ -42,15 +43,13 @@ class VcfclickTuiApp(App):
                 yield Button("Operations", id="nav-operations")
                 yield Button("SQL", id="nav-sql")
             with Vertical(id="main"):
-                yield Static("Locus", id="mode-title")
-                yield Static("Enter a gene or range to begin.", id="empty-state")
+                yield LocusPane()
         yield Footer()
 
     def action_show_locus(self) -> None:
         main = self.query_one("#main", Vertical)
         main.remove_children()
-        main.mount(Static("Locus", id="mode-title"))
-        main.mount(Static("Enter a gene or range to begin.", id="empty-state"))
+        main.mount(LocusPane())
 
     def action_show_operations(self) -> None:
         main = self.query_one("#main", Vertical)

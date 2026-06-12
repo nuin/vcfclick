@@ -30,3 +30,16 @@ def test_open_sql_sets_editor_text():
             assert editor.text == "SELECT 1"
 
     asyncio.run(run())
+
+
+def test_locus_submit_renders_missing_db_error():
+    async def run() -> None:
+        app = VcfclickTuiApp()
+        async with app.run_test() as pilot:
+            await pilot.click("#locus-input")
+            await pilot.press("B", "R", "C", "A", "1")
+            await pilot.press("enter")
+            await pilot.pause()
+            assert "Select a database" in app.query_one("#locus-status", Static).content
+
+    asyncio.run(run())
