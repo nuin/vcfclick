@@ -14,6 +14,8 @@ def tui_cmd(db_name: str | None) -> None:
     try:
         from tui.app import VcfclickTuiApp
     except ModuleNotFoundError as exc:
+        if exc.name != "textual":
+            raise
         raise click.ClickException(
             'Install the TUI extra first: pip install "vcfclick[tui]"'
         ) from exc
