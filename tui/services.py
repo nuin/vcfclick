@@ -252,3 +252,106 @@ def parse_locus_input(raw: str) -> ParsedLocus:
         )
 
     raise LocusInputError("Use a gene symbol or range like chr17:43044295-43125483.")
+
+
+def resolve_locus(parsed: ParsedLocus) -> ResolvedLocus:
+    """Resolve parsed user input into concrete coordinates."""
+    if parsed.kind == "range":
+        assert parsed.chrom is not None
+        assert parsed.start_pos is not None
+        assert parsed.end_pos is not None
+        return ResolvedLocus(
+            label=parsed.label,
+            chrom=parsed.chrom,
+            start_pos=parsed.start_pos,
+            end_pos=parsed.end_pos,
+            gene_symbol=None,
+            source="range",
+        )
+
+    assert parsed.gene_symbol is not None
+    try:
+        import annotations
+
+        gene = annotations.position_for_gene(parsed.gene_symbol)
+    except Exception as exc:
+        raise AnnotationUnavailableError(
+            f"Gene annotations are unavailable: {exc}"
+        ) from exc
+
+    if gene is None:
+        raise AnnotationUnavailableError(f"Gene {parsed.gene_symbol!r} was not found.")
+
+    return ResolvedLocus(
+        label=parsed.gene_symbol,
+        chrom=gene.chrom,
+        start_pos=int(gene.start_pos),
+        end_pos=int(gene.end_pos),
+        gene_symbol=gene.gene_symbol,
+        source="gene",
+    )
+
+
+def _locus_where(locus: ResolvedLocus, alias: str | None = None) -> str:
+    from storage import sql_quote_str
+
+    prefix = f"{alias}." if alias else ""
+    return (
+        f"{prefix}chrom = {sql_quote_str(locus.chrom)} "
+        f"AND {prefix}pos BETWEEN {int(locus.start_pos)} AND {int(locus.end_pos)}"
+    )
+
+
+def _quality_sql(locus: ResolvedLocus) -> str:
+    from storage import count_expr
+
+    where = _locus_where(locus)
+    return (
+        "SELECT "
+        f"{count_expr()} AS genotype_rows, "
+        "count(gq) AS rows_with_gq, "
+        "count(dp) AS rows_with_dp "
+        f"FROM genotypes WHERE {where}"
+    )
+
+
+def build_locus_summary(name: str, locus: ResolvedLocus) -> LocusSummary:
+    """Run the v1 summary query set for a resolved locus."""
+    from storage import count_expr
+
+    where_v = _locus_where(locus, "v")
+    where_g = _locus_where(locus, "g")
+
+    counts_sql = (
+        "SELECT "
+        f"(SELECT {count_expr()} FROM ("
+        "SELECT DISTINCT v.ingest_id, v.chrom, v.pos, v.ref, v.alt "
+        f"FROM variants v WHERE {where_v}"
+        ") variant_rows) AS variants, "
+        f"(SELECT {count_expr()} FROM ("
+        "SELECT DISTINCT g.ingest_id, g.sample_id "
+        f"FROM genotypes g WHERE {where_g}"
+        ") carrier_rows) AS carrier_samples, "
+        f"(SELECT {count_expr()} FROM genotypes g WHERE {where_g}) "
+        "AS non_ref_genotype_rows"
+    )
+    cohorts_sql = (
+        "SELECT cohort, "
+        f"{count_expr()} AS samples "
+        "FROM (SELECT DISTINCT ingest_id, sample_id, cohort FROM samples) sample_rows "
+        "GROUP BY cohort ORDER BY samples DESC, cohort"
+    )
+    preview_sql = (
+        "SELECT chrom, pos, ref, alt, vcf_id, qual, filter, info_AF, info_AC "
+        "FROM variants "
+        f"WHERE {_locus_where(locus)} "
+        "ORDER BY chrom, pos, ref, alt LIMIT 50"
+    )
+
+    return LocusSummary(
+        locus=locus,
+        counts=_query_json(name, counts_sql),
+        cohorts=_query_json(name, cohorts_sql),
+        quality=_query_json(name, _quality_sql(locus)),
+        preview=_query_json(name, preview_sql),
+    )

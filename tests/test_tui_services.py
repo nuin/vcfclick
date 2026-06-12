@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import pytest
 
+from annotations import GeneRange
 from storage import apply_schema, get_session
 from tui.services import (
+    AnnotationUnavailableError,
     DatabaseError,
     LocusInputError,
     ParsedLocus,
+    ResolvedLocus,
     TuiServiceError,
+    build_locus_summary,
     database_summary,
     execute_sql,
     list_database_names,
     parse_locus_input,
+    resolve_locus,
     validate_database,
 )
 
@@ -122,3 +127,55 @@ def test_database_summary_counts_empty_schema(vcfclick_home, monkeypatch):
     assert summary.genotypes == 0
     assert summary.samples == 0
     assert summary.ingestions == 0
+
+
+def test_resolve_range_without_annotations():
+    parsed = parse_locus_input("chr1:100-200")
+    assert resolve_locus(parsed) == ResolvedLocus(
+        label="chr1:100-200",
+        chrom="chr1",
+        start_pos=100,
+        end_pos=200,
+        gene_symbol=None,
+        source="range",
+    )
+
+
+def test_resolve_gene_uses_annotation_lookup(monkeypatch):
+    def fake_position_for_gene(symbol: str):
+        assert symbol == "BRCA1"
+        return GeneRange("BRCA1", "chr17", 43044295, 43125483, "-")
+
+    monkeypatch.setattr("annotations.position_for_gene", fake_position_for_gene)
+
+    resolved = resolve_locus(parse_locus_input("BRCA1"))
+    assert resolved == ResolvedLocus(
+        label="BRCA1",
+        chrom="chr17",
+        start_pos=43044295,
+        end_pos=43125483,
+        gene_symbol="BRCA1",
+        source="gene",
+    )
+
+
+def test_resolve_gene_not_found(monkeypatch):
+    monkeypatch.setattr("annotations.position_for_gene", lambda symbol: None)
+    with pytest.raises(AnnotationUnavailableError):
+        resolve_locus(parse_locus_input("NOPE1"))
+
+
+def test_build_locus_summary_returns_sql(vcfclick_home, monkeypatch):
+    name = "summary"
+    monkeypatch.setenv("VCFCLICK_DB_NAME", name)
+    (vcfclick_home / "dbs" / name).mkdir(parents=True)
+    get_session(name)
+    apply_schema()
+
+    summary = build_locus_summary(name, ResolvedLocus("chr1:1-1000", "chr1", 1, 1000))
+
+    assert summary.locus.chrom == "chr1"
+    assert "FROM variants" in summary.counts.sql
+    assert "FROM samples" in summary.cohorts.sql
+    assert "gq" in summary.quality.sql
+    assert "LIMIT 50" in summary.preview.sql
