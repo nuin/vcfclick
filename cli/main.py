@@ -74,9 +74,13 @@ def annotations() -> None:
 # keeps this a pure side-effect import — no unused symbol bound at module scope.
 import importlib  # noqa: E402
 
-importlib.import_module("cli.db")
-importlib.import_module("cli.annotations")
-importlib.import_module("cli.discover")
+for _module in (
+    "cli.db",
+    "cli.annotations",
+    "cli.discover",
+    "cli.tui",
+):
+    importlib.import_module(_module)
 
 
 if __name__ == "__main__":
