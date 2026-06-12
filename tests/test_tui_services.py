@@ -179,3 +179,17 @@ def test_build_locus_summary_returns_sql(vcfclick_home, monkeypatch):
     assert "FROM samples" in summary.cohorts.sql
     assert "gq" in summary.quality.sql
     assert "LIMIT 50" in summary.preview.sql
+
+
+def test_build_locus_summary_wraps_query_failures(monkeypatch):
+    cause = RuntimeError("backend catalog failure")
+
+    def fail_query(name: str, sql: str):
+        raise cause
+
+    monkeypatch.setattr("tui.services._query_json", fail_query)
+
+    with pytest.raises(TuiServiceError) as exc_info:
+        build_locus_summary("summary", ResolvedLocus("chr1:1-1000", "chr1", 1, 1000))
+
+    assert exc_info.value.__cause__ is cause

@@ -348,10 +348,15 @@ def build_locus_summary(name: str, locus: ResolvedLocus) -> LocusSummary:
         "ORDER BY chrom, pos, ref, alt LIMIT 50"
     )
 
-    return LocusSummary(
-        locus=locus,
-        counts=_query_json(name, counts_sql),
-        cohorts=_query_json(name, cohorts_sql),
-        quality=_query_json(name, _quality_sql(locus)),
-        preview=_query_json(name, preview_sql),
-    )
+    try:
+        return LocusSummary(
+            locus=locus,
+            counts=_query_json(name, counts_sql),
+            cohorts=_query_json(name, cohorts_sql),
+            quality=_query_json(name, _quality_sql(locus)),
+            preview=_query_json(name, preview_sql),
+        )
+    except TuiServiceError:
+        raise
+    except Exception as exc:
+        raise TuiServiceError(f"Unable to summarize locus: {exc}") from exc
