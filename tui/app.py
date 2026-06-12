@@ -62,6 +62,14 @@ class VcfclickTuiApp(App):
         main.remove_children()
         main.mount(SqlPane())
 
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "nav-locus":
+            self.action_show_locus()
+        elif event.button.id == "nav-operations":
+            self.action_show_operations()
+        elif event.button.id == "nav-sql":
+            self.action_show_sql()
+
     def open_sql(self, sql: str) -> None:
         self.action_show_sql()
         self.call_after_refresh(self.query_one(SqlPane).set_sql, sql)

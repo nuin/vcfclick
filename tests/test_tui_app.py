@@ -87,6 +87,25 @@ def test_open_sql_sets_editor_text():
     asyncio.run(run())
 
 
+def test_navigation_buttons_switch_modes():
+    async def run() -> None:
+        app = VcfclickTuiApp()
+        async with app.run_test() as pilot:
+            await pilot.click("#nav-operations")
+            await pilot.pause()
+            assert app.query_one("#mode-title", Static).content == "Operations"
+
+            await pilot.click("#nav-sql")
+            await pilot.pause()
+            assert app.query_one("#mode-title", Static).content == "SQL"
+
+            await pilot.click("#nav-locus")
+            await pilot.pause()
+            assert app.query_one("#mode-title", Static).content == "Locus"
+
+    asyncio.run(run())
+
+
 def test_operations_screen_lists_databases(vcfclick_home):
     (vcfclick_home / "dbs" / "smoke").mkdir(parents=True)
 
