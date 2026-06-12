@@ -2,7 +2,17 @@ from __future__ import annotations
 
 import pytest
 
-from tui.services import LocusInputError, ParsedLocus, parse_locus_input
+from storage import apply_schema, get_session
+from tui.services import (
+    DatabaseError,
+    LocusInputError,
+    ParsedLocus,
+    database_summary,
+    execute_sql,
+    list_database_names,
+    parse_locus_input,
+    validate_database,
+)
 
 
 def test_parse_range_with_commas():
@@ -36,3 +46,44 @@ def test_parse_gene_symbol():
 def test_parse_invalid_locus(raw):
     with pytest.raises(LocusInputError):
         parse_locus_input(raw)
+
+
+def test_list_database_names_uses_vcfclick_home(vcfclick_home):
+    (vcfclick_home / "dbs" / "alpha").mkdir(parents=True)
+    (vcfclick_home / "dbs" / "beta").mkdir(parents=True)
+    assert list_database_names() == ["alpha", "beta"]
+
+
+def test_validate_database_rejects_missing(vcfclick_home):
+    with pytest.raises(DatabaseError):
+        validate_database("missing")
+
+
+def test_execute_sql_returns_structured_rows(vcfclick_home, monkeypatch):
+    name = "smoke-sql"
+    validate_home = vcfclick_home / "dbs" / name
+    validate_home.mkdir(parents=True)
+    monkeypatch.setenv("VCFCLICK_DB_NAME", name)
+    get_session(name)
+    apply_schema()
+
+    result = execute_sql(name, "SELECT count() AS n FROM variants")
+    assert result.sql == "SELECT count() AS n FROM variants"
+    assert result.columns == ["n"]
+    assert result.rows == [[0]]
+    assert result.row_count == 1
+
+
+def test_database_summary_counts_empty_schema(vcfclick_home, monkeypatch):
+    name = "smoke-summary"
+    (vcfclick_home / "dbs" / name).mkdir(parents=True)
+    monkeypatch.setenv("VCFCLICK_DB_NAME", name)
+    get_session(name)
+    apply_schema()
+
+    summary = database_summary(name)
+    assert summary.name == name
+    assert summary.variants == 0
+    assert summary.genotypes == 0
+    assert summary.samples == 0
+    assert summary.ingestions == 0

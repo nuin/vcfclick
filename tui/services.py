@@ -8,6 +8,7 @@ testable without a terminal event loop.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import re
 from typing import Any, Literal
 
@@ -88,6 +89,82 @@ class LocusSummary:
     cohorts: QueryResult
     quality: QueryResult
     preview: QueryResult
+
+
+def list_database_names() -> list[str]:
+    """Return local database names sorted by the storage layer."""
+    from storage import list_dbs
+
+    return list_dbs()
+
+
+def validate_database(name: str) -> str:
+    """Return `name` when it exists, otherwise raise a recoverable error."""
+    from storage import db_path
+
+    path = db_path(name)
+    if not path.exists():
+        raise DatabaseError(f"Database {name!r} does not exist.")
+    return name
+
+
+def _query_json(name: str, sql: str) -> QueryResult:
+    """Execute SQL and normalize chDB/DuckDB JSONCompact output."""
+    from storage import get_session
+
+    validate_database(name)
+    sess = get_session(name)
+    raw = sess.query(sql, "JSONCompact").bytes().decode()
+    parsed = json.loads(raw)
+    columns = [m["name"] for m in parsed.get("meta", [])]
+    rows = parsed.get("data", [])
+    return QueryResult(
+        sql=sql,
+        columns=columns,
+        rows=rows,
+        row_count=len(rows),
+    )
+
+
+def execute_sql(name: str, sql: str) -> QueryResult:
+    """Run user-entered SQL against a named database."""
+    cleaned = sql.strip()
+    if not cleaned:
+        raise TuiServiceError("Enter a SQL query.")
+    return _query_json(name, cleaned)
+
+
+def _scalar_count(name: str, table: str) -> int | None:
+    from storage import count_expr
+
+    result = _query_json(name, f"SELECT {count_expr()} AS n FROM {table}")
+    if not result.rows:
+        return None
+    return int(result.rows[0][0])
+
+
+def database_summary(name: str) -> DatabaseSummary:
+    """Return basic DB metadata for the Operations mode."""
+    from storage import db_disk_size, db_path
+
+    validate_database(name)
+    path = db_path(name)
+    counts: dict[str, int | None] = {}
+    for table in ("variants", "genotypes", "samples", "ingestions"):
+        try:
+            counts[table] = _scalar_count(name, table)
+        except Exception:
+            counts[table] = None
+
+    return DatabaseSummary(
+        name=name,
+        path=str(path),
+        size_bytes=db_disk_size(name),
+        variants=counts["variants"],
+        genotypes=counts["genotypes"],
+        samples=counts["samples"],
+        ingestions=counts["ingestions"],
+    )
 
 
 _RANGE_RE = re.compile(
