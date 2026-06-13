@@ -6,6 +6,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-06-12
+
+### Fixed
+- `vcfclick db pull` now restores older bundle archives whose Parquet
+  files lack newer nullable/defaulted columns. Bundle restore imports
+  matching columns by name instead of relying on positional `SELECT *`,
+  which fixes the published 1000 Genomes BRCA1 demo bundle on the
+  current DuckDB backend.
+
 ## [0.4.0] — 2026-06-12
 
 ### Added
@@ -486,7 +495,8 @@ Initial PyPI release.
 - GENCODE v45 gene-coordinates loader (`vcfclick annotations load`).
 - Apache 2.0 license.
 
-[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/nuin/vcfclick/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nuin/vcfclick/releases/tag/v0.4.0
 [0.3.2]: https://github.com/nuin/vcfclick/releases/tag/v0.3.2
 [0.3.1]: https://github.com/nuin/vcfclick/releases/tag/v0.3.1

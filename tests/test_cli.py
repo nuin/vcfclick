@@ -18,7 +18,10 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import tarfile
 from pathlib import Path
+
+import pyarrow.parquet as pq
 
 
 REPO = Path(__file__).resolve().parent.parent
@@ -152,6 +155,41 @@ def test_push_pull_roundtrip(vcfclick_home, tiny_vcf, tmp_path):
     # Both should report the same variant count.
     assert str(FIXTURE_VARIANTS) in src_out
     assert str(FIXTURE_VARIANTS) in dst_out
+
+
+def test_pull_accepts_bundle_with_old_variants_schema(vcfclick_home, tiny_vcf, tmp_path):
+    """Older demo bundles lack newer nullable/defaulted variants columns."""
+    _vc(vcfclick_home, "db", "create", "src")
+    _ingest(vcfclick_home, "src", tiny_vcf)
+
+    bundle = tmp_path / "src.tar.gz"
+    _vc(vcfclick_home, "db", "push", "src", str(bundle))
+
+    old_bundle = tmp_path / "old-src.tar.gz"
+    with tarfile.open(bundle, "r:gz") as tar:
+        tar.extractall(tmp_path / "bundle", filter="data")
+
+    variants_path = tmp_path / "bundle" / "variants.parquet"
+    table = pq.read_table(variants_path)
+    old_table = table.drop(
+        [
+            "info_FractionInformativeReads",
+            "info_HAPCOMP",
+            "info_HAPDOM",
+            "info_DragenSnvHardQUAL",
+            "info_DragenIndelHardQUAL",
+        ]
+    )
+    pq.write_table(old_table, variants_path)
+
+    with tarfile.open(old_bundle, "w:gz") as tar:
+        for p in sorted((tmp_path / "bundle").iterdir()):
+            tar.add(p, arcname=p.name)
+
+    _vc(vcfclick_home, "db", "pull", "dst", str(old_bundle))
+
+    out = _vc(vcfclick_home, "db", "query", "dst", "SELECT count() FROM variants")
+    assert str(FIXTURE_VARIANTS) in out
 
 
 def test_query_genomic_region(vcfclick_home, tiny_vcf):

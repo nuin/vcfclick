@@ -8,6 +8,7 @@ import urllib.request
 from pathlib import Path
 
 import click
+import pyarrow.parquet as pq
 
 from cli.main import _set_db, db
 
@@ -55,6 +56,35 @@ def _acquire_tarball(source: str, tmp_dir: Path) -> Path:
     return tarball
 
 
+def _quote_ident(name: str) -> str:
+    """Double-quoted SQL identifier for schema-controlled table columns."""
+    return '"' + name.replace('"', '""') + '"'
+
+
+def _table_columns(sess, table: str) -> list[str]:
+    """Return target-table columns in storage order."""
+    from storage import backend
+
+    if backend() == "duckdb":
+        sql = (
+            "SELECT column_name FROM information_schema.columns "
+            f"WHERE table_name = '{table}' ORDER BY ordinal_position"
+        )
+    else:
+        sql = (
+            "SELECT name FROM system.columns "
+            f"WHERE database = currentDatabase() AND table = '{table}' "
+            "ORDER BY position"
+        )
+    raw = sess.query(sql, "TSV").bytes().decode()
+    return [line.split("\t", 1)[0] for line in raw.splitlines() if line.strip()]
+
+
+def _parquet_columns(path: Path) -> set[str]:
+    """Return the columns physically present in a bundle Parquet file."""
+    return set(pq.read_schema(path).names)
+
+
 def _import_table(sess, table: str, parquets: list[Path], extract_dir: Path) -> None:
     """Find <table>.parquet in `parquets`, validate safety, INSERT it."""
     match = next((p for p in parquets if p.stem == table), None)
@@ -75,7 +105,17 @@ def _import_table(sess, table: str, parquets: list[Path], extract_dir: Path) -> 
 
     from storage import count_expr, parquet_file_expr
 
-    sess.query(f"INSERT INTO {table} SELECT * FROM {parquet_file_expr(str(safe_path))}")
+    target_cols = _table_columns(sess, table)
+    parquet_cols = _parquet_columns(safe_path)
+    insert_cols = [col for col in target_cols if col in parquet_cols]
+    if not insert_cols:
+        raise click.ClickException(f"{safe_path.name} has no columns matching {table}")
+
+    cols = ", ".join(_quote_ident(col) for col in insert_cols)
+    sess.query(
+        f"INSERT INTO {table} ({cols}) "
+        f"SELECT {cols} FROM {parquet_file_expr(str(safe_path))}"
+    )
     raw = (
         sess.query(f"SELECT {count_expr()} FROM {table}", "CSV")
         .bytes()
