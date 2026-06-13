@@ -157,7 +157,9 @@ def test_push_pull_roundtrip(vcfclick_home, tiny_vcf, tmp_path):
     assert str(FIXTURE_VARIANTS) in dst_out
 
 
-def test_pull_accepts_bundle_with_old_variants_schema(vcfclick_home, tiny_vcf, tmp_path):
+def test_pull_accepts_bundle_with_old_variants_schema(
+    vcfclick_home, tiny_vcf, tmp_path
+):
     """Older demo bundles lack newer nullable/defaulted variants columns."""
     _vc(vcfclick_home, "db", "create", "src")
     _ingest(vcfclick_home, "src", tiny_vcf)
