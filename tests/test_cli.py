@@ -158,9 +158,15 @@ def test_push_pull_roundtrip(vcfclick_home, tiny_vcf, tmp_path):
 
 
 def test_pull_accepts_bundle_with_old_variants_schema(
-    vcfclick_home, tiny_vcf, tmp_path
+    vcfclick_home, tiny_vcf, tmp_path, monkeypatch
 ):
-    """Older demo bundles lack newer nullable/defaulted variants columns."""
+    """Older demo bundles lack newer nullable/defaulted variants columns.
+
+    The published demo break surfaced on the DuckDB backend, where
+    positional INSERT raised a hard column-count mismatch.
+    """
+    monkeypatch.setenv("VCFCLICK_BACKEND", "duckdb")
+
     _vc(vcfclick_home, "db", "create", "src")
     _ingest(vcfclick_home, "src", tiny_vcf)
 
