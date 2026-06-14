@@ -4,6 +4,12 @@
 [![PyPI](https://img.shields.io/pypi/v/vcfclick.svg)](https://pypi.org/project/vcfclick/)
 [![PyPI downloads](https://img.shields.io/pypi/dm/vcfclick.svg)](https://pypistats.org/packages/vcfclick)
 [![GitHub stars](https://img.shields.io/github/stars/nuin/vcfclick.svg?style=flat)](https://github.com/nuin/vcfclick/stargazers)
+[![live demo](https://img.shields.io/badge/demo-try%20in%20browser-b45309)](https://nuin.github.io/vcfclick-demo/)
+
+**▶ [Try the live demo](https://nuin.github.io/vcfclick-demo/)** — ask a
+1000 Genomes cohort questions in plain English and see the generated SQL,
+running entirely in your browser (DuckDB-Wasm, no install). Bring a free
+Google Gemini or an Anthropic key.
 
 A modern VCF database for research labs and bioinformatics teams.
 Embedded chDB (ClickHouse engine, serverless) for sample data, embedded
