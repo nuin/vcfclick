@@ -37,15 +37,21 @@ that touch the gene / ClinVar tables.
 
 ## Formatting
 
-The project uses ruff for formatting and linting:
+The project uses ruff for formatting and linting. CI pins the ruff
+version, so use the same commands locally when checking a PR:
 
 ```bash
-uv run ruff format .
-uv run ruff check .
+uvx ruff@0.15.16 format --check .
+uvx ruff@0.15.16 check .
 ```
 
-CI does not currently enforce a format pass, but PRs that arrive
-unformatted may be reformatted before merge.
+To apply formatting:
+
+```bash
+uvx ruff@0.15.16 format .
+```
+
+Run the formatter locally before opening a PR if the check fails.
 
 ## Pull requests
 

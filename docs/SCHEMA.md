@@ -1,9 +1,9 @@
 # Schema reference
 
-Every chDB cohort vcfclick creates uses the same four tables plus one
-materialised view. This page lists every column. The authoritative
-sources are the SQL files in [`schema/`](../schema/); this doc just
-flattens them for SQL writers.
+Every vcfclick cohort database uses the same four logical tables. This
+page lists every column and the query conventions users need to keep in
+mind. The authoritative sources are the SQL files in
+[`schema/`](../schema/); this doc flattens them for SQL writers.
 
   | Table | Cardinality | Sort key |
   |---|---|---|
@@ -12,10 +12,13 @@ flattens them for SQL writers.
   | [`samples`](#samples) | one row per `(ingest_id, sample_id)` | `(ingest_id, sample_id)` |
   | [`ingestions`](#ingestions) | one row per VCF upload | `ingest_id` |
 
-All four tables use `ReplacingMergeTree` keyed by `ingested_at`. Re-
-ingesting under the same `ingest_id` is idempotent — chDB dedupes on
-merge. Use `SELECT … FROM <table> FINAL` to force dedup at query time
-if you need an immediately-consistent count.
+On chDB, all four tables use `ReplacingMergeTree` keyed by
+`ingested_at`. Re-ingesting under the same `ingest_id` is idempotent:
+chDB dedupes on merge. Use `SELECT ... FROM <table> FINAL` to force
+dedup at query time if you need an immediately consistent count.
+
+On DuckDB, vcfclick mirrors the same logical schema with DuckDB-native
+tables.
 
 ---
 
@@ -43,6 +46,137 @@ if you need an immediately-consistent count.
    check whether `gq`/`dp` are populated at all on that cohort. The
    MCP `SCHEMA_DESCRIPTION` instructs the LLM about this trap; SQL-by-
    hand users hit it on their own.
+
+---
+
+## Common query patterns
+
+### Count rows
+
+```sql
+SELECT count() AS n_variants
+FROM variants;
+```
+
+DuckDB also accepts `count(*)`; vcfclick examples use `count()` because
+that is the ClickHouse/chDB idiom.
+
+### Scan a region
+
+```sql
+SELECT chrom, pos, ref, alt, info_AF, filter
+FROM variants
+WHERE chrom = 'chr17'
+  AND pos BETWEEN 43044295 AND 43170245
+ORDER BY pos
+LIMIT 50;
+```
+
+### Rank common variants without touching genotypes
+
+For broad ranking, prefer `variants.info_AF` when the VCF carries it:
+
+```sql
+SELECT chrom, pos, ref, alt, info_AF
+FROM variants
+WHERE chrom = 'chr17'
+  AND pos BETWEEN 43044295 AND 43170245
+  AND info_AF IS NOT NULL
+ORDER BY info_AF DESC
+LIMIT 20;
+```
+
+This is much cheaper than aggregating the full sparse `genotypes` table
+and is the right pattern for browser demos and small-memory machines.
+
+### Count non-reference samples at a locus
+
+```sql
+SELECT count(DISTINCT (ingest_id, sample_id)) AS n_non_ref_samples
+FROM genotypes
+WHERE chrom = 'chr17'
+  AND pos = 43044295
+  AND ref = 'G'
+  AND alt = 'A';
+```
+
+Do not add `AND gt != 0`; `genotypes` already stores only non-reference
+calls.
+
+### Count homozygous-reference samples
+
+```sql
+WITH total AS (
+    SELECT count(DISTINCT (ingest_id, sample_id)) AS n
+    FROM samples
+    WHERE cohort = 'study1'
+),
+non_ref AS (
+    SELECT count(DISTINCT (g.ingest_id, g.sample_id)) AS n
+    FROM genotypes g
+    INNER JOIN samples s
+        ON s.ingest_id = g.ingest_id
+       AND s.sample_id = g.sample_id
+    WHERE s.cohort = 'study1'
+      AND g.chrom = 'chr17'
+      AND g.pos = 43044295
+      AND g.ref = 'G'
+      AND g.alt = 'A'
+)
+SELECT total.n - non_ref.n AS n_hom_ref_samples
+FROM total
+CROSS JOIN non_ref;
+```
+
+Do not use `LEFT JOIN ... WHERE g.gt IS NULL` to find hom-ref samples.
+The absence of a genotype row is the encoding.
+
+### Compute cohort AF from sparse genotypes
+
+Compute the denominator from `samples`, not from the join to
+`genotypes`:
+
+```sql
+WITH cohort_size AS (
+    SELECT 2 * count(DISTINCT (ingest_id, sample_id)) AS an
+    FROM samples
+    WHERE cohort = 'study1'
+)
+SELECT
+    g.chrom,
+    g.pos,
+    g.ref,
+    g.alt,
+    sum(g.gt) AS ac,
+    cs.an AS an,
+    sum(g.gt) / cs.an AS af
+FROM genotypes g
+INNER JOIN samples s
+    ON s.ingest_id = g.ingest_id
+   AND s.sample_id = g.sample_id
+CROSS JOIN cohort_size cs
+WHERE s.cohort = 'study1'
+  AND g.chrom = 'chr17'
+  AND g.pos = 43044295
+GROUP BY g.chrom, g.pos, g.ref, g.alt, cs.an;
+```
+
+Counting samples through the genotype join only sees non-reference
+samples and inflates AF.
+
+### Check whether GQ/DP filters are usable
+
+```sql
+SELECT
+    count() AS rows,
+    sum(CASE WHEN gq IS NOT NULL THEN 1 ELSE 0 END) AS with_gq,
+    sum(CASE WHEN dp IS NOT NULL THEN 1 ELSE 0 END) AS with_dp
+FROM genotypes;
+```
+
+If `with_gq` or `with_dp` is zero, a filter such as `gq >= 20 AND
+dp >= 10` will silently remove rows because comparisons against `NULL`
+do not pass.
 
 ---
 

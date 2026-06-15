@@ -17,3 +17,9 @@ against the schema in
 [`vcfclick_mcp/server.py`](../vcfclick_mcp/server.py); a different
 client will phrase things slightly differently but should arrive at
 the same SQL.
+
+For setup and reference material, see:
+
+- [Getting started](../docs/GETTING_STARTED.md)
+- [MCP and annotations](../docs/MCP.md)
+- [Schema reference](../docs/SCHEMA.md)
