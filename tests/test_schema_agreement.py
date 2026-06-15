@@ -69,6 +69,7 @@ def _columns_from_sql(sql_path: Path) -> list[str]:
     [
         ("variants", "01_variants.sql", "VARIANTS_ARROW_SCHEMA"),
         ("genotypes", "02_genotypes.sql", "GENOTYPES_ARROW_SCHEMA"),
+        ("pedigree", "04_pedigree.sql", "PEDIGREE_ARROW_SCHEMA"),
     ],
 )
 def test_arrow_and_sql_columns_agree_in_order(table, sql_file, arrow_attr):

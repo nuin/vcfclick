@@ -1,0 +1,4 @@
+# family individual paternal maternal sex phenotype
+FAM1	CHILD	FATHER	MOTHER	1	2
+FAM1	FATHER	0	0	1	1
+FAM1	MOTHER	0	0	2	1

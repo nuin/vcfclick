@@ -25,7 +25,7 @@ from storage import get_session
 log = logging.getLogger(__name__)
 
 
-TABLES = ["variants", "genotypes", "samples", "ingestions"]
+TABLES = ["variants", "genotypes", "samples", "ingestions", "pedigree"]
 
 
 def export_table(table: str, out_path: Path, where: str | None = None) -> None:

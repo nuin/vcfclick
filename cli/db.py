@@ -16,6 +16,7 @@ for _module in (
     "cli.db_diff",
     "cli.db_batch",
     "cli.db_stats",
+    "cli.db_trio",
 ):
     importlib.import_module(_module)
 

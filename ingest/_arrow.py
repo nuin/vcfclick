@@ -142,11 +142,26 @@ INGESTIONS_ARROW_SCHEMA = pa.schema(
     ]
 )
 
+# Pedigree relationships (schema/04_pedigree.sql). Loaded via `db ped`,
+# not VCF ingest. father_id/mother_id are sample_ids or '0' (founder).
+PEDIGREE_ARROW_SCHEMA = pa.schema(
+    [
+        _f("ingest_id", pa.string(), False),
+        _f("sample_id", pa.string(), False),
+        _f("family_id", pa.string(), False),
+        _f("father_id", pa.string(), False),
+        _f("mother_id", pa.string(), False),
+        _f("sex", pa.string()),
+        _f("affected", pa.string()),
+    ]
+)
+
 
 VARIANTS_COLUMNS = column_names(VARIANTS_ARROW_SCHEMA)
 GENOTYPES_COLUMNS = column_names(GENOTYPES_ARROW_SCHEMA)
 SAMPLES_COLUMNS = column_names(SAMPLES_ARROW_SCHEMA)
 INGESTIONS_COLUMNS = column_names(INGESTIONS_ARROW_SCHEMA)
+PEDIGREE_COLUMNS = column_names(PEDIGREE_ARROW_SCHEMA)
 
 
 # Used by every INSERT site to render an explicit (col1, col2, ...)
@@ -169,6 +184,7 @@ TABLE_COLUMNS: dict[str, list[str]] = {
     "genotypes": GENOTYPES_COLUMNS,
     "samples": SAMPLES_COLUMNS,
     "ingestions": INGESTIONS_COLUMNS,
+    "pedigree": PEDIGREE_COLUMNS,
 }
 
 

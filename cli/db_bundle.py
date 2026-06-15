@@ -12,7 +12,7 @@ import pyarrow.parquet as pq
 
 from cli.main import _set_db, db
 
-BUNDLE_TABLES = ("variants", "genotypes", "samples", "ingestions")
+BUNDLE_TABLES = ("variants", "genotypes", "samples", "ingestions", "pedigree")
 
 
 @db.command(name="push")

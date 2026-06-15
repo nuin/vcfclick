@@ -79,6 +79,7 @@ def db_info(name: str) -> None:
     click.echo(f"genotypes: {scalar(f'SELECT {c} FROM genotypes')}")
     click.echo(f"samples:   {scalar(f'SELECT {c} FROM samples')}")
     click.echo(f"ingestions:{scalar(f'SELECT {c} FROM ingestions')}")
+    click.echo(f"pedigree:  {scalar(f'SELECT {c} FROM pedigree')}")
 
 
 @db.command(name="ingest")
