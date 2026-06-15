@@ -78,6 +78,7 @@ for _module in (
     "cli.db",
     "cli.annotations",
     "cli.discover",
+    "cli.merge",
     "cli.tui",
 ):
     importlib.import_module(_module)
