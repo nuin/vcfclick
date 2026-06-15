@@ -64,3 +64,6 @@ bench/.tiledbvcf-env/
 
 # Adoption snapshot logs from scripts/adoption.sh — local-only history
 logs/
+
+# Private product/strategy working doc — never push
+workspace-*.md

@@ -61,21 +61,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install bgzip + tabix (htslib utilities)
+      - name: Install bgzip + tabix + bcftools (htslib utilities)
         # cyvcf2 ships its own htslib, but smoke tests + the routing
         # fixture build use the `bgzip` / `tabix` binaries via
-        # subprocess. Linux: apt's `tabix` package brings bgzip with
-        # it. macOS-14 runners do NOT preinstall htslib — install via
-        # brew.
+        # subprocess, and the merge tests shell out to `bcftools merge`.
+        # Linux: apt's `tabix` package brings bgzip; bcftools is its own
+        # package. macOS-14 runners do NOT preinstall these — use brew.
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends tabix
+            sudo apt-get install -y --no-install-recommends tabix bcftools
           elif [ "$RUNNER_OS" = "macOS" ]; then
-            brew install htslib
+            brew install htslib bcftools
           fi
           which bgzip
           which tabix
+          which bcftools
 
       - name: Install uv
         uses: astral-sh/setup-uv@v6
@@ -116,13 +117,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install bgzip + tabix (htslib utilities)
+      - name: Install bgzip + tabix + bcftools (htslib utilities)
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             sudo apt-get update -qq
-            sudo apt-get install -y --no-install-recommends tabix
+            sudo apt-get install -y --no-install-recommends tabix bcftools
           elif [ "$RUNNER_OS" = "macOS" ]; then
-            brew install htslib
+            brew install htslib bcftools
           fi
 
       - name: Install uv
