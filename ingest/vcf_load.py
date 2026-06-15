@@ -84,6 +84,7 @@ def ingest(
     vcf_path: str,
     cohort: str,
     ingest_id: str | None = None,
+    keep_reference: bool = False,
 ) -> str:
     """Load a normalised VCF into the embedded chDB store.
 
@@ -118,7 +119,7 @@ def ingest(
     # ingest` calls can't race on the staging dir, rollback, or
     # bulk-import. See storage.db.ingest_id_lock docstring.
     with ingest_id_lock(ingest_id):
-        return _ingest_locked(vcf_path, cohort, ingest_id)
+        return _ingest_locked(vcf_path, cohort, ingest_id, keep_reference)
 
 
 def _prepare_vcf(vcf_path: str):
@@ -179,6 +180,7 @@ def _stage_vcf(
     ingest_id: str,
     staging_path: Path,
     started: float,
+    keep_reference: bool = False,
 ) -> int:
     variants_batch: list[list] = []
     genotypes_batch: list[list] = []
@@ -193,7 +195,9 @@ def _stage_vcf(
             )
         variants_batch.append(build_variant_row(variant, ingest_id))
         genotypes_batch.extend(
-            build_genotype_rows(variant, samples, extra_format_fields, ingest_id)
+            build_genotype_rows(
+                variant, samples, extra_format_fields, ingest_id, keep_reference
+            )
         )
         n_variants += 1
 
@@ -266,7 +270,9 @@ def _handle_ingest_failure(commit_started: bool, ingest_id: str) -> None:
         )
 
 
-def _ingest_locked(vcf_path: str, cohort: str, ingest_id: str) -> str:
+def _ingest_locked(
+    vcf_path: str, cohort: str, ingest_id: str, keep_reference: bool = False
+) -> str:
     """Real ingest body — already holds the per-ingest_id file lock."""
     vcf, classification, samples = _prepare_vcf(vcf_path)
     _log_ingest_plan(vcf_path, cohort, ingest_id, samples, classification)
@@ -289,6 +295,7 @@ def _ingest_locked(vcf_path: str, cohort: str, ingest_id: str) -> str:
                 ingest_id,
                 staging_path,
                 started,
+                keep_reference,
             )
             commit_started = True
             _commit_staged_ingest(

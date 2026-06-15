@@ -124,12 +124,27 @@ def build_variant_row(variant, ingest_id: str) -> list:
     return [row[c] for c in VARIANTS_COLUMNS]
 
 
+# cyvcf2 gt_types → stored `gt`. Default (sparse) keeps only
+# non-reference calls: 1=HET→1, 3=HOM_ALT→2. HOM_REF (0) and the
+# missing/no-call UNKNOWN (2) are dropped (absence is the signal).
 GT_ENCODE = {1: 1, 3: 2}
+
+# keep_reference also stores confident HOM_REF as gt=0, so trio
+# analysis can prove a parent is genuinely 0/0 at a site (vs simply
+# absent = no-call). The missing/no-call UNKNOWN (gt_type 2) is STILL
+# dropped — a ./. asserts nothing, so it must stay distinguishable
+# from a stored 0/0 by its absence.
+GT_ENCODE_KEEP_REF = {0: 0, 1: 1, 3: 2}
 
 
 def build_genotype_rows(
-    variant, samples: list[str], extra_format_fields: list[str], ingest_id: str
+    variant,
+    samples: list[str],
+    extra_format_fields: list[str],
+    ingest_id: str,
+    keep_reference: bool = False,
 ) -> list[list]:
+    encode = GT_ENCODE_KEEP_REF if keep_reference else GT_ENCODE
     gt_types = variant.gt_types
     gt_phases = variant.gt_phases
     scalar_arrs = {f: _format_arr(variant, f) for f in FORMAT_SCALAR}
@@ -144,7 +159,7 @@ def build_genotype_rows(
 
     rows = []
     for i, sample_id in enumerate(samples):
-        encoded = GT_ENCODE.get(int(gt_types[i]))
+        encoded = encode.get(int(gt_types[i]))
         if encoded is None:
             continue
 

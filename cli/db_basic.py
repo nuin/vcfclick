@@ -108,6 +108,15 @@ def db_info(name: str) -> None:
     is_flag=True,
     help="Use the single-process serial ingester instead of parallel.",
 )
+@click.option(
+    "--keep-reference",
+    is_flag=True,
+    help="Also store confident hom-reference (0/0) genotype calls, not just "
+    "non-reference. Needed for defensible trio de-novo analysis (a parent "
+    "must be provably 0/0, not merely absent). Stores more rows — use for "
+    "trios/families from a joint-called VCF, not large cohorts. No-calls "
+    "(./.) are still dropped.",
+)
 def db_ingest(
     name: str,
     vcf_path: str,
@@ -115,6 +124,7 @@ def db_ingest(
     ingest_id: str | None,
     workers: int,
     serial: bool,
+    keep_reference: bool,
 ) -> None:
     """Ingest a (normalised) VCF into a named database."""
     from storage import db_path
@@ -129,7 +139,7 @@ def db_ingest(
     if serial:
         from ingest.vcf_load import ingest as ingest_serial
 
-        ingest_serial(vcf_path, cohort, ingest_id)
+        ingest_serial(vcf_path, cohort, ingest_id, keep_reference=keep_reference)
     else:
         from ingest.parallel import ingest_parallel
 
@@ -138,6 +148,7 @@ def db_ingest(
             cohort,
             ingest_id=ingest_id,
             workers=workers,
+            keep_reference=keep_reference,
         )
 
 

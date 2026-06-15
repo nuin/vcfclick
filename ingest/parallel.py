@@ -83,7 +83,15 @@ def _worker(args: tuple) -> tuple[str, int, int]:
     Returns (region, n_variants, n_batches) — n_batches is informational,
     used to log per-worker progress in the main process log.
     """
-    region, vcf_path, ingest_id, staging_dir, extra_format_fields, batch_size = args
+    (
+        region,
+        vcf_path,
+        ingest_id,
+        staging_dir,
+        extra_format_fields,
+        batch_size,
+        keep_reference,
+    ) = args
     vcf = VCF(vcf_path)
     samples = list(vcf.samples)
 
@@ -115,7 +123,9 @@ def _worker(args: tuple) -> tuple[str, int, int]:
             )
         variants_batch.append(build_variant_row(variant, ingest_id))
         genotypes_batch.extend(
-            build_genotype_rows(variant, samples, extra_format_fields, ingest_id)
+            build_genotype_rows(
+                variant, samples, extra_format_fields, ingest_id, keep_reference
+            )
         )
         total_variants += 1
         if len(variants_batch) >= batch_size:
@@ -141,6 +151,7 @@ def ingest_parallel(
     staging_dir: str | None = None,
     bucket_size: int = DEFAULT_BUCKET_SIZE,
     batch_size: int = BATCH_SIZE,
+    keep_reference: bool = False,
 ) -> str:
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
@@ -160,6 +171,7 @@ def ingest_parallel(
             staging_dir=staging_dir,
             bucket_size=bucket_size,
             batch_size=batch_size,
+            keep_reference=keep_reference,
         )
 
 
@@ -173,6 +185,7 @@ def _ingest_parallel_locked(
     staging_dir: str | None,
     bucket_size: int,
     batch_size: int,
+    keep_reference: bool = False,
 ) -> str:
     """Real parallel-ingest body — already holds the per-ingest_id
     file lock. See ingest_parallel() for the public API."""
@@ -256,7 +269,15 @@ def _ingest_parallel_locked(
         # under this ingest_id stays intact. Matches the stage-then-
         # commit contract documented in ingest.vcf_load.ingest.
         args_list = [
-            (r, vcf_path, ingest_id, str(staging), extra_format_fields, batch_size)
+            (
+                r,
+                vcf_path,
+                ingest_id,
+                str(staging),
+                extra_format_fields,
+                batch_size,
+                keep_reference,
+            )
             for r in regions
         ]
 
