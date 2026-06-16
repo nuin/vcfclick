@@ -6,6 +6,18 @@ No. vcfclick is a research-preview tool for exploratory cohort queries,
 local demos, and bioinformatics workflows. It is not a clinical
 reporting system.
 
+## How Do I Install It? Is There A Homebrew Or Conda Package?
+
+Install with `uv tool install vcfclick` or `pipx install vcfclick`;
+both pull the native wheels (`cyvcf2`, `chdb`, `duckdb`, `pyarrow`)
+automatically and work the same on macOS and Linux.
+
+There is no Homebrew or conda-forge package. `chdb` (the embedded
+ClickHouse engine) ships only as a binary wheel with no source build,
+so a from-source Homebrew formula isn't possible, and homebrew-core
+does not accept binary-only dependency stacks. `uv` / `pipx` are the
+supported paths. See [Install](../README.md#install).
+
 ## What Kind Of VCF Should I Ingest?
 
 Use normalized, bgzipped VCFs. Multi-allelic sites must be decomposed:

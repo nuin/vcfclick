@@ -37,17 +37,12 @@ The installable CLI is different: it creates local databases under your
 
 ## Install
 
-Recommended for CLI use:
+vcfclick is a Python CLI installed as a standalone tool — no
+project, virtualenv, or `pip` juggling. Use [`uv`](https://docs.astral.sh/uv/)
+(recommended) or [`pipx`](https://pipx.pypa.io/):
 
 ```bash
-uv tool install vcfclick
-vcfclick --help
-```
-
-Alternative:
-
-```bash
-pipx install vcfclick
+uv tool install vcfclick      # or: pipx install vcfclick
 vcfclick --help
 ```
 
@@ -56,6 +51,13 @@ With the optional terminal UI:
 ```bash
 uv tool install "vcfclick[tui]"
 vcfclick tui
+```
+
+Upgrade or remove later:
+
+```bash
+uv tool upgrade vcfclick      # pipx: pipx upgrade vcfclick
+uv tool uninstall vcfclick    # pipx: pipx uninstall vcfclick
 ```
 
 From a source checkout:
@@ -67,10 +69,18 @@ uv sync --extra tui --group dev
 uv run vcfclick --help
 ```
 
+### Platform notes
+
 vcfclick depends on native Python wheels (`cyvcf2`, `chdb`, `duckdb`,
-`pyarrow`). Wheels are available for common macOS arm64 and Linux x86_64
-Python versions. If your platform builds `cyvcf2` from source, install
-`htslib` development headers first.
+`pyarrow`), which `uv` / `pipx` resolve automatically. Prebuilt wheels
+cover common macOS arm64 and Linux x86_64 Python versions; if your
+platform builds `cyvcf2` from source, install `htslib` development
+headers first.
+
+There is no Homebrew or conda-forge package: `chdb` (the embedded
+ClickHouse engine) ships as a binary wheel with no source build, so a
+from-source formula isn't possible. `uv tool install` / `pipx` are the
+supported install paths and work the same on macOS and Linux.
 
 ## 30-Second CLI Demo
 
