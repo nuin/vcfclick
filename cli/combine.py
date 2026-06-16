@@ -45,8 +45,7 @@ from cli.main import cli
     type=int,
     default=1,
     show_default=True,
-    help="Keep only sites present in at least this many inputs "
-    "(consensus filter).",
+    help="Keep only sites present in at least this many inputs (consensus filter).",
 )
 def combine(
     vcfs: tuple[str, ...],

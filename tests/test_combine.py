@@ -152,10 +152,36 @@ def test_rejects_multiallelic_input(tmp_path):
         combine_vcfs([A, multi], out)
 
 
-def test_gzip_output(tmp_path):
-    """A .gz output path is written gzip-compressed and reads back."""
+def test_contig_order_follows_header_not_first_seen(tmp_path):
+    """The higher-priority input (contig_x) has only a chr2 record, but
+    its header declares chr1 before chr2. Output must sort chr1 before
+    chr2 (reference-dictionary order), not chr2-first because that's the
+    first variant seen."""
+    cx = FIXTURES / "contig_x.vcf"
+    cy = FIXTURES / "contig_y.vcf"
+    out = tmp_path / "combined.vcf"
+    combine_vcfs([cx, cy], out)
+
+    v = VCF(str(out))
+    order = [(rec.CHROM, rec.POS) for rec in v]
+    assert order == [("chr1", 50), ("chr2", 50)]
+
+
+@pytest.mark.skipif(
+    shutil.which("bgzip") is None or shutil.which("tabix") is None,
+    reason="htslib bgzip/tabix not installed",
+)
+def test_gzip_output_is_bgzf_and_indexed(tmp_path):
+    """A .gz output is BGZF (not plain gzip) and tabix-indexed, so it is
+    usable by region-parallel ingest like every other vcfclick VCF."""
     out = tmp_path / "combined.vcf.gz"
     combine_vcfs([A, B], out)
+
+    # BGZF magic: gzip header with the FLG.FEXTRA bit set (0x04).
+    with open(out, "rb") as fh:
+        assert fh.read(4) == b"\x1f\x8b\x08\x04"
+    assert out.with_suffix(out.suffix + ".tbi").exists()
+
     _, sites = _read(out)
     assert sorted(sites) == [100, 200, 300, 400]
 

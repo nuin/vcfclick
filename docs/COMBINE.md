@@ -39,6 +39,12 @@ Inputs must be on the same reference and **decomposed** (one ALT per
 record) — the same precondition as ingest. Decompose first with
 `bcftools norm -m -` if needed.
 
+A plain `.vcf` output is fully native (no external tools). A `.vcf.gz`
+output is BGZF-compressed and tabix-indexed via htslib's `bgzip` /
+`tabix`, so it is region-queryable and usable by parallel ingest like
+every other vcfclick VCF — install htslib (`brew install htslib` /
+`conda install -c bioconda htslib`) or write a plain `.vcf`.
+
 ## What it does
 
 **Union of sites.** Every `(chrom, pos, ref, alt)` across all inputs
