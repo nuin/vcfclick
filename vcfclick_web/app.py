@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -39,18 +40,24 @@ _TABLES = [
     ("pedigree", PEDIGREE_ARROW_SCHEMA),
 ]
 
-# Reject anything that mutates — a SELECT explorer, not a SQL shell.
-_WRITE_KEYWORDS = (
-    "insert",
-    "update",
-    "delete",
-    "drop",
-    "alter",
-    "create",
-    "truncate",
-    "attach",
-    "detach",
-    "rename",
+# Read-only guardrail. The server is localhost-only and the caller owns
+# the database, but a malicious page (CSRF / DNS-rebinding) can POST to a
+# local server, so writes must be genuinely blocked — not just for queries
+# that *start* with a write verb. We allowlist read statements, forbid
+# multiple statements, and reject any write construct anywhere (so a
+# CTE-prefixed DML or a SELECT ... INTO OUTFILE / COPY ... TO cannot slip
+# through). Comments are stripped first so they can neither hide a verb nor
+# false-trip the blocklist.
+_ALLOWED_START = {"select", "with", "show", "describe", "desc", "explain"}
+_COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
+# Verbs forbidden ANYWHERE (catches CTE-prefixed DML like
+# `WITH c AS (...) DELETE ...` and file writes). Deliberately excludes
+# truncate/replace/merge — those are also SQL *functions*; as statements
+# they only appear leading, where the allowlist already rejects them.
+_BLOCK_RE = re.compile(
+    r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|grant|"
+    r"revoke|rename|into\s+outfile|into\s+dumpfile)\b",
+    re.IGNORECASE,
 )
 
 
@@ -71,9 +78,16 @@ def _run_sql(sql: str) -> dict:
     }
 
 
-def _is_write(sql: str) -> bool:
-    head = sql.lstrip().lower()
-    return any(head.startswith(kw) for kw in _WRITE_KEYWORDS)
+def _is_read_only(sql: str) -> bool:
+    """True only for a single read statement with no write construct."""
+    bare = _COMMENT_RE.sub(" ", sql).strip()
+    body = bare.rstrip(";").strip()
+    if not body or ";" in body:  # empty, or more than one statement
+        return False
+    first = re.match(r"[a-zA-Z]+", body)
+    if not first or first.group(0).lower() not in _ALLOWED_START:
+        return False
+    return _BLOCK_RE.search(body) is None
 
 
 def _scalar_list(sql: str) -> list[str]:
@@ -144,9 +158,10 @@ def query(body: QueryBody) -> dict:
     sql = body.sql.strip()
     if not sql:
         return {"error": "empty query"}
-    if _is_write(sql):
+    if not _is_read_only(sql):
         return {
-            "error": "the web UI is read-only — only SELECT/SHOW/DESCRIBE are allowed"
+            "error": "the web UI is read-only — only a single "
+            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is allowed"
         }
     try:
         return _run_sql(sql)
@@ -168,10 +183,10 @@ def nl(body: NlBody) -> dict:
             )
         except LLMError as e:
             return {"error": str(e)}
-        if _is_write(sql):
+        if not _is_read_only(sql):
             return {
                 "sql": sql,
-                "error": "the model produced a write statement; not running it",
+                "error": "the model produced a non-read-only statement; not running it",
             }
         result = _run_sql(sql)
         return result

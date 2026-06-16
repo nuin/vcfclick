@@ -22,7 +22,7 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from vcfclick_web.app import app  # noqa: E402
+from vcfclick_web.app import _is_read_only, app  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
@@ -58,6 +58,47 @@ def test_query_rejects_writes():
     r = client.post("/api/query", json={"sql": "DROP TABLE variants"})
     assert r.status_code == 200
     assert "read-only" in r.json()["error"].lower()
+
+
+# The write guard must not be fooled by comments, multiple statements,
+# CTE-prefixed DML, or file-write constructs — the bypasses a localhost
+# server has to resist (CSRF / DNS-rebinding can POST to it).
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "DROP TABLE variants",
+        "/*x*/ DROP TABLE variants",
+        "-- c\nDROP TABLE variants",
+        "SELECT 1; DROP TABLE variants",
+        "WITH c AS (SELECT 1) DELETE FROM variants",
+        "SELECT 42 INTO OUTFILE '/tmp/x'",
+        "COPY (SELECT 42) TO '/tmp/x'",
+        "INSERT INTO variants VALUES (1)",
+        "   update samples SET x = 1",
+        "ATTACH 'evil.db'",
+    ],
+)
+def test_guard_blocks_writes_and_bypasses(sql):
+    assert _is_read_only(sql) is False
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM variants LIMIT 5",
+        "select chrom, pos from variants",
+        "WITH c AS (SELECT 1 AS n) SELECT n FROM c",
+        "SHOW TABLES",
+        "DESCRIBE variants",
+        "EXPLAIN SELECT 1",
+        "SELECT count(*) FROM genotypes  -- trailing comment\n",
+        # truncate()/replace() are functions, not statements — must pass
+        "SELECT replace(chrom, 'chr', '') FROM variants",
+        "SELECT truncate(qual) FROM variants",
+    ],
+)
+def test_guard_allows_reads(sql):
+    assert _is_read_only(sql) is True
 
 
 def test_combine_endpoint_prioritizes_and_annotates_set():
