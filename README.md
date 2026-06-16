@@ -11,6 +11,10 @@ labs and bioinformatics teams.
 
 - Ingest joint VCFs or batches of per-sample VCFs.
 - Query variants, genotypes, samples, and ingestions with SQL.
+- Run trio / family analysis (de-novo, recessive, dominant) over a
+  loaded pedigree.
+- Combine multiple callers' call sets with `set=` provenance — the
+  GATK3 `CombineVariants` that GATK4 removed.
 - Explore cohorts in an optional terminal UI.
 - Share databases as portable Parquet bundles.
 - Use MCP to let an LLM write visible, auditable SQL.
@@ -199,7 +203,10 @@ the MCP tools.
 
 - Multi-allelic sites must be decomposed before ingest:
   `bcftools norm -m - input.vcf.gz`.
-- vcfclick does not currently auto-load pedigree/sex metadata.
+- Pedigrees are loaded explicitly with `vcfclick db ped` (standard
+  PED/FAM); vcfclick does not infer relationships from the VCF.
+- Trio analysis is candidate FILTERING, not variant calling; defensible
+  de-novo needs `db ingest --keep-reference`. See [Trio](docs/TRIO.md).
 - DuckDB backend support is useful but not identical to chDB support;
   some operations may be chDB-first.
 - The natural-language layer is meant to produce visible SQL, not to

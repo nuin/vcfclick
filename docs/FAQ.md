@@ -22,6 +22,25 @@ vcfclick db create study
 vcfclick db ingest study input.norm.vcf.gz --cohort cases
 ```
 
+## What's The Difference Between `merge` And `combine`?
+
+They merge different things. `vcfclick merge` joins VCFs with **disjoint
+samples** into one multi-sample VCF (it wraps `bcftools merge`) — use it
+to assemble a trio or cohort from separate per-sample files. `vcfclick
+combine` unions **call sets that may share samples** — e.g. the same
+cohort called by two callers — annotating each record with `set=`
+provenance and resolving a shared sample by input priority. `combine` is
+a reimplementation of GATK3's `CombineVariants` (removed in GATK4). See
+[Combining call sets](COMBINE.md).
+
+## Can vcfclick Do Trio / De-Novo Analysis?
+
+Yes — load a pedigree with `vcfclick db ped` and run `vcfclick db trio`
+for de-novo, recessive, and dominant candidates. It is candidate
+*filtering*, not variant calling, and defensible de-novo needs
+`vcfclick db ingest --keep-reference` so a parent's hom-reference is
+stored rather than inferred from absence. See [Trio](TRIO.md).
+
 ## Why Are There Fewer Genotype Rows Than Samples Times Variants?
 
 `genotypes` is sparse. vcfclick stores non-reference calls only. A

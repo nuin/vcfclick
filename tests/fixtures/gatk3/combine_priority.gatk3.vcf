@@ -1,0 +1,15 @@
+##fileformat=VCFv4.2
+##vcfclick_golden=GATK 3.8-1-0-gf15c1c3ef CombineVariants
+##vcfclick_golden_cmd=java -jar GenomeAnalysisTK.jar -T CombineVariants -R ref.fasta -V:first first.vcf.gz -V:second second.vcf.gz -genotypeMergeOptions PRIORITIZE -priority first,second
+##FILTER=<ID=PASS,Description="passed">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes, for each ALT allele, in the same order as listed">
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency, for each ALT allele, in the same order as listed">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">
+##INFO=<ID=set,Number=1,Type=String,Description="Source VCF for the merged record in CombineVariants">
+##contig=<ID=chr1,length=500>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	S1	S2	S3
+chr1	101	.	A	T	.	.	AC=2;AF=0.500;AN=4;set=first	GT	0/1	0/1	./.
+chr1	202	.	C	A	.	.	AC=4;AF=0.667;AN=6;set=Intersection	GT	1/1	0/1	0/1
+chr1	303	.	G	C	.	.	AC=3;AF=0.500;AN=6;set=Intersection	GT	0/1	1/1	0/0
+chr1	404	.	T	G	.	.	AC=2;AF=0.500;AN=4;set=second	GT	./.	0/0	1/1

@@ -82,3 +82,44 @@ least N inputs, for "agreed by ≥N callers" workflows.
 - The site union is held in memory, which suits the typical "a few call
   sets" use; whole-genome many-caller merges of very large cohorts are
   not the target.
+
+## Comparison with GATK3 CombineVariants
+
+`combine` is a reimplementation of GATK3's `CombineVariants`. The two
+produce the same site union, the same `set=` provenance, and the same
+PRIORITIZE genotype resolution. The equivalent invocations:
+
+```bash
+# GATK3 (removed in GATK4) — needs Java 8 and a reference
+java -jar GenomeAnalysisTK.jar -T CombineVariants -R ref.fasta \
+    -V:first first.vcf.gz -V:second second.vcf.gz \
+    -o combined.vcf \
+    -genotypeMergeOptions PRIORITIZE -priority first,second
+
+# vcfclick — no Java, no reference; input order is the priority list
+vcfclick combine first.vcf second.vcf -o combined.vcf \
+    --name first --name second
+```
+
+On two call sets that share sample `S2` (where `S2` is `0/1` in `first`
+and `1/1` in `second` at chr1:202), both tools produce the same core —
+`set=` and genotypes, with PRIORITIZE keeping `first`'s call for `S2`:
+
+| pos | `set=` | S1 | S2 | S3 |
+|---|---|---|---|---|
+| 101 | `first` | 0/1 | 0/1 | ./. |
+| 202 | `Intersection` | 1/1 | **0/1** | 0/1 |
+| 303 | `Intersection` | 0/1 | 1/1 | 0/0 |
+| 404 | `second` | ./. | 0/0 | 1/1 |
+
+The `-V:name` binding GATK3 uses for the `set=` label is `--name` in
+vcfclick; `-priority a,b` is just the input order. Differences are
+representational, not behavioural: GATK3 also recomputes `AC/AF/AN`
+INFO, whereas vcfclick emits `set=` plus the `GQ/DP/AD` passthrough.
+
+This equivalence is pinned by a test against **real** GATK 3.8-1 output:
+`tests/test_combine_gatk3.py` runs `combine` on the checked-in call sets
+and asserts it reproduces the frozen GATK3 golden file
+(`tests/fixtures/gatk3/combine_priority.gatk3.vcf`, whose header records
+the exact generating command). GATK3 needs Java 8 and is not run in CI;
+the golden output is captured once and asserted against.

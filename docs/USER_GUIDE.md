@@ -99,6 +99,43 @@ Manifest columns:
 | `ingest_id` | no | upload identifier override |
 | `cohort` | no | cohort override |
 
+## Combine Call Sets
+
+To merge several VCFs *before* ingest, vcfclick has two tools that solve
+different problems:
+
+```bash
+# Disjoint samples → one joint multi-sample VCF (wraps bcftools merge).
+# Use for assembling a trio/cohort from separate per-sample VCFs.
+vcfclick merge proband.vcf.gz father.vcf.gz mother.vcf.gz -o trio.vcf.gz
+
+# Call sets that may SHARE samples (two callers, or pre/post a filter) →
+# union with set= provenance and priority resolution. The GATK3
+# CombineVariants that GATK4 removed.
+vcfclick combine gatk.vcf.gz deepvariant.vcf.gz -o consensus.vcf.gz \
+    --min-callsets 2
+```
+
+`combine` annotates each record with `set=` (which inputs it came from,
+`Intersection` when all), resolves a shared sample by input priority,
+and can keep only consensus sites with `--min-callsets`. See
+[Combining call sets](COMBINE.md), including the GATK3 equivalence.
+
+## Trio / Family Analysis
+
+With a pedigree loaded, vcfclick reports candidate variants under
+Mendelian inheritance models:
+
+```bash
+vcfclick db ingest fam1 trio.vcf.gz --cohort trio --keep-reference
+vcfclick db ped fam1 fam1.ped
+vcfclick db trio fam1 --proband CHILD --category denovo
+```
+
+See [Trio / family analysis](TRIO.md) for the PED format, the de-novo /
+recessive / dominant models, the quality gates, and why de-novo needs
+`--keep-reference`.
+
 ## Query A Database
 
 Run SQL directly:

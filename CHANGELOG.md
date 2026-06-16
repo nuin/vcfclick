@@ -6,6 +6,20 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **GATK3 equivalence test for `combine`.** A frozen golden file of real
+  GATK 3.8-1 `CombineVariants` output
+  (`tests/fixtures/gatk3/combine_priority.gatk3.vcf`) plus a test
+  asserting `vcfclick combine` reproduces its site union, `set=`
+  provenance, and PRIORITIZE genotype resolution. `docs/COMBINE.md` gains
+  a side-by-side GATK3-vs-vcfclick comparison.
+
+### Documentation
+- README feature list and docs now advertise `combine` and trio/family
+  analysis; the User Guide gains "Combine Call Sets" and "Trio / Family
+  Analysis" sections and the FAQ a `merge` vs `combine` entry. Corrected
+  the stale "does not auto-load pedigree" limit (now `db ped`).
+
 ## [0.5.0] — 2026-06-16
 
 ### Added
