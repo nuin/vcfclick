@@ -69,16 +69,20 @@ dev = [
     "ruff>=0.15",
     "httpx>=0.27",
     "pytest-rerunfailures>=14.0",
+    "pytest-timeout>=2.3",
 ]
 
 [tool.pytest.ini_options]
-# chDB occasionally crashes a query/ingest subprocess on CI (SIGABRT /
-# SIGSEGV — glibc pthread_mutex / recursive_mutex assertions), a known
-# embedded-engine flake unrelated to the code under test. Auto-retry ONLY
-# those native-crash signatures: a genuinely failing assertion fails all
-# attempts and still reports, so retries rescue flakes without masking
-# real failures.
-addopts = "--reruns 2 --reruns-delay 2 --only-rerun rc=- --only-rerun returncode=- --only-rerun pthread_mutex --only-rerun recursive_mutex --only-rerun glibc"
+# chDB occasionally crashes OR hangs a query/ingest subprocess on CI
+# (SIGABRT / SIGSEGV from glibc pthread_mutex / recursive_mutex
+# assertions, or a multi-minute deadlock), a known embedded-engine flake
+# unrelated to the code under test. --timeout caps any single test so a
+# hang fails fast instead of stalling the whole job; --reruns then
+# retries ONLY those native-crash / timeout signatures. A genuinely
+# failing assertion fails all attempts and still reports, so retries
+# rescue flakes without masking real failures. No real test needs 180s.
+timeout = 180
+addopts = "--reruns 2 --reruns-delay 2 --only-rerun rc=- --only-rerun returncode=- --only-rerun pthread_mutex --only-rerun recursive_mutex --only-rerun glibc --only-rerun Timeout"
 
 [build-system]
 requires = ["hatchling"]

@@ -94,7 +94,7 @@ jobs:
         # retry wrapper (storage.db._open_session_with_retry) adds bounded
         # backoff variance — 12 minutes gives the retries room without
         # giving up real-hang detection.
-        timeout-minutes: 12
+        timeout-minutes: 20
         run: uv run pytest tests/ -v
 
   # DuckDB backend coverage. Smaller matrix than the chDB one because

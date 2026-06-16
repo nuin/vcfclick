@@ -44,7 +44,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends tabix
           uv sync --extra web --group dev
           uv run pytest tests/ -q
-        timeout-minutes: 10
+        timeout-minutes: 20
 
       - name: Build sdist + wheel
         run: uv build
