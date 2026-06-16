@@ -20,9 +20,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   - `--min-callsets N` keeps only sites seen in at least N inputs
     (consensus calling — the "variants present in all / a fraction of
     the call sets" feature GATK4 specifically lost).
-
-  v1 output carries GT + `set=`; per-sample FORMAT passthrough
-  (GQ/DP/AD from the priority source) is future work.
+  - the `GQ`/`DP`/`AD` FORMAT fields are carried through from the same
+    priority-source record that supplied each genotype, so depth and
+    allele balance describe the call that was kept and a combined VCF
+    feeds straight into the `db trio` quality gates. Output FORMAT lists
+    only the passthrough fields some input actually carries.
 - **Trio / family analysis.** A four-part pipeline for Mendelian
   inheritance-model candidate filtering:
   - `vcfclick merge a.vcf.gz b.vcf.gz … -o joint.vcf.gz` — combine

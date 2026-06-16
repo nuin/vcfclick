@@ -186,6 +186,109 @@ def test_gzip_output_is_bgzf_and_indexed(tmp_path):
     assert sorted(sites) == [100, 200, 300, 400]
 
 
+QA = FIXTURES / "qual_a.vcf"
+QB = FIXTURES / "qual_b.vcf"
+
+
+def _read_qual(path: Path):
+    """Return (samples, {pos: {sample: {'GQ':int|None,'DP':int|None,
+    'AD':(int,int)|None}}}) plus the FORMAT keys present."""
+    v = VCF(str(path))
+    samples = list(v.samples)
+    out, fmt = {}, set()
+    for rec in v:
+        fmt.update(rec.FORMAT)
+        gq, dp, ad = rec.format("GQ"), rec.format("DP"), rec.format("AD")
+        per = {}
+        for i, s in enumerate(samples):
+            per[s] = {
+                "GQ": None if gq is None or gq[i][0] < 0 else int(gq[i][0]),
+                "DP": None if dp is None or dp[i][0] < 0 else int(dp[i][0]),
+                "AD": None
+                if ad is None or ad[i][0] < 0
+                else tuple(int(x) for x in ad[i]),
+            }
+        out[rec.POS] = per
+    return samples, out, fmt
+
+
+def test_format_passthrough_from_priority_source(tmp_path):
+    """At chr1:200 sample S2 is called in both inputs; A (higher priority)
+    wins the genotype, so its GQ/DP/AD must travel too — not B's. Quality
+    must describe the genotype that was actually kept."""
+    out = tmp_path / "combined.vcf"
+    combine_vcfs([QA, QB], out)
+
+    _, q, fmt = _read_qual(out)
+    assert {"GQ", "DP", "AD"} <= fmt
+    assert q[200]["S2"] == {"GQ": 55, "DP": 22, "AD": (13, 9)}  # A's, not B's
+
+
+def test_format_passthrough_falls_through_with_genotype(tmp_path):
+    """At chr1:100 the higher-priority input A has S2 as ./. (no call), so
+    both the genotype and its quality come from B — they stay consistent."""
+    out = tmp_path / "combined.vcf"
+    combine_vcfs([QA, QB], out)
+
+    _, q, _ = _read_qual(out)
+    assert q[100]["S2"] == {"GQ": 45, "DP": 25, "AD": (15, 10)}  # B's
+
+
+def test_absent_sample_format_is_all_missing(tmp_path):
+    """chr1:300 exists only in input A (samples S1, S2). S3 has no record
+    there, so its cell is ./. with '.' for every passthrough field — never
+    a borrowed quality value."""
+    out = tmp_path / "combined.vcf"
+    combine_vcfs([QA, QB], out)
+
+    v = VCF(str(out))
+    s3 = v.samples.index("S3")
+    rec = next(r for r in v if r.POS == 300)
+    assert rec.gt_types[s3] == UNKNOWN  # ./.
+    assert rec.format("GQ")[s3][0] < 0  # missing, not borrowed from A
+    assert rec.format("AD")[s3][0] < 0
+
+
+def test_ad_with_wrong_cardinality_is_dropped(tmp_path):
+    """Output records are biallelic, so AD must be exactly ref,alt. A
+    single-ALT input record whose AD still carries three values (an
+    improperly decomposed call set) must not write AD=5,3,2 — that depth
+    references an allele not in the output. The cell drops AD to '.'
+    rather than emit an uninterpretable Number=R value."""
+    hdr = (
+        "##fileformat=VCFv4.2\n"
+        "##contig=<ID=chr1>\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="AD">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+    )
+    a = tmp_path / "a.vcf"
+    b = tmp_path / "b.vcf"
+    a.write_text(hdr + "chr1\t1\t.\tA\tC\t.\t.\t.\tGT:AD\t0/1:5,3,2\n")
+    b.write_text(
+        hdr.replace("S1", "S2") + "chr1\t1\t.\tA\tC\t.\t.\t.\tGT:AD\t0/1:9,4\n"
+    )
+    out = tmp_path / "out.vcf"
+    combine_vcfs([a, b], out)
+
+    v = VCF(str(out))
+    rec = next(iter(v))
+    s1, s2 = v.samples.index("S1"), v.samples.index("S2")
+    assert rec.format("AD")[s1][0] < 0  # 3-value AD dropped → missing
+    assert tuple(int(x) for x in rec.format("AD")[s2]) == (9, 4)  # valid 2-value kept
+
+
+def test_gt_only_inputs_produce_gt_only_format(tmp_path):
+    """Inputs without GQ/DP/AD yield a GT-only FORMAT — passthrough fields
+    are listed only when some input actually carries them."""
+    out = tmp_path / "combined.vcf"
+    combine_vcfs([A, B], out)  # the GT-only fixtures
+
+    v = VCF(str(out))
+    rec = next(iter(v))
+    assert rec.FORMAT == ["GT"]
+
+
 def test_cli_combine_smoke(tmp_path):
     out = tmp_path / "combined.vcf"
     r = subprocess.run(

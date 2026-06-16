@@ -67,13 +67,18 @@ least N inputs, for "agreed by ≥N callers" workflows.
 ## Output and limits
 
 - Output is a fresh VCF with the union of input samples (priority
-  order), `GT` per sample, and the `set=` INFO field.
-- A sample absent from every input at a site is `./.`, never silently
-  `0/0` — `combine` does not assert hom-reference where no input has a
-  record.
-- v1 carries **GT only**; per-sample FORMAT fields (`GQ`, `DP`, `AD`)
-  from the priority source are not yet propagated. If you need those for
-  downstream quality gating, that passthrough is planned.
+  order), `GT` per sample, the `set=` INFO field, and the `GQ`/`DP`/`AD`
+  FORMAT fields.
+- **Quality travels with the genotype.** When a sample's genotype comes
+  from a given input, that same input's `GQ`/`DP`/`AD` come with it — so
+  the depth and allele balance describe the call that was actually kept,
+  and a combined VCF feeds straight into the trio quality gates (`db
+  trio --min-gq/--min-dp/--min-ab`). Output FORMAT lists only the
+  passthrough fields that some input actually carries (just `GT` if none
+  do).
+- A sample absent from every input at a site is `./.` with `.` for every
+  FORMAT field, never silently `0/0` or a borrowed quality value —
+  `combine` does not assert hom-reference where no input has a record.
 - The site union is held in memory, which suits the typical "a few call
   sets" use; whole-genome many-caller merges of very large cohorts are
   not the target.

@@ -21,10 +21,11 @@ natively: read each input with cyvcf2, union by (chrom, pos, ref, alt),
 and write a fresh VCF. A plain `.vcf` output is fully native; a `.gz`
 output is written then bgzip + tabix-indexed (via htslib) so it is BGZF,
 not plain gzip — the format the rest of vcfclick (and region-parallel
-ingest) assumes. v1 output carries GT + the `set=` provenance; FORMAT
-passthrough (GQ/DP/AD from the priority source) is a future refinement.
-Inputs must be on the same reference and decomposed (one ALT per
-record), like every vcfclick input.
+ingest) assumes. Output carries GT + the `set=` provenance, plus the
+GQ/DP/AD FORMAT fields (the ones trio quality gates read) carried from
+the same priority-source record that supplied each genotype. Inputs must
+be on the same reference and decomposed (one ALT per record), like every
+vcfclick input.
 """
 
 from __future__ import annotations
@@ -42,18 +43,89 @@ class CombineError(RuntimeError):
     """Raised for precondition failures during combine."""
 
 
+# FORMAT fields carried through from the priority source — exactly the
+# ones trio quality gates read (gq, dp, ad_ref/ad_alt). Output FORMAT is
+# GT plus whichever of these actually appear in some input.
+_PASSTHROUGH = ("GQ", "DP", "AD")
+
+_FORMAT_HEADERS = {
+    "GT": '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
+    "GQ": '##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype Quality">',
+    "DP": '##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read Depth">',
+    "AD": (
+        '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths '
+        'for the ref and alt alleles in the order listed">'
+    ),
+}
+
+
 class _Union(NamedTuple):
     """The accumulated cross-input union, keyed by (chrom, pos, ref, alt).
 
-    gts[key][sample] — prioritised GT string (the highest-priority input
-    with a non-missing call wins). inputs[key] — set of input indices that
-    have the site (drives set= and --min-callsets). contigs[contig] —
-    reference (header) order, for coordinate-sorting the output.
+    gts[key][sample] — the prioritised per-sample cell: a dict with "GT"
+    (the highest-priority input with a non-missing call wins) plus the
+    GQ/DP/AD tokens from that same source record (None where absent).
+    inputs[key] — set of input indices that have the site (drives set= and
+    --min-callsets). contigs[contig] — reference (header) order, for
+    coordinate-sorting the output. fields — which _PASSTHROUGH FORMAT
+    fields appeared in any input, so the output FORMAT lists only those.
     """
 
     gts: dict
     inputs: dict
     contigs: dict
+    fields: set
+
+
+def _format_arr(variant, field):
+    """A FORMAT field as a per-sample cyvcf2 array, or None if absent."""
+    try:
+        return variant.format(field)
+    except KeyError:
+        return None
+
+
+def _scalar_token(arr, i: int) -> str | None:
+    """Sample i's scalar FORMAT value (GQ/DP) as a VCF token, or None."""
+    if arr is None:
+        return None
+    try:
+        v = arr[i]
+        if hasattr(v, "__len__") and not isinstance(v, (str, bytes)):
+            v = v[0]
+        v = int(v)
+    except (IndexError, TypeError, ValueError):
+        return None
+    return str(v) if v >= 0 else None
+
+
+def _ad_token(arr, i: int) -> str | None:
+    """Sample i's AD as 'ref,alt', or None if absent/missing. Output
+    records are always biallelic, so AD is Number=R = exactly two values.
+    A source AD with any other length (e.g. an improperly decomposed input
+    still carrying original multi-allelic depths) is dropped rather than
+    written as an uninterpretable cell for a single-ALT record."""
+    if arr is None:
+        return None
+    try:
+        vals = [int(x) for x in arr[i]]
+    except (IndexError, TypeError, ValueError):
+        return None
+    if len(vals) != 2 or any(x < 0 for x in vals):
+        return None
+    return ",".join(str(x) for x in vals)
+
+
+def _sample_cell(gt: str, variant, fmt_arrs: dict, i: int) -> dict:
+    """Build sample i's output cell from the source record: its GT plus
+    the GQ/DP/AD tokens, so passed-through quality travels with the
+    genotype it describes."""
+    cell = {"GT": gt}
+    for f in _PASSTHROUGH:
+        cell[f] = (
+            _ad_token(fmt_arrs[f], i) if f == "AD" else _scalar_token(fmt_arrs[f], i)
+        )
+    return cell
 
 
 def _require_tool(name: str) -> str:
@@ -132,7 +204,7 @@ def combine_vcfs(
     if len(set_names) != len(in_paths):
         raise CombineError("number of --name values must match number of inputs.")
 
-    union = _Union(gts={}, inputs={}, contigs={})
+    union = _Union(gts={}, inputs={}, contigs={}, fields=set())
     all_samples: list[str] = []
     seen_samples: set[str] = set()
 
@@ -164,12 +236,16 @@ def combine_vcfs(
             union.inputs.setdefault(key, set()).add(idx)
             gts = union.gts.setdefault(key, {})
             genotypes = variant.genotypes
+            fmt_arrs = {f: _format_arr(variant, f) for f in _PASSTHROUGH}
+            for f, arr in fmt_arrs.items():
+                if arr is not None:
+                    union.fields.add(f)
             for s_i, sample in enumerate(samples):
                 if sample in gts:
                     continue  # higher-priority input already filled it
                 g = _gt_str(genotypes[s_i]) if s_i < len(genotypes) else None
                 if g is not None:
-                    gts[sample] = g
+                    gts[sample] = _sample_cell(g, variant, fmt_arrs, s_i)
 
     out_path = Path(output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -234,6 +310,10 @@ def _write_combined(
         (k for k in union.inputs if len(union.inputs[k]) >= min_callsets),
         key=lambda k: (union.contigs.get(k[0], 0), k[1], k[2], k[3]),
     )
+    # Output FORMAT = GT plus whichever passthrough fields any input had.
+    out_fields = ["GT"] + [f for f in _PASSTHROUGH if f in union.fields]
+    format_col = ":".join(out_fields)
+    missing_cell = ":".join(["./." if f == "GT" else "." for f in out_fields])
 
     header = [
         "##fileformat=VCFv4.3",
@@ -242,8 +322,8 @@ def _write_combined(
             "##INFO=<ID=set,Number=1,Type=String,Description="
             '"Source call sets; Intersection when present in all inputs">'
         ),
-        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
     ]
+    header += [_FORMAT_HEADERS[f] for f in out_fields]
     for contig in sorted(union.contigs, key=lambda c: union.contigs[c]):
         header.append(f"##contig=<ID={contig}>")
     header.append(
@@ -262,12 +342,23 @@ def _write_combined(
             present = union.inputs[key]
             info = f"set={_set_field(present, n_inputs, set_names)}"
             gts = union.gts[key]
-            cells = [gts.get(s, "./.") for s in samples]
+            cells = [
+                _render_cell(gts.get(s), out_fields, missing_cell) for s in samples
+            ]
             fh.write(
                 "\t".join(
-                    [chrom, str(pos), ".", ref, alt, ".", ".", info, "GT", *cells]
+                    [chrom, str(pos), ".", ref, alt, ".", ".", info, format_col, *cells]
                 )
                 + "\n"
             )
             n += 1
     return n
+
+
+def _render_cell(cell: dict | None, out_fields: list[str], missing: str) -> str:
+    """A sample's FORMAT cell text: its GT plus each output field token
+    ('.' where that field was absent in the source). A sample with no
+    record at this site is the all-missing cell."""
+    if cell is None:
+        return missing
+    return ":".join(cell.get(f) or "." for f in out_fields)
