@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] — 2026-06-16
+
 ### Added
 - **`vcfclick combine` — multi-callset merge with provenance.** A native
   reimplementation of GATK3's `CombineVariants` (dropped in GATK4 and not
@@ -546,7 +548,8 @@ Initial PyPI release.
 - GENCODE v45 gene-coordinates loader (`vcfclick annotations load`).
 - Apache 2.0 license.
 
-[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nuin/vcfclick/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/nuin/vcfclick/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nuin/vcfclick/releases/tag/v0.4.0
 [0.3.2]: https://github.com/nuin/vcfclick/releases/tag/v0.3.2
