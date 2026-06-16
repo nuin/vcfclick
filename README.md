@@ -105,6 +105,9 @@ Start here:
   gene/ClinVar references, and use visible LLM-generated SQL.
 - [Trio / family analysis](docs/TRIO.md) - merge per-sample VCFs, load
   a pedigree, and report de-novo / recessive / dominant candidates.
+- [Combining call sets](docs/COMBINE.md) - merge multiple callers of the
+  same cohort with `set=` provenance and consensus filtering (the GATK3
+  CombineVariants GATK4 removed).
 - [Schema reference](docs/SCHEMA.md) - table definitions, query
   conventions, sparse genotype rules, and common SQL patterns.
 - [FAQ](docs/FAQ.md) - common install, memory, query, backend, and data

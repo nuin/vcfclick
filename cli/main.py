@@ -79,6 +79,7 @@ for _module in (
     "cli.annotations",
     "cli.discover",
     "cli.merge",
+    "cli.combine",
     "cli.tui",
 ):
     importlib.import_module(_module)

@@ -7,6 +7,22 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`vcfclick combine` — multi-callset merge with provenance.** A native
+  reimplementation of GATK3's `CombineVariants` (dropped in GATK4 and not
+  replaced by `bcftools`). Unlike `merge` (disjoint samples → one joint
+  VCF), `combine` unions call sets that may *share* samples — two callers
+  over the same cohort, or a pre/post-filter pair:
+  - sites are unioned by `(chrom, pos, ref, alt)`;
+  - each output record carries a `set=` INFO field naming the inputs it
+    appears in (`Intersection` when present in all);
+  - a sample shared across inputs is resolved by PRIORITY (input order):
+    its genotype comes from the first input with a non-missing call;
+  - `--min-callsets N` keeps only sites seen in at least N inputs
+    (consensus calling — the "variants present in all / a fraction of
+    the call sets" feature GATK4 specifically lost).
+
+  v1 output carries GT + `set=`; per-sample FORMAT passthrough
+  (GQ/DP/AD from the priority source) is future work.
 - **Trio / family analysis.** A four-part pipeline for Mendelian
   inheritance-model candidate filtering:
   - `vcfclick merge a.vcf.gz b.vcf.gz … -o joint.vcf.gz` — combine
