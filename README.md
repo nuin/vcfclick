@@ -103,6 +103,8 @@ Start here:
   Locus, Operations, and SQL panes.
 - [MCP and annotations](docs/MCP.md) - configure an MCP client, load
   gene/ClinVar references, and use visible LLM-generated SQL.
+- [Trio / family analysis](docs/TRIO.md) - merge per-sample VCFs, load
+  a pedigree, and report de-novo / recessive / dominant candidates.
 - [Schema reference](docs/SCHEMA.md) - table definitions, query
   conventions, sparse genotype rules, and common SQL patterns.
 - [FAQ](docs/FAQ.md) - common install, memory, query, backend, and data

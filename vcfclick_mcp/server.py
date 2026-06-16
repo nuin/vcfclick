@@ -146,6 +146,31 @@ clin_sig columns in chDB — they do not exist there.
        info_extra['SOMETHING']     or     format_extra['SOMETHING']
    Returns String; CAST if numeric comparison.
 
+8. FAMILY / TRIO ANALYSIS: the `pedigree` table maps relationships:
+       (ingest_id, sample_id, family_id, father_id, mother_id, sex, affected)
+   father_id/mother_id are sample_ids ('0' = founder). Resolve a
+   proband's parents from pedigree, then self-join genotypes on
+   (ingest_id, chrom, pos, ref, alt) aliasing the proband (g), father
+   (f), mother (m). Genotype encoding: gt 0=hom-ref, 1=het, 2=hom-alt.
+
+   Inheritance models (gt comes from `genotypes`):
+     - recessive:  g.gt=2 AND f.gt=1 AND m.gt=1
+     - dominant:   g.gt=1 AND exactly one parent carries (gt>0), other gt=0
+     - de novo:    g.gt>0 AND f.gt=0 AND m.gt=0
+
+   CRITICAL de-novo caveat: genotypes is sparse, so a parent ABSENT at a
+   site is 0/0 OR ./. (no-call) — indistinguishable. Confident de novo
+   needs the parents to have a STORED gt=0 row (requires the cohort was
+   ingested with --keep-reference). An INNER JOIN to both parents
+   requiring f.gt=0 AND m.gt=0 naturally excludes no-call parents (no
+   row → no join). If the DB has no gt=0 rows, de novo cannot be proven;
+   say so rather than reporting absence-based de novo.
+
+   Standard candidate filters (slivar-style): GQ>=20, DP>=10, het
+   allele-balance ad_alt/(ad_ref+ad_alt) near 0.5, and population
+   rarity info_AF<=0.01. The `vcfclick db trio` CLI command applies
+   exactly these.
+
 ──────────────────────────── EXAMPLE ────────────────────────────
 
 User: "How many samples in cohort 'demo_brca' have a non-ref call in BRCA1?"

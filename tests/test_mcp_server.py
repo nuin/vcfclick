@@ -128,6 +128,12 @@ def test_briefing_includes_non_obvious_invariants():
     # iteration of the briefing.
     assert "cohort_size" in text or "FROM samples\n" in text
     assert "CROSS JOIN" in text
+    # Trio/family: pedigree table + the de-novo sparse caveat (a parent
+    # absent from genotypes is 0/0 OR no-call; provable de novo needs a
+    # stored gt=0 row from a --keep-reference ingest).
+    assert "pedigree" in text
+    assert "de novo" in text
+    assert "--keep-reference" in text
 
 
 # ─────────────────────── DuckDB-backed tools ───────────────────────

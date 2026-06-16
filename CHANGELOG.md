@@ -6,6 +6,39 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Trio / family analysis.** A four-part pipeline for Mendelian
+  inheritance-model candidate filtering:
+  - `vcfclick merge a.vcf.gz b.vcf.gz … -o joint.vcf.gz` — combine
+    per-sample VCFs into one joint multi-sample VCF (wraps
+    `bcftools merge` with disjoint-sample validation, auto-indexing,
+    and `-m none` to stay ingest-ready). Trios are usually delivered
+    as separate per-sample VCFs; this produces the single joint VCF
+    that trio analysis needs.
+  - `pedigree` table + `vcfclick db ped <name> <file.ped>` — load
+    standard PED/FAM relationships (family/father/mother/sex/affected),
+    validated against the cohort's samples, round-tripped through
+    `db dump` and `db push/pull`.
+  - `vcfclick db ingest --keep-reference` — additionally store
+    confident hom-reference (gt=0) calls at variant sites (no-calls
+    still dropped), so de-novo analysis can PROVE a parent is 0/0
+    rather than guessing from absence. Opt-in; normal cohorts stay
+    sparse.
+  - `vcfclick db trio <name> --proband <id>` — report candidate
+    variants under de-novo, recessive, and dominant models with
+    slivar-style genotype quality gates (GQ, depth, het allele
+    balance) and population-AF rarity. A no-call parent is correctly
+    excluded from de novo (the INNER JOIN to a provable parent 0/0
+    finds no row), so it reports defensible candidates, not the naive
+    "neither parent carries it" false positives.
+  - The MCP schema briefing teaches the LLM the pedigree table, the
+    inheritance models, and the sparse de-novo caveat, so trio
+    questions can be asked in natural language with the SQL shown.
+
+  Honest scope: candidate FILTERING, not variant calling. Quality
+  gating is only as strong as the FORMAT fields present; PL-based
+  Bayesian de-novo refinement is future work.
+
 ## [0.4.1] — 2026-06-12
 
 ### Fixed
