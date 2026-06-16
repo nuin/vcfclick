@@ -6,6 +6,18 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`vcfclick web` — optional local browser UI** (the `[web]` extra,
+  FastAPI + uvicorn). Starts a localhost server and serves a single-page
+  app over a cohort database with four panels: a SQL explorer (read-only
+  guard), a natural-language→SQL box (same MCP schema briefing, BYO
+  Gemini/Anthropic key kept in the browser), a trio panel (reusing the
+  `db trio` SQL builders), and a combine panel (reusing `combine_vcfs`).
+  It is a thin HTTP layer over existing internals — the SQL path is the
+  same `get_session().query()` as `db query` and MCP `run_sql` — binds to
+  `127.0.0.1` only, and ships the UI embedded in the wheel (no JS build).
+  See [docs/WEB.md](docs/WEB.md).
+
 ## [0.5.1] — 2026-06-16
 
 ### Added

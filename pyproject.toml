@@ -48,6 +48,11 @@ dependencies = [
 tui = [
     "textual>=0.89",
 ]
+web = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.25.0",
+    "pydantic>=2",
+]
 
 [project.urls]
 Homepage = "https://github.com/nuin/vcfclick"
@@ -62,6 +67,7 @@ vcfclick = "cli.main:cli"
 dev = [
     "pytest>=8.0",
     "ruff>=0.15",
+    "httpx>=0.27",
 ]
 
 [build-system]
@@ -78,6 +84,7 @@ packages = [
     "storage",
     "tui",
     "vcfclick_mcp",
+    "vcfclick_web",
 ]
 
 [tool.hatch.build.targets.sdist]

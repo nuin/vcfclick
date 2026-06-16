@@ -15,7 +15,8 @@ labs and bioinformatics teams.
   loaded pedigree.
 - Combine multiple callers' call sets with `set=` provenance — the
   GATK3 `CombineVariants` that GATK4 removed.
-- Explore cohorts in an optional terminal UI.
+- Explore cohorts in an optional terminal UI, or a local browser UI
+  (SQL, natural-language→SQL, trio, combine).
 - Share databases as portable Parquet bundles.
 - Use MCP to let an LLM write visible, auditable SQL.
 
@@ -46,11 +47,11 @@ uv tool install vcfclick      # or: pipx install vcfclick
 vcfclick --help
 ```
 
-With the optional terminal UI:
+With the optional terminal UI or local web UI:
 
 ```bash
-uv tool install "vcfclick[tui]"
-vcfclick tui
+uv tool install "vcfclick[tui]"     # terminal UI: vcfclick tui
+uv tool install "vcfclick[web]"     # browser UI:  vcfclick web <db>
 ```
 
 Upgrade or remove later:
@@ -115,6 +116,8 @@ Start here:
   and moving data between backends.
 - [Terminal UI](docs/TUI.md) - install the Textual extra and use the
   Locus, Operations, and SQL panes.
+- [Web UI](docs/WEB.md) - `vcfclick web` local browser interface: SQL
+  explorer, natural-language→SQL, trio and combine panels.
 - [MCP and annotations](docs/MCP.md) - configure an MCP client, load
   gene/ClinVar references, and use visible LLM-generated SQL.
 - [Trio / family analysis](docs/TRIO.md) - merge per-sample VCFs, load

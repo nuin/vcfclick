@@ -80,6 +80,7 @@ for _module in (
     "cli.discover",
     "cli.merge",
     "cli.combine",
+    "cli.web",
     "cli.tui",
 ):
     importlib.import_module(_module)
