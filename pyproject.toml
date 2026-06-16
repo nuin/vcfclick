@@ -1,6 +1,6 @@
 [project]
 name = "vcfclick"
-version = "0.5.0"
+version = "0.5.1"
 description = "Small VCF databases. One per cohort. Embedded ClickHouse engine, embedded DuckDB annotations, MCP natural-language layer."
 readme = "README.md"
 requires-python = ">=3.11"

@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-06-16
+
 ### Added
 - **GATK3 equivalence test for `combine`.** A frozen golden file of real
   GATK 3.8-1 `CombineVariants` output
@@ -562,7 +564,8 @@ Initial PyPI release.
 - GENCODE v45 gene-coordinates loader (`vcfclick annotations load`).
 - Apache 2.0 license.
 
-[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/nuin/vcfclick/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/nuin/vcfclick/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/nuin/vcfclick/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/nuin/vcfclick/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/nuin/vcfclick/releases/tag/v0.4.0
