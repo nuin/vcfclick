@@ -37,7 +37,9 @@ _HDR = (
 
 
 def _vcf(sample_cols: str, rows: list[str]) -> str:
-    head = _HDR + "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + sample_cols
+    head = (
+        _HDR + "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\t" + sample_cols
+    )
     return head + "\n" + "\n".join(rows) + "\n"
 
 

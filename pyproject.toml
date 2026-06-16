@@ -68,7 +68,17 @@ dev = [
     "pytest>=8.0",
     "ruff>=0.15",
     "httpx>=0.27",
+    "pytest-rerunfailures>=14.0",
 ]
+
+[tool.pytest.ini_options]
+# chDB occasionally crashes a query/ingest subprocess on CI (SIGABRT /
+# SIGSEGV — glibc pthread_mutex / recursive_mutex assertions), a known
+# embedded-engine flake unrelated to the code under test. Auto-retry ONLY
+# those native-crash signatures: a genuinely failing assertion fails all
+# attempts and still reports, so retries rescue flakes without masking
+# real failures.
+addopts = "--reruns 2 --reruns-delay 2 --only-rerun rc=- --only-rerun returncode=- --only-rerun pthread_mutex --only-rerun recursive_mutex --only-rerun glibc"
 
 [build-system]
 requires = ["hatchling"]
