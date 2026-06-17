@@ -1,0 +1,4 @@
+# family individual paternal maternal sex phenotype
+FAM	HG002	HG003	HG004	1	2
+FAM	HG003	0	0	1	1
+FAM	HG004	0	0	2	1

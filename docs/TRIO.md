@@ -128,6 +128,18 @@ note to re-ingest with the flag. Recessive works either way.
 Rigorous de-novo *calling* (PL-based Bayesian posteriors using genotype
 likelihoods) is future work; this is honest candidate filtering.
 
+## Validation against the GIAB benchmark trio
+
+The inheritance models are tested against **real** genotypes from the
+Genome in a Bottle Ashkenazi trio — HG002 (son), HG003 (father), HG004
+(mother) — taken from the NIST v4.2.1 GRCh38 small-variant benchmark, not
+hand-built fixtures. In a CFTR slice the benchmark genotypes reproduce
+every model: two recessive sites (proband hom-alt, both parents het), a
+paternal-origin and maternal-origin het that together make CFTR a
+compound-het candidate gene, and no de novo. The golden fixture
+(`tests/fixtures/giab/cftr_trio.vcf.gz`) records its GIAB source URLs in
+the header.
+
 ## Natural language
 
 The MCP server teaches an LLM the pedigree table, the inheritance

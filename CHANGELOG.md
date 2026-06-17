@@ -19,6 +19,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   store path, so a custom/shared store (or a test store reachable by
   subprocesses) can be used instead of the bundled default.
 
+### Tests
+- **GIAB benchmark golden for trio analysis.** The inheritance models are
+  now tested against real genotypes from the Genome in a Bottle Ashkenazi
+  trio (HG002/HG003/HG004, NIST v4.2.1 GRCh38) at CFTR sites, not only
+  hand-built fixtures — reproducing recessive, dominant, and compound-het
+  (CFTR) patterns on published benchmark data. Source URLs are recorded in
+  the fixture header.
+
 ## [0.6.0] — 2026-06-16
 
 ### Added

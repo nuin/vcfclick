@@ -203,3 +203,77 @@ def test_comphet_end_to_end_groups_trans_hets(vcfclick_home, tmp_path, monkeypat
     assert "GENEX" in out
     assert "paternal chr1:300" in out
     assert "maternal chr1:400" in out
+
+
+# ───────────── literature golden: real GIAB Ashkenazi trio ─────────────
+#
+# tests/fixtures/giab/cftr_trio.vcf.gz holds REAL genotypes (GT:GQ:DP:AD)
+# of the GIAB Ashkenazi trio — HG002 (son), HG003 (father), HG004 (mother)
+# — at CFTR sites, fetched from the NIST v4.2.1 GRCh38 small-variant
+# benchmark (the fixture header records the source URLs). It exercises
+# every inheritance model on published benchmark data rather than
+# hand-built genotypes. CFTR coords are real GRCh38.
+
+GIAB_VCF = FIXTURES / "giab" / "cftr_trio.vcf.gz"
+GIAB_PED = FIXTURES / "giab" / "cftr_trio.ped"
+CFTR = ("CFTR", "chr7", 117480025, 117668665)
+
+
+def _setup_giab(home: Path) -> None:
+    _vc(home, "db", "create", "giab")
+    _vc(
+        home,
+        "db",
+        "ingest",
+        "giab",
+        str(GIAB_VCF),
+        "--cohort",
+        "fam",
+        "--ingest-id",
+        "g1",
+        "--serial",
+        "--keep-reference",
+    )
+    _vc(home, "db", "ped", "giab", str(GIAB_PED))
+
+
+def _giab_trio(home: Path, *args: str):
+    return _vc(home, "db", "trio", "giab", "--proband", "HG002", *args)
+
+
+def test_giab_real_trio_recessive(vcfclick_home):
+    """Golden: chr7:117488888 and chr7:117507446 are CHILD hom-alt with
+    both real parents heterozygous → recessive, on GIAB benchmark data."""
+    _setup_giab(vcfclick_home)
+    out = _giab_trio(vcfclick_home, "--category", "recessive").stdout
+    assert "recessive candidates: 2" in out
+    assert "chr7:117488888" in out
+    assert "chr7:117507446" in out
+    assert "proband_gt=2 father_gt=1 mother_gt=1" in out
+
+
+def test_giab_real_trio_comphet_cftr(vcfclick_home, tmp_path, monkeypatch):
+    """Golden: the real proband carries a paternal-origin het
+    (chr7:117489437) and maternal-origin hets, both in CFTR → a genuine
+    compound-het candidate gene from benchmark genotypes."""
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    _seed_gene(*CFTR)
+    _setup_giab(vcfclick_home)
+    out = _giab_trio(vcfclick_home, "--category", "comphet").stdout
+    assert "comphet candidate genes: 1" in out
+    assert "CFTR" in out
+    assert "paternal chr7:117489437" in out
+    assert "maternal chr7:117480471" in out
+
+
+def test_giab_real_trio_all_counts(vcfclick_home, tmp_path, monkeypatch):
+    """Golden summary over real GIAB genotypes: no de novo, 2 recessive,
+    3 dominant single-origin hets, 1 comp-het gene (CFTR)."""
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    _seed_gene(*CFTR)
+    _setup_giab(vcfclick_home)
+    out = _giab_trio(vcfclick_home).stdout
+    assert "denovo          0" in out
+    assert "recessive       2" in out
+    assert "dominant        3" in out
+    assert "comphet         1" in out
