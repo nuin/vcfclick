@@ -63,3 +63,26 @@ def annotations_load_clinvar(vcf: str | None, keep_existing: bool) -> None:
 
     n = load(Path(vcf) if vcf else None, replace=not keep_existing)
     click.echo(f"\nloaded   {n:,} ClinVar variants into the annotation store")
+
+
+@annotations.command(name="load-gnomad")
+@click.argument("vcf", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--replace",
+    is_flag=True,
+    help="Truncate gnomad_af before loading (default: append, so several "
+    "per-chromosome slices can be loaded incrementally).",
+)
+def annotations_load_gnomad(vcf: str, replace: bool) -> None:
+    """Load gnomAD allele frequencies from a gnomAD sites VCF.
+
+    gnomAD is too large to bundle, so pass a VCF you supply — a region
+    slice, an af-only file, or a per-chromosome sites VCF. A small region
+    can be pulled with tabix-over-HTTPS from the public gnomAD bucket; see
+    docs/MCP.md. Powers the `gnomad_lookup` MCP tool and the
+    `db trio --gnomad-max-af` rarity filter.
+    """
+    from annotations.loaders.gnomad import load
+
+    n = load(Path(vcf), replace=replace)
+    click.echo(f"\nloaded   {n:,} gnomAD allele frequencies into the annotation store")

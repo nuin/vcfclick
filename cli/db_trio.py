@@ -277,6 +277,16 @@ def _has_reference_rows(sess) -> bool:
     return int(json.loads(raw)["data"][0][0]) > 0
 
 
+def _gnomad_keep(chrom: str, pos, ref: str, alt: str, max_af: float) -> bool:
+    """Keep a candidate whose gnomAD popmax AF is <= max_af, or that is
+    absent from the loaded gnomAD slice — absence is treated as rare
+    (the slice may simply not cover the locus), never as AF 0."""
+    from annotations import gnomad_af
+
+    g = gnomad_af(chrom, int(pos), ref, alt)
+    return g is None or g.popmax is None or g.popmax <= max_af
+
+
 @db.command(name="trio")
 @click.argument("name")
 @click.option("--proband", required=True, help="Sample id of the affected child.")
@@ -298,6 +308,14 @@ def _has_reference_rows(sess) -> bool:
 )
 @click.option("--min-ab", default=0.25, show_default=True, type=float)
 @click.option("--max-ab", default=0.75, show_default=True, type=float)
+@click.option(
+    "--gnomad-max-af",
+    default=None,
+    type=float,
+    help="Additionally drop candidates whose gnomAD popmax AF exceeds this "
+    "(needs `vcfclick annotations load-gnomad`). Variants absent from the "
+    "loaded gnomAD slice are kept as rare.",
+)
 def db_trio(
     name: str,
     proband: str,
@@ -307,6 +325,7 @@ def db_trio(
     max_af: float,
     min_ab: float,
     max_ab: float,
+    gnomad_max_af: float | None,
 ) -> None:
     """Report candidate variants under Mendelian inheritance models for
     a trio, with genotype quality gates and an AF rarity filter."""
@@ -331,14 +350,27 @@ def db_trio(
     has_ref = _has_reference_rows(sess)
     needs_ref = {"denovo", "dominant", "comphet"}
 
-    def run(cat: str, count_only: bool):
-        sql = trio_sql(cat, trio, gates, count_only=count_only)
-        return sess.query(sql, "JSONCompact").bytes().decode()
+    def _gnomad(rows: list) -> list:
+        if gnomad_max_af is None:
+            return rows
+        return [r for r in rows if _gnomad_keep(r[0], r[1], r[2], r[3], gnomad_max_af)]
+
+    def detail_rows(cat: str) -> list:
+        """Candidate rows for a model, after the optional gnomAD filter."""
+        sql = trio_sql(cat, trio, gates, count_only=False)
+        rows = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+        return _gnomad(rows)
+
+    def count(cat: str) -> int:
+        if gnomad_max_af is not None:
+            return len(detail_rows(cat))
+        sql = trio_sql(cat, trio, gates, count_only=True)
+        return json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"][0][0]
 
     def comphet_genes() -> dict:
         sql = _comphet_sql(trio, gates)
         rows = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
-        return _comphet_genes(rows)
+        return _comphet_genes(_gnomad(rows))
 
     click.echo(f"trio: proband={proband} father={father} mother={mother}")
     if not has_ref and (category in needs_ref or category == "all"):
@@ -351,7 +383,7 @@ def db_trio(
 
     if category == "all":
         for cat in ["denovo", "recessive", "dominant"]:
-            n = json.loads(run(cat, count_only=True))["data"][0][0]
+            n = count(cat)
             blocked = (
                 "" if has_ref or cat not in needs_ref else "  (needs --keep-reference)"
             )
@@ -373,7 +405,7 @@ def db_trio(
                     click.echo(f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}")
         return
 
-    data = json.loads(run(category, count_only=False))["data"]
+    data = detail_rows(category)
     click.echo(f"\n{category} candidates: {len(data)}")
     for row in data:
         chrom, pos, ref, alt, pgt, fgt, mgt, af = row

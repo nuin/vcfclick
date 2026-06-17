@@ -101,7 +101,21 @@ Defaults follow common rare-disease practice and are all tunable:
 | `--min-gq` | 20 | genotype quality (≈99% accurate) |
 | `--min-dp` | 10 | read depth |
 | `--min-ab` / `--max-ab` | 0.25 / 0.75 | het allele balance `ad_alt/(ad_ref+ad_alt)`, expected ≈0.5 |
-| `--max-af` | 0.01 | keep variants with population `info_AF` at or below this |
+| `--max-af` | 0.01 | keep variants with the VCF's own `info_AF` at or below this |
+| `--gnomad-max-af` | off | additionally drop candidates whose **gnomAD popmax** AF exceeds this; needs `vcfclick annotations load-gnomad`. Variants absent from the loaded gnomAD slice are kept as rare. |
+
+`--max-af` filters on the cohort VCF's `info_AF` (often missing on small
+cohorts); `--gnomad-max-af` adds a true population-frequency filter from
+gnomAD, the defensible way to require a variant be rare in the general
+population. Load gnomAD AFs for your regions of interest first:
+
+```bash
+# pull a region from the public gnomAD bucket and load it
+tabix https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/genomes/gnomad.genomes.v4.1.sites.chr7.vcf.bgz \
+    chr7:117480000-117670000 | bgzip > cftr.gnomad.vcf.gz
+vcfclick annotations load-gnomad cftr.gnomad.vcf.gz
+vcfclick db trio fam1 --proband CHILD --gnomad-max-af 0.001
+```
 
 Gates are lenient on NULL: a VCF lacking `gq`/`dp`/`ad` is not silently
 zeroed out — the gate simply doesn't filter on the missing field.

@@ -281,6 +281,26 @@ def test_giab_real_trio_all_counts(vcfclick_home, tmp_path, monkeypatch):
     assert "comphet         1" in out
 
 
+def test_giab_trio_gnomad_filter(vcfclick_home, tmp_path, monkeypatch):
+    """--gnomad-max-af drops candidates common in gnomAD. Both CFTR
+    recessive sites are common (popmax ~0.8), and the paternal comphet
+    het is common, while one maternal dominant het is genuinely rare
+    (popmax 0.009). At 0.01: recessive 2→0, dominant 3→1, comphet 1→0."""
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    _seed_gene(*CFTR)
+    _vc(
+        vcfclick_home,
+        "annotations",
+        "load-gnomad",
+        str(FIXTURES / "gnomad_cftr.vcf.gz"),
+    )
+    _setup_giab(vcfclick_home)
+    out = _giab_trio(vcfclick_home, "--gnomad-max-af", "0.01").stdout
+    assert "recessive       0" in out
+    assert "dominant        1" in out
+    assert "comphet         0" in out
+
+
 # ───────── de-novo VALIDATION: GIAB benchmark BED as ground truth ─────────
 #
 # denovo_trio.vcf.gz holds 7 chr20 sites where HG002 carries a variant

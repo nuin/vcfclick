@@ -69,6 +69,16 @@ CREATE TABLE IF NOT EXISTS clinvar_variants (
     condition     VARCHAR,           -- semicolon-joined trait names
     PRIMARY KEY (chrom, pos, ref, alt)
 );
+
+CREATE TABLE IF NOT EXISTS gnomad_af (
+    chrom     VARCHAR NOT NULL,
+    pos       UINTEGER NOT NULL,
+    ref       VARCHAR NOT NULL,
+    alt       VARCHAR NOT NULL,
+    af        DOUBLE,                -- overall population allele frequency
+    af_grpmax DOUBLE,                -- highest genetic-ancestry-group AF (popmax)
+    PRIMARY KEY (chrom, pos, ref, alt)
+);
 """
 
 
@@ -98,6 +108,22 @@ class ClinVarRecord:
     review_status: str | None
     clinvar_id: str | None
     condition: str | None
+
+
+@dataclass(frozen=True)
+class GnomadAF:
+    chrom: str
+    pos: int
+    ref: str
+    alt: str
+    af: float | None
+    af_grpmax: float | None
+
+    @property
+    def popmax(self) -> float | None:
+        """The rarity-relevant frequency: the highest-ancestry-group AF
+        (popmax) when present, else the overall AF."""
+        return self.af_grpmax if self.af_grpmax is not None else self.af
 
 
 def position_for_gene(symbol: str) -> GeneRange | None:
@@ -151,3 +177,19 @@ def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | 
         [chrom, pos, ref, alt],
     ).fetchone()
     return ClinVarRecord(*row) if row else None
+
+
+def gnomad_af(chrom: str, pos: int, ref: str, alt: str) -> GnomadAF | None:
+    """Look up the gnomAD allele frequency for a specific allele.
+
+    Returns None if the variant is absent from the loaded gnomAD slice —
+    the caller should treat absence as "rare", not as AF 0, since the
+    loaded slice may not cover the locus.
+    """
+    conn = get_connection()
+    row = conn.execute(
+        "SELECT chrom, pos, ref, alt, af, af_grpmax FROM gnomad_af "
+        "WHERE chrom = ? AND pos = ? AND ref = ? AND alt = ?",
+        [chrom, pos, ref, alt],
+    ).fetchone()
+    return GnomadAF(*row) if row else None

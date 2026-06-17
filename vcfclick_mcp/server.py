@@ -20,6 +20,7 @@ from mcp.server.fastmcp import FastMCP
 from annotations import (
     clinvar_lookup as _clinvar_lookup,
     gene_at as _gene_at,
+    gnomad_af as _gnomad_af,
     position_for_gene as _position_for_gene,
 )
 from storage import get_session
@@ -71,6 +72,7 @@ ingestions — catalog: (ingest_id, cohort, vcf_path, n_variants,
 position_for_gene(symbol)   → (chrom, start_pos, end_pos)
 gene_at(chrom, pos)         → overlapping gene symbols
 clinvar_lookup(chrom, pos, ref, alt) → ClinVar significance
+gnomad_lookup(chrom, pos, ref, alt)  → gnomAD allele frequency (popmax)
 
 Use these BEFORE writing SQL whenever the user mentions a gene symbol,
 gene region, or clinical significance. Do not invent gene_symbol or
@@ -260,6 +262,26 @@ def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> dict | None:
         "review_status": r.review_status,
         "clinvar_id": r.clinvar_id,
         "condition": r.condition,
+    }
+
+
+@mcp.tool()
+def gnomad_lookup(chrom: str, pos: int, ref: str, alt: str) -> dict | None:
+    """gnomAD allele frequency for a specific allele. `popmax` is the
+    rarity-relevant value (highest genetic-ancestry-group AF). None means
+    the allele is absent from the loaded gnomAD slice — treat as rare, not
+    AF 0."""
+    r = _gnomad_af(chrom, pos, ref, alt)
+    if r is None:
+        return None
+    return {
+        "chrom": r.chrom,
+        "pos": r.pos,
+        "ref": r.ref,
+        "alt": r.alt,
+        "af": r.af,
+        "af_grpmax": r.af_grpmax,
+        "popmax": r.popmax,
     }
 
 

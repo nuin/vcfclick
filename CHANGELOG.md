@@ -7,6 +7,16 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **gnomAD population-allele-frequency annotation.** A `gnomad_af` table
+  in the annotation store, loaded from a gnomAD sites VCF with
+  `vcfclick annotations load-gnomad <vcf>` (gnomAD is too large to bundle,
+  so you supply a region slice — a small one pulls in seconds via
+  tabix-over-HTTPS from the public gnomAD bucket). Exposed as the
+  `gnomad_lookup` MCP tool and a `db trio --gnomad-max-af` filter that
+  drops candidates whose gnomAD popmax AF exceeds the threshold —
+  defensible rare-variant filtering on true population frequency rather
+  than the cohort's own (often missing) `info_AF`. Variants absent from
+  the loaded slice are treated as rare, never AF 0.
 - **`vcfclick db qc` — per-sample QC metrics.** One pass over the cohort
   (both backends): heterozygous / homozygous-alt counts and ratio,
   transition/transversion ratio (SNVs), and a chromosome-X heterozygosity

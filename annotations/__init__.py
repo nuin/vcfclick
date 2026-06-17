@@ -9,15 +9,19 @@ annotations/transcripts.py (Phase 2; not yet implemented).
 from annotations.db import (
     GeneRange,
     ClinVarRecord,
+    GnomadAF,
     position_for_gene,
     gene_at,
     clinvar_lookup,
+    gnomad_af,
 )
 
 __all__ = [
     "GeneRange",
     "ClinVarRecord",
+    "GnomadAF",
     "position_for_gene",
     "gene_at",
     "clinvar_lookup",
+    "gnomad_af",
 ]

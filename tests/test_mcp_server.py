@@ -33,6 +33,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 CLINVAR_FIXTURE = Path(__file__).parent / "fixtures" / "clinvar_mini.vcf.gz"
+GNOMAD_FIXTURE = Path(__file__).parent / "fixtures" / "gnomad_cftr.vcf.gz"
 
 EXPECTED_TOOLS = {
     "get_schema",
@@ -40,6 +41,7 @@ EXPECTED_TOOLS = {
     "position_for_gene",
     "gene_at",
     "clinvar_lookup",
+    "gnomad_lookup",
 }
 
 
@@ -221,6 +223,39 @@ def test_clinvar_lookup_miss_returns_none(isolated_annotation_db):
         mcp.call_tool(
             "clinvar_lookup",
             {"chrom": "chr1", "pos": 99999, "ref": "A", "alt": "T"},
+        )
+    )
+    assert _unwrap(structured) is None
+
+
+def test_gnomad_lookup_returns_real_af(isolated_annotation_db):
+    """Full chain: gnomAD loader → DuckDB → MCP tool, on real AF values."""
+    from annotations.loaders.gnomad import load
+    from vcfclick_mcp.server import mcp
+
+    load(GNOMAD_FIXTURE, replace=True)
+
+    _, structured = _run(
+        mcp.call_tool(
+            "gnomad_lookup",
+            {"chrom": "chr7", "pos": 117488888, "ref": "A", "alt": "C"},
+        )
+    )
+    result = _unwrap(structured)
+    assert abs(result["af"] - 0.548299) < 1e-4
+    assert abs(result["popmax"] - 0.827770) < 1e-4
+
+
+def test_gnomad_lookup_miss_returns_none(isolated_annotation_db):
+    from annotations.loaders.gnomad import load
+    from vcfclick_mcp.server import mcp
+
+    load(GNOMAD_FIXTURE, replace=True)
+
+    _, structured = _run(
+        mcp.call_tool(
+            "gnomad_lookup",
+            {"chrom": "chr1", "pos": 1, "ref": "A", "alt": "T"},
         )
     )
     assert _unwrap(structured) is None
