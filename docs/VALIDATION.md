@@ -49,14 +49,37 @@ encodes 7 of these sites (the 4 confident + 3 no-call) with real HG002
 - The **same data without `--keep-reference`** returns **0** — vcfclick
   refuses to call de novo when it cannot prove a parent is 0/0.
 
-## 2. External cross-check (`bcftools +mendelian2`)
+## 2. External cross-checks — `bcftools +mendelian2` and `slivar`
 
-Run independently on the same fixture, `bcftools +mendelian2 -m e` flags
-as Mendelian-erroneous **exactly the 4 sites** vcfclick calls de novo —
-and, like vcfclick, does not flag the 3 no-call sites (a missing parent
-genotype is undecidable). The two tools agree site-for-site. This is
-asserted in CI (`test_giab_denovo_matches_bcftools_mendelian`, skipped
-where bcftools is absent).
+Two independent, established tools agree with vcfclick **site-for-site**
+on the same fixtures.
+
+`bcftools +mendelian2 -m e` flags as Mendelian-erroneous **exactly the 4
+sites** vcfclick calls de novo, and — like vcfclick — does not flag the 3
+no-call sites (a missing parent genotype is undecidable). Asserted in CI
+(`test_giab_denovo_matches_bcftools_mendelian`, skipped where bcftools is
+absent).
+
+[slivar](https://github.com/brentp/slivar), the de-facto standard for
+rare-disease trio filtering, was run on the same fixtures:
+
+```bash
+# de novo — reports HG002: 4, exactly the confident sites
+slivar expr --vcf denovo_trio.vcf.gz --ped denovo_trio.ped --pass-only \
+    --trio "denovo:kid.het && dad.hom_ref && mom.hom_ref" -o out.vcf
+
+# recessive — reports HG002: 2 (chr7:117,488,888 and 117,507,446)
+slivar expr --vcf cftr_trio.vcf.gz --ped cftr_trio.ped --pass-only \
+    --trio "recessive:kid.hom_alt && dad.het && mom.het" -o out.vcf
+```
+
+slivar's de-novo expression flags the same **4** confident sites and
+excludes the 3 no-call ones (its `dad.hom_ref` / `mom.hom_ref` is false
+for a `./.` parent — the same defensibility logic), and its recessive
+expression flags the same **2** sites. So vcfclick, bcftools, and slivar
+produce identical trio calls on real benchmark data. (slivar ships a
+Linux binary only, so this comparison is documented rather than run in
+CI; the bcftools cross-check above is the CI-runnable one.)
 
 ## 3. Recessive / dominant / compound-het on real genotypes
 

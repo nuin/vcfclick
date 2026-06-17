@@ -11,8 +11,10 @@ labs and bioinformatics teams.
 
 - Ingest joint VCFs or batches of per-sample VCFs.
 - Query variants, genotypes, samples, and ingestions with SQL.
-- Run trio / family analysis (de-novo, recessive, dominant) over a
-  loaded pedigree.
+- Run trio / family analysis (de-novo, recessive, dominant,
+  compound-het) over a loaded pedigree, with gnomAD population-AF rarity
+  filtering — validated against the GIAB benchmark trio.
+- Check per-sample quality with `db qc` (het/hom, Ti/Tv, chrX sex check).
 - Combine multiple callers' call sets with `set=` provenance — the
   GATK3 `CombineVariants` that GATK4 removed.
 - Explore cohorts in an optional terminal UI, or a local browser UI

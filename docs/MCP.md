@@ -24,6 +24,7 @@ The server exposes:
 | `position_for_gene` | Resolve an HGNC gene symbol to GRCh38 coordinates. |
 | `gene_at` | Return genes overlapping one position. |
 | `clinvar_lookup` | Return ClinVar significance for one allele. |
+| `gnomad_lookup` | Return the gnomAD allele frequency (and popmax) for one allele. |
 
 ## Load Annotation Data
 
@@ -53,6 +54,20 @@ For reproducible demos, keep a local copy and pass it explicitly:
 ```bash
 vcfclick annotations load-clinvar --vcf clinvar.vcf.gz
 ```
+
+gnomAD population allele frequencies power `gnomad_lookup` and the
+`db trio --gnomad-max-af` rarity filter. gnomAD is too large to bundle,
+so you supply a sites VCF — a region slice pulls in seconds via
+tabix-over-HTTPS from the public gnomAD bucket:
+
+```bash
+tabix https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/vcf/genomes/gnomad.genomes.v4.1.sites.chr7.vcf.bgz \
+    chr7:117480000-117670000 | bgzip > cftr.gnomad.vcf.gz
+vcfclick annotations load-gnomad cftr.gnomad.vcf.gz
+```
+
+`load-gnomad` appends by default, so per-chromosome slices load
+incrementally; pass `--replace` to start fresh.
 
 The annotation store is separate from cohort databases. Loading
 annotations does not modify any `variants` or `genotypes` table.

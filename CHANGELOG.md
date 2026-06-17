@@ -47,9 +47,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   a 5 Mb chr20 region 50 HG002-only variants look de novo to the naive
   rule, but only 4 have both parents confidently hom-ref per the BED;
   vcfclick's `--keep-reference` de novo recovers exactly those 4 and drops
-  the 46 no-call false positives, and `bcftools +mendelian2` (an external
-  tool) independently flags the same 4. Source URLs are in the fixture
-  headers.
+  the 46 no-call false positives. Two independent tools agree site-for-
+  site: `bcftools +mendelian2` flags the same 4 as Mendelian errors, and
+  `slivar` (the standard rare-disease trio tool) flags the same 4 de-novo
+  and the same 2 recessive sites — including the same no-call exclusions.
+  Source URLs are in the fixture headers.
 
 ## [0.6.0] — 2026-06-16
 
