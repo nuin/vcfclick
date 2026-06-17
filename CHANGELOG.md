@@ -7,6 +7,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`vcfclick db qc` — per-sample QC metrics.** One pass over the cohort
+  (both backends): heterozygous / homozygous-alt counts and ratio,
+  transition/transversion ratio (SNVs), and a chromosome-X heterozygosity
+  sex check. When a pedigree is loaded the inferred sex is compared to the
+  declared sex and a mismatch is flagged — the classic sample-swap signal.
+  Honest about the sparse store: call-rate / missingness is not reported
+  because no-calls aren't stored. `--format json` for pipelines. See
+  [docs/QC.md](docs/QC.md).
 - **Compound-heterozygous trio model** — `vcfclick db trio --category
   comphet` reports genes where the proband carries two rare hets in
   *trans* (one inherited from each parent), the recessive mechanism

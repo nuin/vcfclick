@@ -129,6 +129,8 @@ Start here:
 - [Combining call sets](docs/COMBINE.md) - merge multiple callers of the
   same cohort with `set=` provenance and consensus filtering (the GATK3
   CombineVariants GATK4 removed).
+- [Sample QC](docs/QC.md) - `db qc` per-sample het/hom, Ti/Tv, and a
+  chrX-heterozygosity sex check flagged against the pedigree.
 - [Schema reference](docs/SCHEMA.md) - table definitions, query
   conventions, sparse genotype rules, and common SQL patterns.
 - [FAQ](docs/FAQ.md) - common install, memory, query, backend, and data
