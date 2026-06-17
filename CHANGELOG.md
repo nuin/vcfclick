@@ -6,6 +6,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Compound-heterozygous trio model** — `vcfclick db trio --category
+  comphet` reports genes where the proband carries two rare hets in
+  *trans* (one inherited from each parent), the recessive mechanism
+  per-variant filters miss. Candidate variants are rare proband hets
+  with a clear parent-of-origin (needs `--keep-reference`); they are
+  grouped per gene via the annotation store (`vcfclick annotations
+  load`), since genes can't be SQL-joined to the cohort. Reported per
+  gene, not per variant.
+- **`VCFCLICK_ANNOTATIONS_DB`** — environment override for the annotation
+  store path, so a custom/shared store (or a test store reachable by
+  subprocesses) can be used instead of the bundled default.
+
 ## [0.6.0] — 2026-06-16
 
 ### Added

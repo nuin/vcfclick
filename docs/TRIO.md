@@ -63,9 +63,34 @@ parent genotypes fit the pattern. Genotype encoding: `gt` 0 = hom-ref,
 | `denovo` | proband carries; both parents provably hom-ref | yes |
 | `recessive` | proband hom-alt; both parents heterozygous carriers | no |
 | `dominant` | proband het; exactly one parent carries, other hom-ref | yes |
+| `comphet` | two rare proband hets in the same gene, one from each parent | yes |
 
 `--category all` (default) prints per-model counts; a specific
 `--category` prints the variants.
+
+### Compound heterozygous
+
+`--category comphet` finds genes where the proband carries **two** rare
+heterozygous variants in *trans* — one inherited from the father, one
+from the mother — so both copies of the gene are hit (a recessive
+mechanism that per-variant filters miss). Each candidate variant is a
+rare proband het with a clear parent-of-origin (one parent carries, the
+other is provably hom-ref, hence `--keep-reference`); a gene is reported
+only when it has both a paternal and a maternal one. Results are grouped
+**per gene**, not per variant.
+
+Because genes live in the annotation store (separate from the cohort),
+this needs gene coordinates loaded first:
+
+```bash
+vcfclick annotations load          # GENCODE gene coordinates
+vcfclick db trio fam1 --proband CHILD --category comphet
+```
+
+Parent-of-origin here is genotype-based (no read-backed phasing), so it
+is honest candidate filtering: it cannot distinguish true *trans* from
+two variants that happen to be on the same parental copy. The annotation
+store path can be overridden with `VCFCLICK_ANNOTATIONS_DB`.
 
 ## Quality gates
 

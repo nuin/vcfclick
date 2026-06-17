@@ -26,6 +26,7 @@ jobs that run on a cron, not part of the query path.
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -33,6 +34,14 @@ import duckdb
 
 
 DUCKDB_PATH = Path(__file__).parent / "annotations.duckdb"
+
+
+def _store_path() -> Path:
+    """The annotation store path. `VCFCLICK_ANNOTATIONS_DB` overrides the
+    bundled default so a custom/shared store (or a test store reachable by
+    subprocesses) can be used."""
+    override = os.environ.get("VCFCLICK_ANNOTATIONS_DB")
+    return Path(override) if override else DUCKDB_PATH
 
 
 SCHEMA_DDL = """
@@ -65,7 +74,7 @@ CREATE TABLE IF NOT EXISTS clinvar_variants (
 
 def get_connection() -> duckdb.DuckDBPyConnection:
     """Open (and initialise on first use) the DuckDB annotation store."""
-    conn = duckdb.connect(str(DUCKDB_PATH))
+    conn = duckdb.connect(str(_store_path()))
     conn.execute(SCHEMA_DDL)
     return conn
 

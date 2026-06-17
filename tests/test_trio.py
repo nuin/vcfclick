@@ -152,3 +152,54 @@ def test_trio_requires_pedigree(vcfclick_home):
     )
     r = _trio(vcfclick_home, expect_failure=True)
     assert "pedigree" in (r.stdout + r.stderr).lower()
+
+
+# ─────────────────────── compound heterozygous ───────────────────────
+
+
+def _seed_gene(symbol: str, chrom: str, start: int, end: int) -> None:
+    """Insert one gene interval into the (env-redirected) annotation store
+    and close the connection so a subprocess can read it."""
+    from annotations.db import get_connection
+
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO refseq_genes VALUES (?, ?, ?, ?, '+', 'id', 'protein_coding')",
+        [symbol, chrom, start, end],
+    )
+    conn.close()
+
+
+def test_comphet_genes_grouping_unit(tmp_path, monkeypatch):
+    """The gene grouping keeps a gene only when it has BOTH a paternal and
+    a maternal het; single-origin genes and intergenic variants are
+    dropped."""
+    from cli.db_trio import _comphet_genes
+
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    _seed_gene("BOTH", "chr1", 1, 1000)
+    _seed_gene("PATONLY", "chr2", 1, 1000)
+    rows = [
+        ["chr1", 100, "A", "T", 0.01, "paternal"],
+        ["chr1", 200, "C", "G", 0.01, "maternal"],
+        ["chr2", 100, "A", "T", 0.01, "paternal"],  # single origin → dropped
+        ["chr3", 100, "A", "T", 0.01, "maternal"],  # no gene → dropped
+    ]
+    genes = _comphet_genes(rows)
+    assert set(genes) == {"BOTH"}
+    assert len(genes["BOTH"]["paternal"]) == 1
+    assert len(genes["BOTH"]["maternal"]) == 1
+
+
+def test_comphet_end_to_end_groups_trans_hets(vcfclick_home, tmp_path, monkeypatch):
+    """Full chain: chr1:300 (paternal) and chr1:400 (maternal) are two rare
+    hets inherited from different parents; a gene spanning both is reported
+    as one comp-het candidate gene with both variants."""
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    _seed_gene("GENEX", "chr1", 1, 100000)
+    _setup(vcfclick_home)
+    out = _trio(vcfclick_home, "--category", "comphet", "--max-af", "0.3").stdout
+    assert "comphet candidate genes: 1" in out
+    assert "GENEX" in out
+    assert "paternal chr1:300" in out
+    assert "maternal chr1:400" in out

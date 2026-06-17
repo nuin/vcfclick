@@ -208,6 +208,8 @@ def trio(
         return {"error": f"unknown category {category!r}"}
     try:
         from cli.db_trio import (
+            Gates,
+            Trio,
             _has_reference_rows,
             _resolve_parents,
             _sole_ingest_id,
@@ -223,19 +225,9 @@ def trio(
             }
         sess = get_session()
         father, mother = _resolve_parents(sess, ingest_id, proband)
-        sql = trio_sql(
-            category,
-            ingest_id,
-            proband,
-            father,
-            mother,
-            min_gq=min_gq,
-            min_dp=min_dp,
-            max_af=max_af,
-            min_ab=min_ab,
-            max_ab=max_ab,
-            count_only=False,
-        )
+        trio_ctx = Trio(ingest_id, proband, father, mother)
+        gates = Gates(min_gq, min_dp, max_af, min_ab, max_ab)
+        sql = trio_sql(category, trio_ctx, gates, count_only=False)
         result = _run_sql(sql)
         result["father"] = father
         result["mother"] = mother

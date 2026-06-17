@@ -19,6 +19,11 @@ allele balance) and population-AF rarity:
   * dominant    proband het; exactly one parent carries, the other
                 provably hom-ref. Also needs --keep-reference (to prove
                 the non-carrier parent is reference, not no-call).
+  * comphet     two rare proband hets in the SAME gene, one inherited
+                from each parent (trans → both gene copies hit). Needs
+                gene annotations loaded (`vcfclick annotations load`) and
+                --keep-reference (to prove each non-carrier parent is
+                hom-ref). Reported per gene, not per variant.
 
 Honest scope: this is candidate FILTERING, not variant calling. Quality
 gates are only as strong as the FORMAT fields present (gq/dp/ad are
@@ -30,10 +35,30 @@ evidence; PL-based Bayesian refinement is a future enhancement.
 from __future__ import annotations
 
 import json
+from typing import NamedTuple
 
 import click
 
 from cli.main import _set_db, db
+
+
+class Trio(NamedTuple):
+    """A resolved family: the cohort and the three sample ids."""
+
+    ingest_id: str
+    proband: str
+    father: str
+    mother: str
+
+
+class Gates(NamedTuple):
+    """The tunable quality / rarity thresholds, passed together."""
+
+    min_gq: int
+    min_dp: int
+    max_af: float
+    min_ab: float
+    max_ab: float
 
 
 def _sole_ingest_id(name: str) -> str | None:
@@ -131,28 +156,32 @@ def _parent_joins(father: str, mother: str) -> str:
     )
 
 
-def trio_sql(
-    category: str,
-    ingest_id: str,
-    proband: str,
-    father: str,
-    mother: str,
-    *,
-    min_gq: int,
-    min_dp: int,
-    max_af: float,
-    min_ab: float,
-    max_ab: float,
-    count_only: bool,
-) -> str:
+def _where(trio: Trio, gates: Gates, model: str) -> str:
+    """Shared WHERE clause: the genotype model plus the quality / rarity
+    gates, scoped to this proband and ingest."""
+    from storage import sql_quote_str
+
+    predicate = " AND ".join(
+        [
+            model,
+            _quality_gate("g", gates.min_gq, gates.min_dp),
+            _quality_gate("f", gates.min_gq, gates.min_dp),
+            _quality_gate("m", gates.min_gq, gates.min_dp),
+            _het_ab_gate("g", gates.min_ab, gates.max_ab),
+            f"(v.info_AF IS NULL OR v.info_AF <= {gates.max_af})",
+        ]
+    )
+    return (
+        f"g.ingest_id = {sql_quote_str(trio.ingest_id)} "
+        f"AND g.sample_id = {sql_quote_str(trio.proband)} AND {predicate}"
+    )
+
+
+def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> str:
     """Build the SQL for one inheritance model. The proband row is `g`;
     parents are joined as `f`/`m`; `v` brings population AF."""
-    from storage import count_expr, sql_quote_str
+    from storage import count_expr
 
-    iid = sql_quote_str(ingest_id)
-    pro = sql_quote_str(proband)
-
-    # Per-model genotype predicate.
     if category == "denovo":
         model = "g.gt > 0 AND f.gt = 0 AND m.gt = 0"
     elif category == "recessive":
@@ -162,29 +191,50 @@ def trio_sql(
     else:
         raise ValueError(f"unknown category {category!r}")
 
-    gates = " AND ".join(
-        [
-            model,
-            _quality_gate("g", min_gq, min_dp),
-            _quality_gate("f", min_gq, min_dp),
-            _quality_gate("m", min_gq, min_dp),
-            _het_ab_gate("g", min_ab, max_ab),
-            f"(v.info_AF IS NULL OR v.info_AF <= {max_af})",
-        ]
-    )
-    where = f"g.ingest_id = {iid} AND g.sample_id = {pro} AND {gates}"
-
+    joins = _parent_joins(trio.father, trio.mother)
+    where = _where(trio, gates, model)
     if count_only:
-        return (
-            f"SELECT {count_expr()} FROM genotypes g {_parent_joins(father, mother)} "
-            f"WHERE {where}"
-        )
+        return f"SELECT {count_expr()} FROM genotypes g {joins} WHERE {where}"
     return (
         "SELECT g.chrom, g.pos, g.ref, g.alt, g.gt AS proband_gt, "
         "f.gt AS father_gt, m.gt AS mother_gt, v.info_AF AS af "
-        f"FROM genotypes g {_parent_joins(father, mother)} "
+        f"FROM genotypes g {joins} WHERE {where} ORDER BY g.chrom, g.pos"
+    )
+
+
+def _comphet_sql(trio: Trio, gates: Gates) -> str:
+    """Candidate variants for compound-het: each is a rare proband het
+    inherited from exactly one parent (the dominant pattern), tagged with
+    parent-of-origin. The gene grouping happens in Python — genes live in
+    the annotation store, which can't be SQL-joined to the cohort."""
+    model = "g.gt = 1 AND ((f.gt > 0 AND m.gt = 0) OR (f.gt = 0 AND m.gt > 0))"
+    where = _where(trio, gates, model)
+    origin = (
+        "CASE WHEN f.gt > 0 AND m.gt = 0 THEN 'paternal' "
+        "WHEN m.gt > 0 AND f.gt = 0 THEN 'maternal' END AS origin"
+    )
+    return (
+        f"SELECT g.chrom, g.pos, g.ref, g.alt, v.info_AF AS af, {origin} "
+        f"FROM genotypes g {_parent_joins(trio.father, trio.mother)} "
         f"WHERE {where} ORDER BY g.chrom, g.pos"
     )
+
+
+def _comphet_genes(candidate_rows: list) -> dict:
+    """Group origin-tagged candidate variants by gene, keeping only genes
+    that carry BOTH a paternal and a maternal het (trans configuration →
+    both gene copies hit). A variant overlapping several genes counts for
+    each. Returns {gene_symbol: {"paternal": [...], "maternal": [...]}}."""
+    from annotations import gene_at
+
+    genes: dict = {}
+    for chrom, pos, ref, alt, af, origin in candidate_rows:
+        if origin not in ("paternal", "maternal"):
+            continue
+        for gr in gene_at(chrom, int(pos)):
+            entry = genes.setdefault(gr.gene_symbol, {"paternal": [], "maternal": []})
+            entry[origin].append((chrom, pos, ref, alt, af))
+    return {sym: e for sym, e in genes.items() if e["paternal"] and e["maternal"]}
 
 
 def _resolve_parents(sess, ingest_id: str, proband: str) -> tuple[str, str]:
@@ -232,7 +282,7 @@ def _has_reference_rows(sess) -> bool:
 @click.option("--proband", required=True, help="Sample id of the affected child.")
 @click.option(
     "--category",
-    type=click.Choice(["denovo", "recessive", "dominant", "all"]),
+    type=click.Choice(["denovo", "recessive", "dominant", "comphet", "all"]),
     default="all",
     show_default=True,
     help="Inheritance model. 'all' prints per-model candidate counts.",
@@ -275,44 +325,52 @@ def db_trio(
             "(see `vcfclick merge`)."
         )
     father, mother = _resolve_parents(sess, ingest_id, proband)
+    trio = Trio(ingest_id, proband, father, mother)
+    gates = Gates(min_gq, min_dp, max_af, min_ab, max_ab)
 
     has_ref = _has_reference_rows(sess)
-    needs_ref = {"denovo", "dominant"}
+    needs_ref = {"denovo", "dominant", "comphet"}
 
     def run(cat: str, count_only: bool):
-        sql = trio_sql(
-            cat,
-            ingest_id,
-            proband,
-            father,
-            mother,
-            min_gq=min_gq,
-            min_dp=min_dp,
-            max_af=max_af,
-            min_ab=min_ab,
-            max_ab=max_ab,
-            count_only=count_only,
-        )
+        sql = trio_sql(cat, trio, gates, count_only=count_only)
         return sess.query(sql, "JSONCompact").bytes().decode()
+
+    def comphet_genes() -> dict:
+        sql = _comphet_sql(trio, gates)
+        rows = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+        return _comphet_genes(rows)
 
     click.echo(f"trio: proband={proband} father={father} mother={mother}")
     if not has_ref and (category in needs_ref or category == "all"):
         click.echo(
             "  note: this database has no stored hom-reference calls, so "
-            "de-novo/dominant cannot prove a parent is 0/0 (vs no-call). "
-            "Re-ingest with `--keep-reference` for those models.",
+            "de-novo/dominant/comphet cannot prove a parent is 0/0 (vs "
+            "no-call). Re-ingest with `--keep-reference` for those models.",
             err=True,
         )
 
-    cats = ["denovo", "recessive", "dominant"] if category == "all" else [category]
-
     if category == "all":
-        for cat in cats:
+        for cat in ["denovo", "recessive", "dominant"]:
             n = json.loads(run(cat, count_only=True))["data"][0][0]
             blocked = (
                 "" if has_ref or cat not in needs_ref else "  (needs --keep-reference)"
             )
             click.echo(f"  {cat:10s} {n:>6}{blocked}")
+        genes = comphet_genes()
+        blocked = "" if has_ref else "  (needs --keep-reference)"
+        click.echo(f"  {'comphet':10s} {len(genes):>6}{blocked}  genes")
+        return
+
+    if category == "comphet":
+        genes = comphet_genes()
+        click.echo(f"\ncomphet candidate genes: {len(genes)}")
+        for sym in sorted(genes):
+            entry = genes[sym]
+            click.echo(f"  {sym}")
+            for origin in ("paternal", "maternal"):
+                for chrom, pos, ref, alt, af in entry[origin]:
+                    af_s = "NA" if af is None else f"{af}"
+                    click.echo(f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}")
         return
 
     data = json.loads(run(category, count_only=False))["data"]
