@@ -82,8 +82,9 @@ def load(vcf_path: Path, replace: bool = False) -> int:
 
     `replace=True` clears the table first; the default appends, so several
     per-chromosome slices can be loaded incrementally. Returns the number
-    of rows written. Duplicate (chrom, pos, ref, alt) keys keep the first
-    occurrence.
+    of rows written. Within one input file a duplicate (chrom, pos, ref,
+    alt) key keeps the first occurrence; re-loading a key already in the
+    table replaces it (latest load wins).
     """
     seen: set[tuple[str, int, str, str]] = set()
     rows: list[tuple] = []

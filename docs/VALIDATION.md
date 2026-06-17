@@ -39,9 +39,22 @@ parents' BEDs:
 | both parents **in-BED** (confident hom-ref → real de novo) | **4** |
 | ≥1 parent **out-of-BED** (no-call → unsupported) | 46 |
 
-The naive rule over-calls de novo by **~12×**. `tests/fixtures/giab/denovo_trio.vcf.gz`
-encodes 7 of these sites (the 4 confident + 3 no-call) with real HG002
-`GT:GQ:DP:AD`. On that fixture:
+The naive rule over-calls de novo by **~12×**. The 50/46 split is from a
+one-time scan, reproducible by intersecting the HG002 variant calls with
+the parents' BEDs:
+
+```bash
+B=https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio
+# HG002-only SNVs in the region, then keep those inside both parents' BEDs
+tabix $B/HG002_NA24385_son/NISTv4.2.1/GRCh38/HG002_GRCh38_1_22_v4.2.1_benchmark.vcf.gz chr20:1000000-6000000
+tabix $B/HG003_NA24149_father/NISTv4.2.1/GRCh38/HG003_GRCh38_1_22_v4.2.1_benchmark.vcf.gz chr20:1000000-6000000
+# parent confident-hom-ref regions:
+curl -s $B/HG003_NA24149_father/NISTv4.2.1/GRCh38/HG003_GRCh38_1_22_v4.2.1_benchmark_noinconsistent.bed
+```
+
+The **checked-in CI test** exercises a representative 7-site subset.
+`tests/fixtures/giab/denovo_trio.vcf.gz` encodes the 4 confident + 3
+no-call sites with real HG002 `GT:GQ:DP:AD`. On that fixture:
 
 - `vcfclick db trio --category denovo` **(ingested `--keep-reference`)**
   returns **exactly the 4** confident sites and **excludes the 3**
@@ -51,8 +64,10 @@ encodes 7 of these sites (the 4 confident + 3 no-call) with real HG002
 
 ## 2. External cross-checks — `bcftools +mendelian2` and `slivar`
 
-Two independent, established tools agree with vcfclick **site-for-site**
-on the same fixtures.
+Two independent, established tools were run on the same fixtures and
+agree with vcfclick **site-for-site**. The `bcftools +mendelian2` check
+is asserted in CI; the `slivar` comparison is a documented one-time run
+(slivar ships a Linux binary only), captured below.
 
 `bcftools +mendelian2 -m e` flags as Mendelian-erroneous **exactly the 4
 sites** vcfclick calls de novo, and — like vcfclick — does not flag the 3

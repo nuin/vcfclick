@@ -155,11 +155,13 @@ compound-het candidate gene, and no de novo. The golden fixture
 the header.
 
 De novo is validated harder, against an **independent** truth: GIAB's
-high-confidence BED. Across a 5 Mb chr20 region HG002 carries 50 variants
-absent from both parents (naive de novos), but only **4** have both
-parents confidently hom-ref per the BED — vcfclick's `--keep-reference`
-de novo recovers exactly those 4 and drops the 46 no-call false
-positives, and `bcftools +mendelian2` independently flags the same 4. See
+high-confidence BED. A one-time scan of a 5 Mb chr20 region found HG002
+carries 50 variants absent from both parents (naive de novos), but only
+**4** have both parents confidently hom-ref per the BED; the other 46
+have a no-call parent. The checked-in test exercises a representative
+7-site subset — vcfclick's `--keep-reference` de novo recovers exactly
+the 4 confident sites and excludes the 3 sampled no-call sites, and
+`bcftools +mendelian2` independently flags the same 4. See
 [Validation](VALIDATION.md).
 
 ## Natural language
