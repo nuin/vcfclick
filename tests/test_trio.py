@@ -20,6 +20,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -277,3 +279,140 @@ def test_giab_real_trio_all_counts(vcfclick_home, tmp_path, monkeypatch):
     assert "recessive       2" in out
     assert "dominant        3" in out
     assert "comphet         1" in out
+
+
+# ───────── de-novo VALIDATION: GIAB benchmark BED as ground truth ─────────
+#
+# denovo_trio.vcf.gz holds 7 chr20 sites where HG002 carries a variant
+# absent from both parents' variant calls. GIAB's high-confidence BED is
+# the independent truth: at 4 sites BOTH parents are inside their BED
+# (confident hom-ref → real de novo); at 3 a parent is outside it
+# (no-call). A genome-wide scan of this 5 Mb region found 50 such
+# HG002-only sites — only 4 confident, 46 no-call — so the naive "neither
+# parent carries" rule would over-call de novo ~12x. See docs/VALIDATION.md.
+
+DENOVO_VCF = FIXTURES / "giab" / "denovo_trio.vcf.gz"
+DENOVO_PED = FIXTURES / "giab" / "denovo_trio.ped"
+DENOVO_SITES = {2202238, 5739093, 5864738, 5893991}  # both parents in-BED
+NOCALL_SITES = {1184647, 1339613, 1362221}  # a parent out-of-BED (no-call)
+
+
+def _setup_denovo(home: Path) -> None:
+    _vc(home, "db", "create", "dn")
+    _vc(
+        home,
+        "db",
+        "ingest",
+        "dn",
+        str(DENOVO_VCF),
+        "--cohort",
+        "fam",
+        "--ingest-id",
+        "g1",
+        "--serial",
+        "--keep-reference",
+    )
+    _vc(home, "db", "ped", "dn", str(DENOVO_PED))
+
+
+def _denovo_positions(out: str) -> set[int]:
+    return {int(t.split(":")[1]) for t in out.split() if t.startswith("chr20:")}
+
+
+def test_giab_denovo_recovers_confident_excludes_nocall(vcfclick_home):
+    """Validation: vcfclick de novo returns exactly the 4 sites where both
+    parents are confidently hom-ref per the GIAB BED, and excludes the 3
+    where a parent is a no-call — even though all 7 look de novo to the
+    naive 'neither parent carries' rule."""
+    _setup_denovo(vcfclick_home)
+    out = _vc(
+        vcfclick_home,
+        "db",
+        "trio",
+        "dn",
+        "--proband",
+        "HG002",
+        "--category",
+        "denovo",
+        "--max-af",
+        "1.0",
+    ).stdout
+    assert "denovo candidates: 4" in out
+    assert _denovo_positions(out) == DENOVO_SITES
+    assert not (_denovo_positions(out) & NOCALL_SITES)
+
+
+def test_giab_denovo_requires_keep_reference(vcfclick_home):
+    """The same real data without --keep-reference yields 0: a parent's
+    absence is a no-call, not proof of hom-ref."""
+    _vc(vcfclick_home, "db", "create", "dn")
+    _vc(
+        vcfclick_home,
+        "db",
+        "ingest",
+        "dn",
+        str(DENOVO_VCF),
+        "--cohort",
+        "fam",
+        "--ingest-id",
+        "g1",
+        "--serial",
+    )
+    _vc(vcfclick_home, "db", "ped", "dn", str(DENOVO_PED))
+    out = _vc(
+        vcfclick_home,
+        "db",
+        "trio",
+        "dn",
+        "--proband",
+        "HG002",
+        "--category",
+        "denovo",
+        "--max-af",
+        "1.0",
+    ).stdout
+    assert "denovo candidates: 0" in out
+
+
+def _has_mendelian2() -> bool:
+    # The plugin's `-h` exits non-zero and prints to stderr, so detect it
+    # by the help text rather than the return code.
+    if not shutil.which("bcftools"):
+        return False
+    r = subprocess.run(
+        ["bcftools", "+mendelian2", "-h"], capture_output=True, text=True
+    )
+    return "endelian" in (r.stdout + r.stderr)
+
+
+@pytest.mark.skipif(not _has_mendelian2(), reason="bcftools +mendelian2 unavailable")
+def test_giab_denovo_matches_bcftools_mendelian(vcfclick_home):
+    """External cross-check: bcftools +mendelian2 independently flags the
+    SAME 4 sites as Mendelian-erroneous that vcfclick calls de novo."""
+    r = subprocess.run(
+        ["bcftools", "+mendelian2", "-P", str(DENOVO_PED), str(DENOVO_VCF), "-m", "e"],
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, r.stderr
+    flagged = {
+        int(line.split("\t")[1])
+        for line in r.stdout.splitlines()
+        if line and not line.startswith("#")
+    }
+    assert flagged == DENOVO_SITES
+
+    _setup_denovo(vcfclick_home)
+    out = _vc(
+        vcfclick_home,
+        "db",
+        "trio",
+        "dn",
+        "--proband",
+        "HG002",
+        "--category",
+        "denovo",
+        "--max-af",
+        "1.0",
+    ).stdout
+    assert _denovo_positions(out) == flagged

@@ -140,6 +140,14 @@ compound-het candidate gene, and no de novo. The golden fixture
 (`tests/fixtures/giab/cftr_trio.vcf.gz`) records its GIAB source URLs in
 the header.
 
+De novo is validated harder, against an **independent** truth: GIAB's
+high-confidence BED. Across a 5 Mb chr20 region HG002 carries 50 variants
+absent from both parents (naive de novos), but only **4** have both
+parents confidently hom-ref per the BED — vcfclick's `--keep-reference`
+de novo recovers exactly those 4 and drops the 46 no-call false
+positives, and `bcftools +mendelian2` independently flags the same 4. See
+[Validation](VALIDATION.md).
+
 ## Natural language
 
 The MCP server teaches an LLM the pedigree table, the inheritance

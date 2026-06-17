@@ -20,12 +20,18 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   subprocesses) can be used instead of the bundled default.
 
 ### Tests
-- **GIAB benchmark golden for trio analysis.** The inheritance models are
-  now tested against real genotypes from the Genome in a Bottle Ashkenazi
-  trio (HG002/HG003/HG004, NIST v4.2.1 GRCh38) at CFTR sites, not only
-  hand-built fixtures — reproducing recessive, dominant, and compound-het
-  (CFTR) patterns on published benchmark data. Source URLs are recorded in
-  the fixture header.
+- **GIAB benchmark validation for trio analysis** (`docs/VALIDATION.md`).
+  The inheritance models are tested against real genotypes from the
+  Genome in a Bottle Ashkenazi trio (HG002/HG003/HG004, NIST v4.2.1
+  GRCh38), not only hand-built fixtures — recessive, dominant, and
+  compound-het (CFTR) reproduce on published data. De novo is validated
+  against an **independent** ground truth: GIAB's high-confidence BED. In
+  a 5 Mb chr20 region 50 HG002-only variants look de novo to the naive
+  rule, but only 4 have both parents confidently hom-ref per the BED;
+  vcfclick's `--keep-reference` de novo recovers exactly those 4 and drops
+  the 46 no-call false positives, and `bcftools +mendelian2` (an external
+  tool) independently flags the same 4. Source URLs are in the fixture
+  headers.
 
 ## [0.6.0] — 2026-06-16
 

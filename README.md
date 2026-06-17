@@ -121,7 +121,11 @@ Start here:
 - [MCP and annotations](docs/MCP.md) - configure an MCP client, load
   gene/ClinVar references, and use visible LLM-generated SQL.
 - [Trio / family analysis](docs/TRIO.md) - merge per-sample VCFs, load
-  a pedigree, and report de-novo / recessive / dominant candidates.
+  a pedigree, and report de-novo / recessive / dominant / compound-het
+  candidates.
+- [Trio validation](docs/VALIDATION.md) - de-novo recovery against the
+  GIAB benchmark trio with its high-confidence BED as ground truth,
+  cross-checked with `bcftools +mendelian2`.
 - [Combining call sets](docs/COMBINE.md) - merge multiple callers of the
   same cohort with `set=` provenance and consensus filtering (the GATK3
   CombineVariants GATK4 removed).
