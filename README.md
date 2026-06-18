@@ -34,6 +34,12 @@ cohort. It does not require installing vcfclick. It is a quick way to
 see the core interaction: ask a genomics question, inspect the generated
 SQL, and view the result.
 
+**[Run the demo notebook in Colab](https://colab.research.google.com/github/nuin/vcfclick/blob/main/examples/vcfclick-demo.ipynb)**
+([`examples/vcfclick-demo.ipynb`](examples/vcfclick-demo.ipynb)) — a
+self-contained notebook that installs vcfclick, downloads its own VCFs,
+and runs the headline flows: ingest → SQL, GIAB-validated trio de novo,
+compound-het + gnomAD rarity filtering, sample QC, and `combine`.
+
 The installable CLI is different: it creates local databases under your
 `VCFCLICK_HOME` (default `~/.vcfclick`) and can use embedded chDB
 (ClickHouse engine) or DuckDB as the storage backend.

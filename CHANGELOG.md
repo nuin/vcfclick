@@ -6,6 +6,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **Runnable demo notebook** (`examples/vcfclick-demo.ipynb`, Colab-ready).
+  Self-contained: it installs vcfclick, downloads its own example VCFs from
+  the repo, and walks the headline flows — ingest → SQL, GIAB-validated trio
+  de novo, compound-het + gnomAD rarity filtering, sample QC, and `combine` —
+  with real captured outputs. Doubles as a release smoke-test.
+
 ## [0.7.0] — 2026-06-17
 
 ### Added
