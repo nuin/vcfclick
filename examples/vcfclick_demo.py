@@ -35,21 +35,19 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        # vcfclick — an interactive demo
+    mo.md(r"""
+    # vcfclick — an interactive demo
 
-        [vcfclick](https://github.com/nuin/vcfclick) turns VCF cohorts into
-        local, queryable SQL databases — trio/family analysis, gnomAD rarity
-        filtering, sample QC, and a GATK3-`CombineVariants` reimplementation.
+    [vcfclick](https://github.com/nuin/vcfclick) turns VCF cohorts into
+    local, queryable SQL databases — trio/family analysis, gnomAD rarity
+    filtering, sample QC, and a GATK3-`CombineVariants` reimplementation.
 
-        This notebook **downloads its own data** and is **interactive**: edit
-        the SQL, change the inheritance model, drag the gnomAD-frequency
-        slider, flip `--keep-reference` — the results below re-compute live.
-        Trio analysis is validated against the **GIAB Ashkenazi trio**
-        ([docs/VALIDATION.md](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)).
-        """
-    )
+    This notebook **downloads its own data** and is **interactive**: edit
+    the SQL, change the inheritance model, drag the gnomAD-frequency
+    slider, flip `--keep-reference` — the results below re-compute live.
+    Trio analysis is validated against the **GIAB Ashkenazi trio**
+    ([docs/VALIDATION.md](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)).
+    """)
     return
 
 
@@ -76,7 +74,9 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md("""## Download the example data""")
+    mo.md("""
+    ## Download the example data
+    """)
     return
 
 
@@ -106,19 +106,17 @@ def _(DATA, mo, urllib, vcf):
         mo.md(f"Downloaded **{len(FILES)}** example VCFs · `vcfclick {vcf('--version')}`"),
         files_df,
     ])
-    return data_ready, files_df, pd
+    return data_ready, pd
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 1. SQL, live
+    mo.md(r"""
+    ## 1. SQL, live
 
-        Ingest a VCF, then **edit the query** below — the result re-runs as you
-        type.
-        """
-    )
+    Ingest a VCF, then **edit the query** below — the result re-runs as you
+    type.
+    """)
     return
 
 
@@ -143,22 +141,28 @@ def _(mo):
 
 
 @app.cell
-def _(demo_db, mo, sql, vcf):
-    mo.md("```\n" + vcf("db", "query", demo_db, sql.value) + "\n```")
+def _(demo_db, mo, pd, sql, vcf):
+    import io as _io
+
+    _out = vcf("db", "query", demo_db, sql.value, "--format", "CSVWithNames")
+    try:
+        _df = pd.read_csv(_io.StringIO(_out))
+        _view = mo.ui.table(_df, selection=None) if len(_df) else mo.md("_0 rows_")
+    except Exception:
+        _view = mo.md("```\n" + _out + "\n```")  # surface SQL errors as text
+    _view
     return
 
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 2. Trio analysis — pick a model, drag the rarity slider
+    mo.md(r"""
+    ## 2. Trio analysis — pick a model, drag the rarity slider
 
-        On the real GIAB CFTR trio. `comphet` groups two rare hets in the same
-        gene; the slider applies a **gnomAD popmax** rarity cut (1.0 = no
-        filter). Change either control and the candidate counts update.
-        """
-    )
+    On the real GIAB CFTR trio. `comphet` groups two rare hets in the same
+    gene; the slider applies a **gnomAD popmax** rarity cut (1.0 = no
+    filter). Change either control and the candidate counts update.
+    """)
     return
 
 
@@ -205,17 +209,15 @@ def _(category, fam_db, gnomad, mo, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 3. Why de novo needs `--keep-reference`
+    mo.md(r"""
+    ## 3. Why de novo needs `--keep-reference`
 
-        Toggle it. The genotype table is sparse, so a parent absent at a site
-        is `0/0` **or** a no-call `./.`. With `--keep-reference` (parent `0/0`
-        stored) vcfclick proves the **4** confident de novos; without it,
-        absence is undecidable so it returns **0** rather than guess. Same real
-        GIAB data, both ways.
-        """
-    )
+    Toggle it. The genotype table is sparse, so a parent absent at a site
+    is `0/0` **or** a no-call `./.`. With `--keep-reference` (parent `0/0`
+    stored) vcfclick proves the **4** confident de novos; without it,
+    absence is undecidable so it returns **0** rather than guess. Same real
+    GIAB data, both ways.
+    """)
     return
 
 
@@ -253,14 +255,12 @@ def _(dn_dbs, keepref, mo, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 4. Per-sample QC + chrX sex check
+    mo.md(r"""
+    ## 4. Per-sample QC + chrX sex check
 
-        `db qc` infers sex from chrX heterozygosity and flags it against the
-        pedigree — the sample-swap signal (`SWAP`).
-        """
-    )
+    `db qc` infers sex from chrX heterozygosity and flags it against the
+    pedigree — the sample-swap signal (`SWAP`).
+    """)
     return
 
 
@@ -280,15 +280,13 @@ def _(DATA, data_ready, json, pd, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 5. Combine call sets (GATK3 `CombineVariants`)
+    mo.md(r"""
+    ## 5. Combine call sets (GATK3 `CombineVariants`)
 
-        Union call sets that may *share* samples, resolving overlaps by input
-        priority with `set=` provenance. Drag `--min-callsets` to keep only
-        consensus sites.
-        """
-    )
+    Union call sets that may *share* samples, resolving overlaps by input
+    priority with `set=` provenance. Drag `--min-callsets` to keep only
+    consensus sites.
+    """)
     return
 
 
@@ -316,17 +314,15 @@ def _(DATA, data_ready, min_callsets, mo, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## Next steps
+    mo.md(r"""
+    ## Next steps
 
-        - **Web UI:** `vcfclick web demo` — a local SQL explorer + NL→SQL +
-          trio/combine panels.
-        - **Docs:** [README](https://github.com/nuin/vcfclick) ·
-          [Trio](https://github.com/nuin/vcfclick/blob/main/docs/TRIO.md) ·
-          [Validation](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)
-        """
-    )
+    - **Web UI:** `vcfclick web demo` — a local SQL explorer + NL→SQL +
+      trio/combine panels.
+    - **Docs:** [README](https://github.com/nuin/vcfclick) ·
+      [Trio](https://github.com/nuin/vcfclick/blob/main/docs/TRIO.md) ·
+      [Validation](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)
+    """)
     return
 
 
