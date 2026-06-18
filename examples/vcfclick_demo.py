@@ -34,19 +34,17 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        # vcfclick — a reactive demo
+    mo.md(r"""
+    # vcfclick — a reactive demo
 
-        [vcfclick](https://github.com/nuin/vcfclick) turns VCF cohorts into
-        local, queryable SQL databases — trio/family analysis, gnomAD rarity
-        filtering, sample QC, and a GATK3-`CombineVariants` reimplementation.
+    [vcfclick](https://github.com/nuin/vcfclick) turns VCF cohorts into
+    local, queryable SQL databases — trio/family analysis, gnomAD rarity
+    filtering, sample QC, and a GATK3-`CombineVariants` reimplementation.
 
-        This notebook **downloads its own data** and runs end to end. Trio
-        analysis is validated against the **GIAB Ashkenazi trio** benchmark
-        ([docs/VALIDATION.md](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)).
-        """
-    )
+    This notebook **downloads its own data** and runs end to end. Trio
+    analysis is validated against the **GIAB Ashkenazi trio** benchmark
+    ([docs/VALIDATION.md](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)).
+    """)
     return
 
 
@@ -89,14 +87,12 @@ def _(DATA, mo, urllib, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 1. A cohort in, SQL out
+    mo.md(r"""
+    ## 1. A cohort in, SQL out
 
-        Ingest a VCF, query it. Variants/genotypes/samples land in an embedded
-        ClickHouse (chDB) database; queries run in-process.
-        """
-    )
+    Ingest a VCF, query it. Variants/genotypes/samples land in an embedded
+    ClickHouse (chDB) database; queries run in-process.
+    """)
     return
 
 
@@ -116,20 +112,18 @@ def _(DATA, mo, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 2. Trio de novo — and why it's *defensible*
+    mo.md(r"""
+    ## 2. Trio de novo — and why it's *defensible*
 
-        De novo means the child carries a variant **neither parent has** —
-        which needs the parents to be *provably* hom-reference. The sparse
-        genotype table can't tell `0/0` from `./.`, so de novo requires a
-        `--keep-reference` ingest that stores confident parent `0/0`.
+    De novo means the child carries a variant **neither parent has** —
+    which needs the parents to be *provably* hom-reference. The sparse
+    genotype table can't tell `0/0` from `./.`, so de novo requires a
+    `--keep-reference` ingest that stores confident parent `0/0`.
 
-        The fixture is the real GIAB trio at 7 chr20 sites: 4 confident de
-        novos (both parents in GIAB's high-confidence BED), 3 with a no-call
-        parent.
-        """
-    )
+    The fixture is the real GIAB trio at 7 chr20 sites: 4 confident de
+    novos (both parents in GIAB's high-confidence BED), 3 with a no-call
+    parent.
+    """)
     return
 
 
@@ -165,15 +159,13 @@ def _(DATA, mo, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 3. Compound-het + gnomAD rarity filtering
+    mo.md(r"""
+    ## 3. Compound-het + gnomAD rarity filtering
 
-        A real CFTR slice reproduces every model; CFTR is a genuine
-        compound-het candidate gene. Loading real gnomAD frequencies and adding
-        `--gnomad-max-af` then drops the variants that are actually common.
-        """
-    )
+    A real CFTR slice reproduces every model; CFTR is a genuine
+    compound-het candidate gene. Loading real gnomAD frequencies and adding
+    `--gnomad-max-af` then drops the variants that are actually common.
+    """)
     return
 
 
@@ -204,15 +196,13 @@ def _(DATA, mo, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 4. Per-sample QC + a chrX sex check
+    mo.md(r"""
+    ## 4. Per-sample QC + a chrX sex check
 
-        `db qc` infers sex from chrX heterozygosity and flags it against the
-        pedigree — the sample-swap signal. Read straight into a DataFrame
-        (marimo renders it interactively).
-        """
-    )
+    `db qc` infers sex from chrX heterozygosity and flags it against the
+    pedigree — the sample-swap signal. Read straight into a DataFrame
+    (marimo renders it interactively).
+    """)
     return
 
 
@@ -234,14 +224,12 @@ def _(DATA, json, vcf):
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## 5. Combine call sets — the GATK3 `CombineVariants` GATK4 removed
+    mo.md(r"""
+    ## 5. Combine call sets — the GATK3 `CombineVariants` GATK4 removed
 
-        `combine` unions call sets that may *share* samples, resolving overlaps
-        by input priority and annotating each record with `set=` provenance.
-        """
-    )
+    `combine` unions call sets that may *share* samples, resolving overlaps
+    by input priority and annotating each record with `set=` provenance.
+    """)
     return
 
 
@@ -276,17 +264,33 @@ def _():
 
 @app.cell(hide_code=True)
 def _(mo):
-    mo.md(
-        r"""
-        ## Next steps
+    mo.md(r"""
+    ## Next steps
 
-        - **Web UI:** `vcfclick web demo` — a local SQL explorer + NL→SQL +
-          trio/combine panels.
-        - **Docs:** [README](https://github.com/nuin/vcfclick) ·
-          [Trio](https://github.com/nuin/vcfclick/blob/main/docs/TRIO.md) ·
-          [Validation](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)
+    - **Web UI:** `vcfclick web demo` — a local SQL explorer + NL→SQL +
+      trio/combine panels.
+    - **Docs:** [README](https://github.com/nuin/vcfclick) ·
+      [Trio](https://github.com/nuin/vcfclick/blob/main/docs/TRIO.md) ·
+      [Validation](https://github.com/nuin/vcfclick/blob/main/docs/VALIDATION.md)
+    """)
+    return
+
+
+@app.cell
+def _(mo):
+    _df = mo.sql(
+        f"""
+        SELECT * FROM
         """
     )
+    return
+
+
+@app.cell(hide_code=True)
+def _(mo):
+    mo.md(r"""
+ 
+    """)
     return
 
 
