@@ -390,9 +390,9 @@ def test_reingest_with_multi_allelic_preserves_prior_data(vcfclick_home):
         "smoke",
         "SELECT count() FROM samples WHERE ingest_id = 'batch_a' AND sample_id = 'S3'",
     )
-    assert out.strip() == "1", (
-        f"sample S3 from prior ingest should survive failed re-ingest: {out!r}"
-    )
+    assert (
+        out.strip() == "1"
+    ), f"sample S3 from prior ingest should survive failed re-ingest: {out!r}"
 
 
 def test_ingest_id_rejected_with_quotes():

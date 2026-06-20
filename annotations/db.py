@@ -32,7 +32,6 @@ from pathlib import Path
 
 import duckdb
 
-
 DUCKDB_PATH = Path(__file__).parent / "annotations.duckdb"
 
 

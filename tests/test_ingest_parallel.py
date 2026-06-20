@@ -188,6 +188,6 @@ def test_variant_density_includes_final_linear_bucket():
     assert 0 in density, f"pre-existing bucket vanished: {density}"
     # Load-bearing: pos bucket 1 only appears because the trailing
     # linear bucket gets a placeholder cost.
-    assert 1 in density, (
-        f"trailing-bucket fix regressed — pos bucket 1 missing: {density}"
-    )
+    assert (
+        1 in density
+    ), f"trailing-bucket fix regressed — pos bucket 1 missing: {density}"

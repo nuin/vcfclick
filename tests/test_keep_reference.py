@@ -88,9 +88,11 @@ def test_keep_reference_stores_homref_at_variant_sites(vcfclick_home):
         "trio",
         "SELECT sample_id, gt FROM genotypes WHERE pos = 100 ORDER BY sample_id",
     )
-    assert rows == [["CHILD", 1], ["FATHER", 0], ["MOTHER", 0]], (
-        f"de-novo site should have child het + both parents hom-ref: {rows}"
-    )
+    assert rows == [
+        ["CHILD", 1],
+        ["FATHER", 0],
+        ["MOTHER", 0],
+    ], f"de-novo site should have child het + both parents hom-ref: {rows}"
 
 
 def test_keep_reference_still_drops_no_calls(vcfclick_home):
@@ -103,9 +105,10 @@ def test_keep_reference_still_drops_no_calls(vcfclick_home):
         "trio",
         "SELECT sample_id FROM genotypes WHERE pos = 500 ORDER BY sample_id",
     )
-    assert rows == [["CHILD"], ["MOTHER"]], (
-        f"FATHER no-call must be absent, not stored: {rows}"
-    )
+    assert rows == [
+        ["CHILD"],
+        ["MOTHER"],
+    ], f"FATHER no-call must be absent, not stored: {rows}"
     # This is the crux: de novo at 500 is NOT provable (father unknown),
     # whereas at 100 it IS (both parents have a stored gt=0).
     father_100 = _rows(

@@ -55,7 +55,7 @@ def combine(
 ) -> None:
     """Combine two or more VCF call sets into one, with set= provenance.
 
-    Inputs are unioned by (chrom, pos, ref, alt) and must be decomposed
+    Inputs are unionized by (chrom, pos, ref, alt) and must be decomposed
     (one ALT per record). A sample shared across inputs is resolved by
     PRIORITY — input order is highest-first. Output carries GT plus a
     set= INFO field; per-sample FORMAT fields (GQ/DP/AD) are not yet

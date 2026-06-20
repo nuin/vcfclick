@@ -9,7 +9,6 @@ import click
 
 from cli.main import _set_db, db
 
-
 DEFAULT_WORKERS = 4
 
 

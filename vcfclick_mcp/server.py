@@ -17,14 +17,11 @@ import json
 
 from mcp.server.fastmcp import FastMCP
 
-from annotations import (
-    clinvar_lookup as _clinvar_lookup,
-    gene_at as _gene_at,
-    gnomad_af as _gnomad_af,
-    position_for_gene as _position_for_gene,
-)
+from annotations import clinvar_lookup as _clinvar_lookup
+from annotations import gene_at as _gene_at
+from annotations import gnomad_af as _gnomad_af
+from annotations import position_for_gene as _position_for_gene
 from storage import get_session
-
 
 mcp = FastMCP("vcfclick")
 

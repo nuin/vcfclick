@@ -6,7 +6,6 @@ import click
 
 from cli.main import _set_db, db
 
-
 _STATS_SKIP = {
     "variants": {
         "ingest_id",

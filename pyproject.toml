@@ -67,6 +67,7 @@ vcfclick = "cli.main:cli"
 dev = [
     "pytest>=8.0",
     "ruff>=0.15",
+    "isort>=8.0.1",
     "httpx>=0.27",
     "pytest-rerunfailures>=14.0",
     "pytest-timeout>=2.3",
@@ -83,6 +84,9 @@ dev = [
 # rescue flakes without masking real failures. No real test needs 180s.
 timeout = 180
 addopts = "--reruns 2 --reruns-delay 2 --only-rerun rc=- --only-rerun returncode=- --only-rerun pthread_mutex --only-rerun recursive_mutex --only-rerun glibc --only-rerun Timeout"
+
+[tool.isort]
+profile = "black"
 
 [build-system]
 requires = ["hatchling"]

@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import importlib
 
-
 for _module in (
     "cli.db_basic",
     "cli.db_bundle",
@@ -26,6 +25,5 @@ for _module in (
 # these helpers from cli.db before the command modules were split.
 from cli.db_batch import _derive_ingest_id  # noqa: E402,F401
 from cli.db_diff import _quote_str  # noqa: E402,F401
-
 
 __all__ = ["_derive_ingest_id", "_quote_str"]

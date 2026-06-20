@@ -86,13 +86,21 @@ def _(DATA, mo, urllib, vcf):
 
     RAW = "https://raw.githubusercontent.com/nuin/vcfclick/main/tests/fixtures/"
     FILES = [
-        "tiny.vcf.gz", "qc_sex.vcf.gz", "qc_sex.ped", "gnomad_cftr.vcf.gz",
-        "callset_a.vcf", "callset_b.vcf",
-        "giab/cftr_trio.vcf.gz", "giab/cftr_trio.ped",
-        "giab/denovo_trio.vcf.gz", "giab/denovo_trio.ped",
+        "tiny.vcf.gz",
+        "qc_sex.vcf.gz",
+        "qc_sex.ped",
+        "gnomad_cftr.vcf.gz",
+        "callset_a.vcf",
+        "callset_b.vcf",
+        "giab/cftr_trio.vcf.gz",
+        "giab/cftr_trio.ped",
+        "giab/denovo_trio.vcf.gz",
+        "giab/denovo_trio.ped",
     ]
     _rows = []
-    with mo.status.progress_bar(total=len(FILES), title="Downloading from GitHub") as _bar:
+    with mo.status.progress_bar(
+        total=len(FILES), title="Downloading from GitHub"
+    ) as _bar:
         for _f in FILES:
             _name = _f.split("/")[-1]
             _bar.update(subtitle=_name)
@@ -102,10 +110,14 @@ def _(DATA, mo, urllib, vcf):
     files_df = pd.DataFrame(_rows)
     data_ready = True  # downstream cells depend on this so they wait for the data
 
-    mo.vstack([
-        mo.md(f"Downloaded **{len(FILES)}** example VCFs · `vcfclick {vcf('--version')}`"),
-        files_df,
-    ])
+    mo.vstack(
+        [
+            mo.md(
+                f"Downloaded **{len(FILES)}** example VCFs · `vcfclick {vcf('--version')}`"
+            ),
+            files_df,
+        ]
+    )
     return data_ready, pd
 
 
@@ -124,8 +136,17 @@ def _(mo):
 def _(DATA, data_ready, vcf):
     if data_ready:
         vcf("db", "create", "demo")
-        vcf("db", "ingest", "demo", str(DATA / "tiny.vcf.gz"),
-            "--cohort", "study", "--ingest-id", "v1", "--serial")
+        vcf(
+            "db",
+            "ingest",
+            "demo",
+            str(DATA / "tiny.vcf.gz"),
+            "--cohort",
+            "study",
+            "--ingest-id",
+            "v1",
+            "--serial",
+        )
     demo_db = "demo"
     return (demo_db,)
 
@@ -134,7 +155,9 @@ def _(DATA, data_ready, vcf):
 def _(mo):
     sql = mo.ui.text_area(
         value="SELECT chrom, pos, ref, alt FROM variants ORDER BY pos",
-        label="SQL", full_width=True, rows=2,
+        label="SQL",
+        full_width=True,
+        rows=2,
     )
     sql
     return (sql,)
@@ -170,8 +193,18 @@ def _(mo):
 def _(DATA, data_ready, vcf):
     if data_ready:
         vcf("db", "create", "fam")
-        vcf("db", "ingest", "fam", str(DATA / "cftr_trio.vcf.gz"),
-            "--cohort", "trio", "--ingest-id", "g1", "--serial", "--keep-reference")
+        vcf(
+            "db",
+            "ingest",
+            "fam",
+            str(DATA / "cftr_trio.vcf.gz"),
+            "--cohort",
+            "trio",
+            "--ingest-id",
+            "g1",
+            "--serial",
+            "--keep-reference",
+        )
         vcf("db", "ped", "fam", str(DATA / "cftr_trio.ped"))
         vcf("annotations", "load-gnomad", str(DATA / "gnomad_cftr.vcf.gz"))
         from annotations.db import get_connection as _gc
@@ -189,11 +222,16 @@ def _(DATA, data_ready, vcf):
 def _(mo):
     category = mo.ui.dropdown(
         options=["all", "denovo", "recessive", "dominant", "comphet"],
-        value="all", label="--category",
+        value="all",
+        label="--category",
     )
     gnomad = mo.ui.slider(
-        start=0.0, stop=1.0, step=0.01, value=1.0,
-        label="--gnomad-max-af", show_value=True,
+        start=0.0,
+        stop=1.0,
+        step=0.01,
+        value=1.0,
+        label="--gnomad-max-af",
+        show_value=True,
     )
     mo.hstack([category, gnomad], justify="start", gap=2)
     return category, gnomad
@@ -201,8 +239,17 @@ def _(mo):
 
 @app.cell
 def _(category, fam_db, gnomad, mo, vcf):
-    _args = ["db", "trio", fam_db, "--proband", "HG002",
-             "--category", category.value, "--gnomad-max-af", str(gnomad.value)]
+    _args = [
+        "db",
+        "trio",
+        fam_db,
+        "--proband",
+        "HG002",
+        "--category",
+        category.value,
+        "--gnomad-max-af",
+        str(gnomad.value),
+    ]
     mo.md(f"`vcfclick {' '.join(_args[1:])}`\n\n```\n{vcf(*_args)}\n```")
     return
 
@@ -226,8 +273,17 @@ def _(DATA, data_ready, vcf):
     if data_ready:
         for _name, _kr in [("dn", True), ("dn_naive", False)]:
             vcf("db", "create", _name)
-            _a = ["db", "ingest", _name, str(DATA / "denovo_trio.vcf.gz"),
-                  "--cohort", "fam", "--ingest-id", "g1", "--serial"]
+            _a = [
+                "db",
+                "ingest",
+                _name,
+                str(DATA / "denovo_trio.vcf.gz"),
+                "--cohort",
+                "fam",
+                "--ingest-id",
+                "g1",
+                "--serial",
+            ]
             if _kr:
                 _a.append("--keep-reference")
             vcf(*_a)
@@ -246,8 +302,17 @@ def _(mo):
 @app.cell
 def _(dn_dbs, keepref, mo, vcf):
     _db = dn_dbs["on" if keepref.value else "off"]
-    _out = vcf("db", "trio", _db, "--proband", "HG002",
-               "--category", "denovo", "--max-af", "1.0")
+    _out = vcf(
+        "db",
+        "trio",
+        _db,
+        "--proband",
+        "HG002",
+        "--category",
+        "denovo",
+        "--max-af",
+        "1.0",
+    )
     _n = next((ln for ln in _out.splitlines() if "candidates" in ln), "")
     mo.md(f"**`--keep-reference` = {keepref.value}** → {_n or _out}")
     return
@@ -268,12 +333,29 @@ def _(mo):
 def _(DATA, data_ready, json, pd, vcf):
     if data_ready:
         vcf("db", "create", "qc")
-        vcf("db", "ingest", "qc", str(DATA / "qc_sex.vcf.gz"),
-            "--cohort", "c", "--ingest-id", "i1", "--serial")
+        vcf(
+            "db",
+            "ingest",
+            "qc",
+            str(DATA / "qc_sex.vcf.gz"),
+            "--cohort",
+            "c",
+            "--ingest-id",
+            "i1",
+            "--serial",
+        )
         vcf("db", "ped", "qc", str(DATA / "qc_sex.ped"))
     pd.DataFrame(json.loads(vcf("db", "qc", "qc", "--format", "json")))[
-        ["sample_id", "het", "hom_alt", "het_hom_ratio", "ti_tv",
-         "chrx_het_frac", "inferred_sex", "sex_mismatch"]
+        [
+            "sample_id",
+            "het",
+            "hom_alt",
+            "het_hom_ratio",
+            "ti_tv",
+            "chrx_het_frac",
+            "inferred_sex",
+            "sex_mismatch",
+        ]
     ]
     return
 
@@ -292,8 +374,9 @@ def _(mo):
 
 @app.cell
 def _(mo):
-    min_callsets = mo.ui.slider(start=1, stop=2, step=1, value=1,
-                                label="--min-callsets", show_value=True)
+    min_callsets = mo.ui.slider(
+        start=1, stop=2, step=1, value=1, label="--min-callsets", show_value=True
+    )
     min_callsets
     return (min_callsets,)
 
@@ -301,12 +384,23 @@ def _(mo):
 @app.cell
 def _(DATA, data_ready, min_callsets, mo, vcf):
     if data_ready:
-        vcf("combine", str(DATA / "callset_a.vcf"), str(DATA / "callset_b.vcf"),
-            "-o", "/tmp/vcfclick-marimo/combined.vcf",
-            "--name", "first", "--name", "second",
-            "--min-callsets", str(min_callsets.value))
+        vcf(
+            "combine",
+            str(DATA / "callset_a.vcf"),
+            str(DATA / "callset_b.vcf"),
+            "-o",
+            "/tmp/vcfclick-marimo/combined.vcf",
+            "--name",
+            "first",
+            "--name",
+            "second",
+            "--min-callsets",
+            str(min_callsets.value),
+        )
     _body = "\n".join(
-        ln for ln in open("/tmp/vcfclick-marimo/combined.vcf") if not ln.startswith("##")
+        ln
+        for ln in open("/tmp/vcfclick-marimo/combined.vcf")
+        if not ln.startswith("##")
     )
     mo.md("```\n" + _body + "\n```")
     return

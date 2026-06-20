@@ -29,7 +29,6 @@ from ingest.routing import (
     INFO_SCALAR,
 )
 
-
 # Map of VCF Type → suggested ClickHouse base type. The Integer mapping
 # uses Int32 (signed) because VCF spec allows negatives (e.g., some
 # imputation scores). Float → Float32 is wide enough for QC stats.

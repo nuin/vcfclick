@@ -62,7 +62,7 @@ _FORMAT_HEADERS = {
 class _Union(NamedTuple):
     """The accumulated cross-input union, keyed by (chrom, pos, ref, alt).
 
-    gts[key][sample] — the prioritised per-sample cell: a dict with "GT"
+    gts[key][sample] — the prioritized per-sample cell: a dict with "GT"
     (the highest-priority input with a non-missing call wins) plus the
     GQ/DP/AD tokens from that same source record (None where absent).
     inputs[key] — set of input indices that have the site (drives set= and

@@ -152,9 +152,9 @@ def test_no_dragen_field_leaks_into_info_extra(vcfclick_home):
         "DragenSnvHardQUAL",
         "DragenIndelHardQUAL",
     ):
-        assert routed not in keys, (
-            f"{routed} leaked into info_extra: should be in typed column only"
-        )
+        assert (
+            routed not in keys
+        ), f"{routed} leaked into info_extra: should be in typed column only"
 
 
 def test_discover_lists_dragen_fields_as_typed():

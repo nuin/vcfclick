@@ -1,13 +1,13 @@
 """`vcfclick db ped` + `db trio` — family-based analysis.
 
-A PED file declares who-is-whose-parent among already-ingested samples.
+A PED file declares parents among already-ingested samples.
 Load it, then `db trio` resolves a proband's parents and reports
 candidate variants under each Mendelian inheritance model.
 
     vcfclick db ped  fam1 fam1.ped
     vcfclick db trio fam1 --proband CHILD
 
-Inheritance models, with slivar-style genotype quality gates (GQ, depth,
+Inheritance models, with slivar-style genotype quality (GQ, depth,
 allele balance) and population-AF rarity:
 
   * de novo     proband carries; BOTH parents provably hom-ref (gt=0).
@@ -24,12 +24,6 @@ allele balance) and population-AF rarity:
                 gene annotations loaded (`vcfclick annotations load`) and
                 --keep-reference (to prove each non-carrier parent is
                 hom-ref). Reported per gene, not per variant.
-
-Honest scope: this is candidate FILTERING, not variant calling. Quality
-gates are only as strong as the FORMAT fields present (gq/dp/ad are
-often absent on public joint-call releases, in which case the gates
-pass-through). De novo confidence is bounded by genotype-level
-evidence; PL-based Bayesian refinement is a future enhancement.
 """
 
 from __future__ import annotations
@@ -104,7 +98,7 @@ def db_ped(name: str, ped_path: str, ingest_id: str | None) -> None:
         ingest_id = _sole_ingest_id(name)
         if ingest_id is None:
             raise click.ClickException(
-                "database has multiple ingestions; pass --ingest-id to say "
+                "database has multiple ingestion; pass --ingest-id to say "
                 "which cohort the pedigree applies to."
             )
 
@@ -121,8 +115,6 @@ def db_ped(name: str, ped_path: str, ingest_id: str | None) -> None:
 
 # Shared genotype quality gates (slivar-style), applied per sample alias.
 # Lenient on NULL: gq/dp/ad are frequently absent on public joint-call
-# VCFs, and a strict gate there would silently drop every row (see
-# docs/SCHEMA.md). So the gate filters only where the data exists.
 
 
 def _quality_gate(alias: str, min_gq: int, min_dp: int) -> str:
