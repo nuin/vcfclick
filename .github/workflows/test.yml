@@ -6,6 +6,9 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 # Force GitHub Actions to run Node-20-built actions under Node 24,
 # ahead of the September 2026 hard cutover. Silences the deprecation
 # warning that fires on every run for actions/checkout@v4 and
