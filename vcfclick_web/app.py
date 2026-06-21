@@ -49,7 +49,6 @@ _TABLES = [
 # through). Comments are stripped first so they can neither hide a verb nor
 # false-trip the blocklist.
 _ALLOWED_START = {"select", "with", "show", "describe", "desc", "explain"}
-_COMMENT_RE = re.compile(r"/\*.*?\*/|--[^\n]*", re.DOTALL)
 # Verbs forbidden ANYWHERE (catches CTE-prefixed DML like
 # `WITH c AS (...) DELETE ...` and file writes). Deliberately excludes
 # truncate/replace/merge — those are also SQL *functions*; as statements
@@ -78,9 +77,40 @@ def _run_sql(sql: str) -> dict:
     }
 
 
+def _strip_comments(sql: str) -> str:
+    """Blank out block (/* */) and line (--) comments in one linear pass.
+
+    The previous lazy-quantifier regex was O(n^2) on hostile input:
+    re.sub retries at every "/*", each scanning to end-of-string on an
+    unterminated comment. This single pass is linear and ReDoS-safe.
+    """
+    out: list[str] = []
+    i, n = 0, len(sql)
+    while i < n:
+        pair = sql[i : i + 2]
+        if pair == "/*":
+            end = sql.find("*/", i + 2)
+            if end == -1:
+                out.append(sql[i:])
+                break
+            out.append(" ")
+            i = end + 2
+        elif pair == "--":
+            nl = sql.find("\n", i + 2)
+            if nl == -1:
+                out.append(" ")
+                break
+            out.append(" ")
+            i = nl
+        else:
+            out.append(sql[i])
+            i += 1
+    return "".join(out)
+
+
 def _is_read_only(sql: str) -> bool:
     """True only for a single read statement with no write construct."""
-    bare = _COMMENT_RE.sub(" ", sql).strip()
+    bare = _strip_comments(sql).strip()
     body = bare.rstrip(";").strip()
     if not body or ";" in body:  # empty, or more than one statement
         return False
