@@ -165,8 +165,8 @@ def query(body: QueryBody) -> dict:
         }
     try:
         return _run_sql(sql)
-    except Exception as e:  # surface the engine error to the editor
-        return {"error": str(e)}
+    except Exception as _e:
+        return {"error": "query execution failed"}
 
 
 @app.post("/api/nl")
