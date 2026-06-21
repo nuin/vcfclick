@@ -256,10 +256,10 @@ def combine(body: CombineBody) -> dict:
                 min_callsets=body.min_callsets,
             )
             return _parse_combined(out.read_text())
-    except CombineError as e:
-        return {"error": str(e)}
-    except Exception as e:
-        return {"error": str(e)}
+    except CombineError:
+        return {"error": "combine failed due to invalid or incompatible VCF input"}
+    except Exception:
+        return {"error": "internal error while combining VCFs"}
 
 
 def _parse_combined(text: str) -> dict:
