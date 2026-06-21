@@ -123,12 +123,12 @@ def test_dump_then_ingest_parquet_preserves_variant_and_sample_counts(vcfclick_h
         vcfclick_home, "dst", "SELECT count(DISTINCT sample_id) FROM samples"
     )[0][0]
 
-    assert (
-        dst_variants == src_variants
-    ), f"variant count drifted across round-trip: src={src_variants} dst={dst_variants}"
-    assert (
-        dst_samples == src_samples
-    ), f"sample count drifted across round-trip: src={src_samples} dst={dst_samples}"
+    assert dst_variants == src_variants, (
+        f"variant count drifted across round-trip: src={src_variants} dst={dst_variants}"
+    )
+    assert dst_samples == src_samples, (
+        f"sample count drifted across round-trip: src={src_samples} dst={dst_samples}"
+    )
 
 
 def test_ingest_parquet_overrides_ingest_id_and_cohort(vcfclick_home):
@@ -165,9 +165,9 @@ def test_ingest_parquet_overrides_ingest_id_and_cohort(vcfclick_home):
         "dst",
         "SELECT DISTINCT ingest_id, cohort FROM samples",
     )
-    assert rows == [
-        ["new_id", "NEW_COHORT"]
-    ], f"samples ingest_id/cohort not overridden: {rows}"
+    assert rows == [["new_id", "NEW_COHORT"]], (
+        f"samples ingest_id/cohort not overridden: {rows}"
+    )
 
     # Belt-and-suspenders: explicitly check the source labels aren't there.
     rows = _query_json(
@@ -259,9 +259,9 @@ def test_ingest_parquet_writes_ingestions_catalog_row(vcfclick_home):
     assert len(rows) == 1, f"expected one ingestions row, got {rows}"
     assert rows[0][0] == "imported"
     assert rows[0][1] == "B"
-    assert rows[0][2].startswith(
-        "parquet://"
-    ), f"expected parquet:// provenance prefix, got {rows[0][2]!r}"
+    assert rows[0][2].startswith("parquet://"), (
+        f"expected parquet:// provenance prefix, got {rows[0][2]!r}"
+    )
 
 
 # ─────────────────────── partial-dump variants ───────────────────────
@@ -373,9 +373,9 @@ def test_ingest_parquet_missing_variants_file_raises(vcfclick_home, tmp_path):
         "y",
         expect_failure=True,
     )
-    assert (
-        "variants.parquet" in (r.stderr + r.stdout)
-    ), f"expected error to mention variants.parquet, got:\nSTDOUT:{r.stdout}\nSTDERR:{r.stderr}"
+    assert "variants.parquet" in (r.stderr + r.stdout), (
+        f"expected error to mention variants.parquet, got:\nSTDOUT:{r.stdout}\nSTDERR:{r.stderr}"
+    )
 
 
 def test_ingest_parquet_rejects_schema_mismatch_before_touching_chdb(
@@ -461,6 +461,6 @@ def test_ingest_parquet_validates_ingest_id_format(vcfclick_home, tmp_path):
         "bad; DROP TABLE variants; --",
         expect_failure=True,
     )
-    assert (
-        "ingest_id" in (r.stderr + r.stdout).lower()
-    ), f"expected an ingest_id validation error, got:\nSTDOUT:{r.stdout}\nSTDERR:{r.stderr}"
+    assert "ingest_id" in (r.stderr + r.stdout).lower(), (
+        f"expected an ingest_id validation error, got:\nSTDOUT:{r.stdout}\nSTDERR:{r.stderr}"
+    )

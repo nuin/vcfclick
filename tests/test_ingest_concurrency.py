@@ -90,9 +90,9 @@ def test_sql_quote_str_handles_backslash_escape_bypass():
     # Strip every well-formed escape sequence; whatever remains must
     # contain neither a raw backslash nor a raw single quote.
     cleaned = body.replace("\\\\", "").replace("''", "")
-    assert (
-        "'" not in cleaned and "\\" not in cleaned
-    ), f"backslash or quote survived escaping: {quoted!r}"
+    assert "'" not in cleaned and "\\" not in cleaned, (
+        f"backslash or quote survived escaping: {quoted!r}"
+    )
 
 
 @pytest.mark.skipif(
@@ -132,9 +132,9 @@ def test_sql_quote_str_roundtrips_through_chdb(vcfclick_home, monkeypatch):
             .decode()
         )
         parsed = json.loads(raw)
-        assert parsed["data"] == [
-            [p]
-        ], f"chDB round-trip diverged for {p!r}: got {parsed['data']!r}"
+        assert parsed["data"] == [[p]], (
+            f"chDB round-trip diverged for {p!r}: got {parsed['data']!r}"
+        )
 
 
 # ─────────────────────── lazy DB_ROOT / VCFCLICK_HOME ───────────────────────
@@ -153,9 +153,9 @@ def test_storage_db_root_reflects_env_change_at_call_time(monkeypatch, tmp_path)
     first = storage.DB_ROOT
     monkeypatch.setenv("VCFCLICK_HOME", str(tmp_path / "second"))
     second = storage.DB_ROOT
-    assert (
-        first != second
-    ), f"storage.DB_ROOT did not pick up the env change (both reads returned {first})"
+    assert first != second, (
+        f"storage.DB_ROOT did not pick up the env change (both reads returned {first})"
+    )
     assert second == tmp_path / "second" / "dbs"
 
 

@@ -22,9 +22,9 @@ def _vc(*args: str) -> str:
         capture_output=True,
         text=True,
     )
-    assert (
-        r.returncode == 0
-    ), f"`vcfclick {' '.join(args)}` failed:\n{r.stdout}\n{r.stderr}"
+    assert r.returncode == 0, (
+        f"`vcfclick {' '.join(args)}` failed:\n{r.stdout}\n{r.stderr}"
+    )
     return r.stdout
 
 
