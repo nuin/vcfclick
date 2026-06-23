@@ -6,9 +6,10 @@ import pytest
 
 pytest.importorskip("textual")
 
+from textual.widgets import Button, Input, Static
+
 from tui import services
 from tui.app import VcfclickTuiApp
-from textual.widgets import Button, Input, Static
 
 
 def test_app_starts_with_no_active_db():
@@ -152,5 +153,65 @@ def test_locus_submit_renders_missing_db_error():
             await pilot.press("enter")
             await pilot.pause()
             assert "Select a database" in app.query_one("#locus-status", Static).content
+
+    asyncio.run(run())
+
+
+def test_sql_run_renders_results(monkeypatch):
+    def execute_sql(name: str, sql: str) -> services.QueryResult:
+        assert name == "smoke"
+        assert sql.strip() == "SELECT 1 AS n"
+        return services.QueryResult(sql=sql, columns=["n"], rows=[[1]], row_count=1)
+
+    monkeypatch.setattr(services, "execute_sql", execute_sql)
+
+    async def run() -> None:
+        app = VcfclickTuiApp(initial_db="smoke")
+        async with app.run_test() as pilot:
+            app.action_show_sql()
+            await pilot.pause()
+            app.query_one("#sql-editor").text = "SELECT 1 AS n"
+            await pilot.click("#sql-run")
+            await pilot.pause()
+
+            from textual.widgets import DataTable
+
+            table = app.query_one("#sql-results", DataTable)
+            assert len(table.columns) == 1
+            assert table.row_count == 1
+            assert "1 row" in app.query_one("#sql-status", Static).content
+
+    asyncio.run(run())
+
+
+def test_sql_run_without_db_shows_hint():
+    async def run() -> None:
+        app = VcfclickTuiApp()
+        async with app.run_test() as pilot:
+            app.action_show_sql()
+            await pilot.pause()
+            app.query_one("#sql-editor").text = "SELECT 1"
+            await pilot.click("#sql-run")
+            await pilot.pause()
+            assert "Select a database" in app.query_one("#sql-status", Static).content
+
+    asyncio.run(run())
+
+
+def test_sql_run_renders_service_error(monkeypatch):
+    def execute_sql(name: str, sql: str) -> services.QueryResult:
+        raise services.TuiServiceError("Unable to execute SQL: boom")
+
+    monkeypatch.setattr(services, "execute_sql", execute_sql)
+
+    async def run() -> None:
+        app = VcfclickTuiApp(initial_db="smoke")
+        async with app.run_test() as pilot:
+            app.action_show_sql()
+            await pilot.pause()
+            app.query_one("#sql-editor").text = "SELECT bad"
+            await pilot.click("#sql-run")
+            await pilot.pause()
+            assert "boom" in app.query_one("#sql-status", Static).content
 
     asyncio.run(run())
