@@ -58,4 +58,4 @@ class OperationsPane(Vertical):
             except services.TuiServiceError as exc:
                 body.update(str(exc))
                 return
-            body.update(str(stats))
+            body.update(services.render_stats(stats))

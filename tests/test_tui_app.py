@@ -215,3 +215,30 @@ def test_sql_run_renders_service_error(monkeypatch):
             assert "boom" in app.query_one("#sql-status", Static).content
 
     asyncio.run(run())
+
+
+def test_operations_stats_render_as_text(monkeypatch):
+    payload = {
+        "counts": {"variants": 1234, "genotypes": 5678, "samples": 3, "ingestions": 1},
+        "cohorts": [["trio", "3"]],
+        "contigs": [["chr17", "1234"]],
+        "variants_pop": {"info_AF": 1000},
+        "info_extra": ([], 0),
+        "genotypes_pop": {"gq": 5678},
+        "format_extra": ([], 0),
+    }
+    monkeypatch.setattr(services, "stats_summary", lambda name, *a, **k: payload)
+
+    async def run() -> None:
+        app = VcfclickTuiApp(initial_db="smoke")
+        async with app.run_test() as pilot:
+            app.action_show_operations()
+            await pilot.pause()
+            await pilot.click("#show-stats")
+            await pilot.pause()
+            content = app.query_one("#operations-body", Static).content
+            assert "counts:" in content
+            assert "1,234" in content
+            assert "{'counts'" not in content
+
+    asyncio.run(run())

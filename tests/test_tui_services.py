@@ -17,6 +17,7 @@ from tui.services import (
     execute_sql,
     list_database_names,
     parse_locus_input,
+    render_stats,
     resolve_locus,
     stats_summary,
     validate_database,
@@ -226,3 +227,35 @@ def test_build_locus_summary_wraps_query_failures(monkeypatch):
         build_locus_summary("summary", ResolvedLocus("chr1:1-1000", "chr1", 1, 1000))
 
     assert exc_info.value.__cause__ is cause
+
+
+def test_render_stats_is_readable_text():
+    payload = {
+        "counts": {
+            "variants": 1234,
+            "genotypes": 5678,
+            "samples": 3,
+            "ingestions": 1,
+        },
+        "cohorts": [["trio", "3"]],
+        "contigs": [["chr17", "1234"]],
+        "variants_pop": {"info_AF": 1000, "info_AC": 500},
+        "info_extra": ([("DP", 1234)], 1),
+        "genotypes_pop": {"gq": 5678},
+        "format_extra": ([], 0),
+    }
+
+    text = render_stats(payload)
+
+    # Human-readable, not a dict dump.
+    assert not text.lstrip().startswith("{")
+    assert "'counts':" not in text
+    # Sections and formatted numbers are present.
+    assert "counts:" in text
+    assert "1,234" in text
+    assert "cohorts:" in text
+    assert "trio" in text
+    assert "contigs:" in text
+    assert "info_AF" in text and "%" in text
+    assert "variants.info_extra - overflow keys (top 1 of 1)" in text
+    assert "genotypes.format_extra - overflow keys: (none)" in text

@@ -7,9 +7,9 @@ testable without a terminal event loop.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import json
 import re
+from dataclasses import dataclass
 from typing import Any, Literal
 
 
@@ -224,6 +224,67 @@ def stats_summary(name: str, top: int = 20) -> dict[str, Any]:
         raise
     except Exception as exc:
         raise TuiServiceError(f"Unable to summarize stats for {name!r}: {exc}") from exc
+
+
+def _stats_pct(num: int, denom: int) -> str:
+    if denom == 0:
+        return "  0.0%"
+    return f"{100.0 * num / denom:>5.1f}%"
+
+
+def _population_lines(title: str, total: int, population: dict[str, int]) -> list[str]:
+    lines = ["", f"{title} (of {total:,} rows):"]
+    if not population:
+        lines.append("  (none)")
+        return lines
+    for col, n in sorted(population.items(), key=lambda kv: (-kv[1], kv[0])):
+        lines.append(f"  {col:<32} {n:>12,}  ({_stats_pct(n, total)})")
+    return lines
+
+
+def _map_key_lines(
+    title: str, rows: list[tuple[str, int]], n_distinct: int, total: int
+) -> list[str]:
+    if not n_distinct:
+        return ["", f"{title} - overflow keys: (none)"]
+    lines = ["", f"{title} - overflow keys (top {len(rows)} of {n_distinct})"]
+    for key, n in rows:
+        lines.append(f"  {key:<32} {int(n):>12,}  ({_stats_pct(int(n), total)})")
+    return lines
+
+
+def render_stats(payload: dict[str, Any]) -> str:
+    """Render the db-stats payload as readable text (mirrors `db stats`)."""
+    counts = payload["counts"]
+    lines: list[str] = ["counts:"]
+    for table in ("variants", "genotypes", "samples", "ingestions"):
+        lines.append(f"  {table:<12} {counts[table]:>12,}")
+
+    if payload.get("cohorts"):
+        lines.append("")
+        lines.append("cohorts:")
+        for cohort, n in payload["cohorts"]:
+            lines.append(f"  {cohort:<20} {int(n):>12,} samples")
+
+    if payload.get("contigs"):
+        lines.append("")
+        lines.append("contigs:")
+        for chrom, n in payload["contigs"]:
+            lines.append(f"  {chrom:<20} {int(n):>12,} variants")
+
+    v_total = counts["variants"]
+    g_total = counts["genotypes"]
+    info_rows, info_n = payload["info_extra"]
+    fmt_rows, fmt_n = payload["format_extra"]
+    lines += _population_lines(
+        "variants - typed INFO column population", v_total, payload["variants_pop"]
+    )
+    lines += _map_key_lines("variants.info_extra", info_rows, info_n, v_total)
+    lines += _population_lines(
+        "genotypes - typed column population", g_total, payload["genotypes_pop"]
+    )
+    lines += _map_key_lines("genotypes.format_extra", fmt_rows, fmt_n, g_total)
+    return "\n".join(lines)
 
 
 _RANGE_RE = re.compile(
