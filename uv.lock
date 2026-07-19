@@ -925,6 +925,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pyfaidx"
+version = "0.9.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "packaging" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/19/af/da148aaa8e75c9890a41dbe5516f8006def2b74831e66acf79f81bb7bb5b/pyfaidx-0.9.0.4.tar.gz", hash = "sha256:801bdd208b12bff6f4fb2da10a16834158dbb1c6f146e4015c9ff45e509acd65", size = 71759, upload-time = "2026-03-19T19:02:58.561Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/b5/2c/44d47df76193b31fa4a7c662531076e6ec9a0f2f3017171f47c466211537/pyfaidx-0.9.0.4-py3-none-any.whl", hash = "sha256:18b223b7ba8c66b988a8ce00011500961cb2aeb7fa97d05a293cf472acdd0009", size = 29469, upload-time = "2026-03-19T19:02:57.213Z" },
+]
+
+[[package]]
 name = "pygments"
 version = "2.20.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1457,6 +1469,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+benchmark = [
+    { name = "numpy" },
+    { name = "pyfaidx" },
+]
 tui = [
     { name = "textual" },
 ]
@@ -1484,12 +1500,14 @@ requires-dist = [
     { name = "duckdb", specifier = ">=1.0.0" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.100.0" },
     { name = "mcp", specifier = ">=1.0.0" },
+    { name = "numpy", marker = "extra == 'benchmark'", specifier = ">=1.24" },
     { name = "pyarrow", specifier = ">=15.0.0" },
     { name = "pydantic", marker = "extra == 'web'", specifier = ">=2" },
+    { name = "pyfaidx", marker = "extra == 'benchmark'", specifier = ">=0.8" },
     { name = "textual", marker = "extra == 'tui'", specifier = ">=0.89" },
     { name = "uvicorn", extras = ["standard"], marker = "extra == 'web'", specifier = ">=0.25.0" },
 ]
-provides-extras = ["tui", "web"]
+provides-extras = ["tui", "web", "benchmark"]
 
 [package.metadata.requires-dev]
 dev = [
