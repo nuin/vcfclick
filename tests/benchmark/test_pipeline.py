@@ -12,9 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from benchmark.constants import FILTER_ALL, VT_INDEL, VT_SNP
-from benchmark.pipeline import run_benchmark
-from benchmark.reconcile import UnsupportedFeatureError
+from benchmark.constants import FILTER_ALL, VT_COMPLEX, VT_INDEL, VT_SNP
+from benchmark.pipeline import exact_vs_normalized_delta, run_benchmark
 
 FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "benchmark"
 REF = str(FIXTURES / "tiny.fa")
@@ -114,11 +113,96 @@ def test_reports_written(tmp_path):
         assert os.path.exists(outdir / name), f"missing {name}"
 
 
-def test_haplotype_engine_unsupported(tmp_path):
-    truth = _write_vcf(tmp_path / "truth.vcf", _TRUTH)
-    query = _write_vcf(tmp_path / "query.vcf", _TRUTH)
-    with pytest.raises(UnsupportedFeatureError):
-        run_benchmark(truth, query, REF, str(tmp_path / "out"), engine="haplotype")
+# chr2 = ACGTACGT. Truth MNP AC>GT at pos1; query the two atomized SNPs A>G@1,
+# C>T@2. Keyed-different (normalized FP+FN) but sequence-equivalent (haplotype TP).
+_MNP_TRUTH = ["chr2\t1\t.\tAC\tGT\t50\tPASS\t.\tGT\t1/1\n"]
+_MNP_QUERY = [
+    "chr2\t1\t.\tA\tG\t50\tPASS\t.\tGT\t1/1\n",
+    "chr2\t2\t.\tC\tT\t50\tPASS\t.\tGT\t1/1\n",
+]
+
+
+def test_haplotype_engine_rescues_mnp_split(tmp_path):
+    truth = _write_vcf(tmp_path / "truth.vcf", _MNP_TRUTH)
+    query = _write_vcf(tmp_path / "query.vcf", _MNP_QUERY)
+
+    norm = run_benchmark(
+        truth, query, REF, str(tmp_path / "n"), regions=None, engine="normalized"
+    )
+    assert _row(norm["summary"], VT_SNP, FILTER_ALL)["query_fp"] == 2
+
+    hap = run_benchmark(
+        truth, query, REF, str(tmp_path / "h"), regions=None, engine="haplotype"
+    )
+    snp = _row(hap["summary"], VT_SNP, FILTER_ALL)
+    assert snp["query_fp"] == 0
+    assert snp["query_tp"] == 2
+
+
+def test_haplotype_over_budget_not_reclassified(tmp_path):
+    # Drive classify_haplotype directly with a small budget so the 3-member
+    # cluster (1 truth + 2 query) is over budget and is never reclassified TP.
+    import dataclasses
+
+    from benchmark import stratify
+    from benchmark.pipeline import _parse_side
+    from benchmark.reconcile import classify_haplotype
+    from benchmark.reference import Reference
+
+    truth = _write_vcf(tmp_path / "truth.vcf", _MNP_TRUTH)
+    query = _write_vcf(tmp_path / "query.vcf", _MNP_QUERY)
+    ref = Reference(REF)
+    excluded = {"symbolic": 0, "ref_mismatch": 0}
+
+    def _prep(path, side):
+        recs = _parse_side(path, side, ref, "error", excluded, False)
+        recs = [dataclasses.replace(r, in_conf=True) for r in recs]
+        return stratify.tag(recs)
+
+    tr = _prep(truth, "truth")
+    qr = _prep(query, "query")
+
+    rows = classify_haplotype(tr, qr, FILTER_ALL, ref.fetch, max_cluster=2)
+    query_tp = sum(
+        1 for r in rows if r.side == "query" and r.bd == "TP" and r.vtype == VT_SNP
+    )
+    assert query_tp != 2  # over-budget cluster is not reclassified TP
+    assert not any(r.bd == "TP" for r in rows)  # counted too-complex, never TP
+
+
+def test_exact_engine_misses_right_shifted_indel(tmp_path):
+    # chr1 = CAAAAT. Truth is a right-shifted 1bp deletion (AT>T at pos5); query
+    # is its left-aligned form (CA>C at pos1). Normalized matches; exact misses.
+    truth = _write_vcf(
+        tmp_path / "truth.vcf", ["chr1\t5\t.\tAT\tT\t50\tPASS\t.\tGT\t0/1\n"]
+    )
+    query = _write_vcf(
+        tmp_path / "query.vcf", ["chr1\t1\t.\tCA\tC\t50\tPASS\t.\tGT\t0/1\n"]
+    )
+
+    norm = run_benchmark(
+        truth, query, REF, str(tmp_path / "n"), regions=None, engine="normalized"
+    )
+    n_indel = _row(norm["summary"], VT_INDEL, FILTER_ALL)
+    assert n_indel["truth_tp"] == 1 and n_indel["query_fp"] == 0
+
+    exact = run_benchmark(
+        truth, query, REF, str(tmp_path / "e"), regions=None, engine="exact"
+    )
+    e_indel = _row(exact["summary"], VT_INDEL, FILTER_ALL)
+    assert e_indel["truth_fn"] == 1 and e_indel["query_fp"] == 1
+
+
+def test_exact_vs_normalized_delta_positive_on_shifted_indel(tmp_path):
+    truth = _write_vcf(
+        tmp_path / "truth.vcf", ["chr1\t5\t.\tAT\tT\t50\tPASS\t.\tGT\t0/1\n"]
+    )
+    query = _write_vcf(
+        tmp_path / "query.vcf", ["chr1\t1\t.\tCA\tC\t50\tPASS\t.\tGT\t0/1\n"]
+    )
+    delta = exact_vs_normalized_delta(truth, query, REF, regions=None)
+    assert delta[VT_INDEL]["recall"] > 0
+    assert delta[VT_INDEL]["precision"] > 0
 
 
 def test_cli_verb_runs(tmp_path):
@@ -149,7 +233,7 @@ def test_cli_verb_runs(tmp_path):
     assert "recall=1.0000" in res.output
 
 
-def test_cli_haplotype_errors_cleanly(tmp_path):
+def test_cli_haplotype_engine_runs(tmp_path):
     from click.testing import CliRunner
 
     from cli.benchmark import benchmark
@@ -171,8 +255,8 @@ def test_cli_haplotype_errors_cleanly(tmp_path):
             "haplotype",
         ],
     )
-    assert res.exit_code != 0
-    assert "haplotype" in res.output
+    assert res.exit_code == 0, res.output
+    assert "recall=1.0000" in res.output
 
 
 def test_no_regions_marks_all_confident(tmp_path):
@@ -214,13 +298,13 @@ def test_chrm_haploid_matches_diploid(tmp_path):
 
 
 def test_complex_variants_surfaced_in_run_meta(tmp_path):
-    # An MNP (AC>GT) types as COMPLEX; summary.csv stays strict SNP/INDEL, but
-    # the COMPLEX count must be visible in run_meta (never silently dropped).
+    # An MNP (AC>GT) types as COMPLEX (BVT UNK); summary.csv stays strict
+    # SNP/INDEL, but the count must be visible in run_meta (never silently dropped).
     rec = ["chr2\t1\t.\tAC\tGT\t50\tPASS\t.\tGT\t1/1\n"]
     truth = _write_vcf(tmp_path / "truth.vcf", rec)
     query = _write_vcf(tmp_path / "query.vcf", rec)
     res = run_benchmark(truth, query, REF, str(tmp_path / "out"), regions=None)
-    assert res["run_meta"]["unsummarized_types"].get("COMPLEX", 0) >= 1
+    assert res["run_meta"]["unsummarized_types"].get(VT_COMPLEX, 0) >= 1
 
 
 def test_strict_requires_regions(tmp_path):
@@ -262,7 +346,7 @@ def test_decompose_mnp_flag_splits_into_snps(tmp_path):
     off = run_benchmark(
         t, q, REF, str(tmp_path / "o1"), regions=None, decompose_mnp=False
     )
-    assert off["run_meta"]["unsummarized_types"].get("COMPLEX", 0) >= 1
+    assert off["run_meta"]["unsummarized_types"].get(VT_COMPLEX, 0) >= 1
     on = run_benchmark(
         t, q, REF, str(tmp_path / "o2"), regions=None, decompose_mnp=True
     )

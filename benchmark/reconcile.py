@@ -16,7 +16,10 @@ P1 is SQL-free and backend-neutral (pure Python).
 from __future__ import annotations
 
 from collections import defaultdict
+from dataclasses import replace as _replace
+from typing import Callable
 
+from benchmark import haplotype as _hap
 from benchmark.constants import (
     BD_FN,
     BD_FP,
@@ -24,10 +27,13 @@ from benchmark.constants import (
     BD_TP,
     BK_AM,
     BK_GM,
+    BK_LM,
     BK_NONE,
     FILTER_ALL,
 )
 from benchmark.model import ClassifiedRow, NormRecord
+
+Fetch = Callable[[str, int, int], str]  # (chrom, start0, end0) -> uppercased bases
 
 
 class UnsupportedFeatureError(NotImplementedError):
@@ -142,10 +148,77 @@ def classify(
 classify_keyed = classify
 
 
+def _ident(r) -> tuple:
+    """Row/record identity used to splice reclassified verdicts back in."""
+    return (r.side, r.chrom, r.pos, r.ref, r.alt)
+
+
 def classify_haplotype(
-    truth: list[NormRecord], query: list[NormRecord], filter_view: str
+    truth: list[NormRecord],
+    query: list[NormRecord],
+    filter_view: str,
+    fetch: Fetch,
+    flank: int = 20,
+    max_cluster: int = 16,
 ) -> list[ClassifiedRow]:
-    """P2 haplotype (`lm`) reconciliation — not implemented in P1."""
-    raise UnsupportedFeatureError(
-        "haplotype reconciliation (BK=lm) is a P2 feature; use the normalized engine"
-    )
+    """P2 local-haplotype (`lm`) reconciliation over the P1 keyed residual.
+
+    Runs the P1 keyed match, then rescues representation-different but
+    sequence-equivalent calls that P1 miscounts as FP+FN: the in-conf unmatched
+    truth (FN) and query (FP) records are clustered by `haplotype.cluster` and,
+    per candidate cluster (both sides present), replayed onto the reference. A
+    cluster whose two sides yield a common (di)plotype is reclassified TP/`lm`.
+    Over-budget clusters (> `max_cluster` members) are left at their P1 FP/FN
+    verdict (never rescued, never routed to `BD_N` — that would drop the truth FN
+    from the recall denominator). All other rows pass through unchanged.
+    """
+    rows = classify(truth, query, filter_view)
+
+    # Index the norm records feeding the residual (residual keys are unique per
+    # side — duplicate keys were already routed to BD_N by classify).
+    t_index: dict[Key, NormRecord] = {}
+    for r in truth:
+        t_index.setdefault(_key(r), r)
+    q_index: dict[Key, NormRecord] = {}
+    for r in _present(query, filter_view):
+        q_index.setdefault(_key(r), r)
+
+    fn_recs: list[NormRecord] = []
+    fp_recs: list[NormRecord] = []
+    for row in rows:
+        if row.bk != BK_NONE or not row.in_conf:
+            continue  # only truly-unmatched (no allele-match) residual is eligible
+        k = (row.chrom, row.pos, row.ref, row.alt)
+        if row.side == "truth" and row.bd == BD_FN:
+            rec = t_index.get(k)
+            if rec is not None:
+                fn_recs.append(rec)
+        elif row.side == "query" and row.bd == BD_FP:
+            rec = q_index.get(k)
+            if rec is not None:
+                fp_recs.append(rec)
+
+    reclassified: set[tuple] = set()
+    for clust in _hap.cluster(fn_recs + fp_recs, flank):
+        c_truth = [r for r in clust if r.side == "truth"]
+        c_query = [r for r in clust if r.side == "query"]
+        if not c_truth or not c_query:
+            continue  # single-sided residual: no counterpart, stays FP/FN
+        if len(clust) > max_cluster:
+            # Over budget: not rescued. Keep the P1 FP/FN verdict — never route to
+            # BD_N, which would drop the truth FN from the recall denominator and
+            # let a messy over-complex query outscore P1 (codex #8).
+            continue
+        if _hap.haplotype_equivalent(fetch, c_truth, c_query, flank):
+            reclassified.update(_ident(r) for r in clust)
+
+    if not reclassified:
+        return rows
+
+    out: list[ClassifiedRow] = []
+    for row in rows:
+        if _ident(row) in reclassified:
+            out.append(_replace(row, bd=BD_TP, bk=BK_LM))
+        else:
+            out.append(row)
+    return out

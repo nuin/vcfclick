@@ -28,8 +28,9 @@ from benchmark.normalize import (
     decompose_mnp,
     left_align,
     split_multiallelic,
+    trim,
 )
-from benchmark.reconcile import UnsupportedFeatureError, classify
+from benchmark.reconcile import classify, classify_haplotype
 from benchmark.reference import BenchmarkError, Reference, canonical_contig
 from benchmark.report import write_reports
 
@@ -58,8 +59,14 @@ def _parse_side(
     on_ref_mismatch: str,
     excluded: dict,
     decompose: bool,
+    align: bool = True,
 ) -> list[NormRecord]:
-    """Parse one VCF into normalized biallelic NormRecords."""
+    """Parse one VCF into normalized biallelic NormRecords.
+
+    `align=True` left-aligns indels against the reference (the `normalized` and
+    `haplotype` engines); `align=False` keeps the minimal-trim representation
+    without left-shifting (the internal `exact` diagnostic engine).
+    """
     from cyvcf2 import VCF
 
     known = ref.contigs
@@ -102,7 +109,10 @@ def _parse_side(
             if _is_mito(chrom) and len(alleles) == 1:
                 alleles = alleles * 2  # haploid 1 ≡ diploid 1/1 on chrM
             for ppos, pref, palt in pieces:
-                pos, r, a = left_align(ref.fetch, chrom, ppos, pref, palt)
+                if align:
+                    pos, r, a = left_align(ref.fetch, chrom, ppos, pref, palt)
+                else:
+                    pos, r, a = trim(ppos, pref, palt)
                 out.append(
                     NormRecord(
                         side=side,
@@ -166,27 +176,26 @@ def run_benchmark(
 ) -> dict:
     """Benchmark `query` against `truth` over reference `ref`, writing reports.
 
-    `engine="haplotype"` is a P2 feature and raises UnsupportedFeatureError.
-    With `regions=None` every call is treated as confident (a warning, or a hard
-    error under `strict`). `conf_containment` is "start" or "full"; `decompose_mnp`
-    atomizes MNPs into SNPs (off by default). Returns `{"run_meta", "summary"}`.
+    `engine="haplotype"` runs the P2 local-haplotype reconciliation; `engine=
+    "exact"` is an internal diagnostic that keys on the trimmed (not left-aligned)
+    representation. With `regions=None` every call is treated as confident (a
+    warning, or a hard error under `strict`). `conf_containment` is "start" or
+    "full"; `decompose_mnp` atomizes MNPs into SNPs (off by default). Returns
+    `{"run_meta", "summary"}`.
     """
-    if engine == "haplotype":
-        raise UnsupportedFeatureError(
-            "haplotype reconciliation is a P2 feature; use --engine normalized"
-        )
-    if engine != "normalized":
+    if engine not in ("normalized", "haplotype", "exact"):
         raise BenchmarkError(f"unknown engine {engine!r}")
 
     formats = list(report_formats) if report_formats else list(ALL_FORMATS)
     reference = Reference(ref)
     excluded = {"symbolic": 0, "ref_mismatch": 0}
+    align = engine != "exact"  # exact keys on trimmed reps without left-shifting
 
     truth_recs = _parse_side(
-        truth, "truth", reference, on_ref_mismatch, excluded, decompose_mnp
+        truth, "truth", reference, on_ref_mismatch, excluded, decompose_mnp, align
     )
     query_recs = _parse_side(
-        query, "query", reference, on_ref_mismatch, excluded, decompose_mnp
+        query, "query", reference, on_ref_mismatch, excluded, decompose_mnp, align
     )
 
     if regions is None:
@@ -203,8 +212,12 @@ def run_benchmark(
     truth_recs = stratify.tag(truth_recs)
     query_recs = stratify.tag(query_recs)
 
-    rows = classify(truth_recs, query_recs, FILTER_ALL)
-    rows += classify(truth_recs, query_recs, FILTER_PASS)
+    if engine == "haplotype":
+        rows = classify_haplotype(truth_recs, query_recs, FILTER_ALL, reference.fetch)
+        rows += classify_haplotype(truth_recs, query_recs, FILTER_PASS, reference.fetch)
+    else:
+        rows = classify(truth_recs, query_recs, FILTER_ALL)
+        rows += classify(truth_recs, query_recs, FILTER_PASS)
 
     agg = aggregate_counts(rows)
     summary = _summary(agg)
@@ -236,3 +249,55 @@ def run_benchmark(
         classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
     write_reports(agg, run_meta, outdir, formats, classified=classified)
     return {"run_meta": run_meta, "summary": summary}
+
+
+def exact_vs_normalized_delta(
+    truth: str,
+    query: str,
+    ref: str,
+    regions: str | None = None,
+) -> dict:
+    """Per-Type `normalized`-minus-`exact` metric deltas (the offline gap signal).
+
+    Runs both engines on the same inputs and returns, for each Type in
+    {SNP, INDEL}, the recall/precision/f1 improvement that reference-based
+    left-alignment alone buys (ALL filter view). All-positive on a fixture whose
+    only defect is representation shift. Self-contained (no external deps); writes
+    reports to throwaway temp dirs.
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as d_ex, tempfile.TemporaryDirectory() as d_nm:
+        ex = run_benchmark(
+            truth,
+            query,
+            ref,
+            d_ex,
+            regions=regions,
+            engine="exact",
+            report_formats=["csv"],
+        )
+        nm = run_benchmark(
+            truth,
+            query,
+            ref,
+            d_nm,
+            regions=regions,
+            engine="normalized",
+            report_formats=["csv"],
+        )
+
+    def _by_type(summary: list[dict]) -> dict:
+        return {r["Type"]: r for r in summary if r["Filter"] == FILTER_ALL}
+
+    ex_t = _by_type(ex["summary"])
+    nm_t = _by_type(nm["summary"])
+    delta: dict = {}
+    for vt in (VT_SNP, VT_INDEL):
+        e, n = ex_t[vt], nm_t[vt]
+        delta[vt] = {
+            "recall": n["recall"] - e["recall"],
+            "precision": n["precision"] - e["precision"],
+            "f1": n["f1"] - e["f1"],
+        }
+    return delta

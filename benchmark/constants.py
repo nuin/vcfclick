@@ -19,10 +19,12 @@ BK_AM = "am"  # allele match, genotype mismatch
 BK_LM = "lm"  # local haplotype match (P2 only)
 BK_NONE = "."
 
-# BVT — variant type.
+# BVT — high-level variant type. hap.py's BVT vocabulary is SNP/INDEL/NOCALL/
+# HOMREF/UNK; a complex (equal-length, multi-base) substitution has no dedicated
+# high-level type and maps to UNK.
 VT_SNP = "SNP"
 VT_INDEL = "INDEL"
-VT_COMPLEX = "COMPLEX"
+VT_COMPLEX = "UNK"
 VT_NOCALL = "NOCALL"
 
 # BLT — biallelic locus (zygosity) type.
@@ -30,7 +32,7 @@ BLT_HET = "het"
 BLT_HOMALT = "homalt"
 BLT_HETALT = "hetalt"
 BLT_HOMREF = "homref"
-BLT_HAPLOID = "haploid"
+BLT_HAPLOID = "hemi"  # hap.py terms a haploid (hemizygous) call "hemi"
 BLT_NOCALL = "nocall"
 
 # Filter views. PASS/ALL are classified independently (a query call failing FILTER

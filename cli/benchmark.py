@@ -51,10 +51,11 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
 )
 @click.option(
     "--engine",
-    type=click.Choice(["normalized", "haplotype"]),
+    type=click.Choice(["normalized", "haplotype", "exact"]),
     default="normalized",
     show_default=True,
-    help="Reconciliation engine (haplotype is a P2 feature).",
+    help="Reconciliation engine. 'haplotype' adds local-haplotype rescue; "
+    "'exact' is a diagnostic that skips reference left-alignment.",
 )
 @click.option(
     "--report-formats",

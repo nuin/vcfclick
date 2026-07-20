@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import pytest
-
 from benchmark.constants import (
     BD_FN,
     BD_FP,
@@ -9,6 +7,7 @@ from benchmark.constants import (
     BD_TP,
     BK_AM,
     BK_GM,
+    BK_LM,
     BK_NONE,
     FILTER_ALL,
     FILTER_PASS,
@@ -144,9 +143,41 @@ def test_duplicate_key_routes_to_N_bucket_no_merge():
     assert len(query_rows) == 1 and query_rows[0].bd == BD_FP
 
 
-def test_classify_haplotype_unsupported():
-    with pytest.raises(NotImplementedError):
-        classify_haplotype([], [], FILTER_ALL)
+def _chr1_fetch(chrom, start0, end0):
+    return "CAAAAT"[start0:end0]
+
+
+def test_classify_haplotype_rescues_mnp_vs_two_snps():
+    # truth AA>GG at pos2 vs query A>G@2 + A>G@3: keyed-different, sequence-equal.
+    truth = [nr("truth", 2, "AA", "GG", "1/1", vtype="COMPLEX")]
+    query = [nr("query", 2, "A", "G", "1/1"), nr("query", 3, "A", "G", "1/1")]
+    rows = classify_haplotype(truth, query, FILTER_ALL, _chr1_fetch)
+    assert all(r.bd == BD_TP and r.bk == BK_LM for r in rows)
+    assert sum(1 for r in rows if r.side == "query") == 2
+
+
+def test_classify_haplotype_over_budget_keeps_p1_verdict():
+    # Over-budget clusters are NOT rescued and MUST keep their P1 FP/FN verdict.
+    # Routing them to BD_N would drop the truth FN from the recall denominator
+    # (and the query FP from precision), letting a messy query outscore P1.
+    truth = [nr("truth", 2, "A", "G", "1/1")]  # SNP -> FN
+    query = [nr("query", 3, "C", "T", "1/1")]  # SNP -> FP; within flank of pos 2
+    rows = classify_haplotype(
+        truth, query, FILTER_ALL, _chr1_fetch, flank=20, max_cluster=1
+    )
+    by_side = {r.side: r for r in rows}
+    assert by_side["truth"].bd == BD_FN  # preserved, not dropped to N
+    assert by_side["query"].bd == BD_FP
+    assert not any(r.bd == BD_TP for r in rows)  # over budget => no rescue
+    assert all(r.bd != BD_N for r in rows)
+
+
+def test_classify_haplotype_keeps_genuine_fp_fn():
+    # A real FP with no truth counterpart in its cluster stays FP.
+    truth: list = []
+    query = [nr("query", 2, "A", "G", "1/1")]
+    rows = classify_haplotype(truth, query, FILTER_ALL, _chr1_fetch)
+    assert [r.bd for r in rows] == [BD_FP]
 
 
 def test_non_pass_truth_is_still_scored_in_pass_view():
