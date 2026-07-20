@@ -8,6 +8,7 @@ pytest.importorskip("pyfaidx")
 
 from benchmark.normalize import (
     canonical_gt,
+    decompose_mnp,
     left_align,
     split_multiallelic,
     trim,
@@ -98,3 +99,27 @@ def test_canonical_gt_missing_allele():
 
 def test_canonical_gt_phased_keeps_order():
     assert canonical_gt((1, 0), phased=True) == "1|0"
+
+
+# ---- decompose_mnp: split equal-length multibase substitutions into SNPs ----
+
+
+def test_decompose_mnp_splits_into_snps():
+    assert decompose_mnp(10, "AT", "GC") == [(10, "A", "G"), (11, "T", "C")]
+
+
+def test_decompose_mnp_skips_matching_bases():
+    assert decompose_mnp(10, "AC", "GC") == [(10, "A", "G")]
+
+
+def test_decompose_mnp_passthrough_non_mnp():
+    assert decompose_mnp(10, "A", "G") == [(10, "A", "G")]  # SNP
+    assert decompose_mnp(10, "AT", "A") == [(10, "AT", "A")]  # indel, not MNP
+
+
+# ---- left_align never returns an empty allele ----
+
+
+def test_left_align_rejects_empty_allele():
+    with pytest.raises(ValueError):
+        left_align(_fetch(), "chr1", 1, "", "A")

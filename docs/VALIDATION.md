@@ -128,3 +128,36 @@ The full validation lives in `tests/test_trio.py`
 (`test_giab_*`). GIAB data: Zook et al., *Sci. Data* (2016) and the
 NIST/GIAB v4.2.1 benchmark; see
 <https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/>.
+
+# Benchmarking (`vcfclick benchmark`)
+
+`vcfclick benchmark` compares a query VCF against a truth VCF over a
+reference FASTA, restricted to a confident-region BED, and reports
+TP/FP/FN with precision/recall/F1 in a GA4GH-shaped `summary.csv`.
+
+**This is the `normalized` engine — not hap.py.** It does
+reference-based normalization (left-align + trim + optional MNP
+decomposition) and a genotype-aware, allele/locus-keyed match. It does
+**not** do cross-representation haplotype comparison, so its **INDEL
+precision/recall are not hap.py-comparable** — they are typically
+conservative for representation-equivalent INDELs, but the direction is
+not guaranteed and must be measured empirically. SNP numbers are
+directly comparable. The haplotype engine (`--engine haplotype`) that
+closes the INDEL gap is a planned phase-2 feature and currently raises
+`UnsupportedFeatureError`.
+
+Provenance is explicit: `summary.csv` is the strict canonical shape (no
+extra columns); the engine and inputs are stamped in `run_meta.json`, in
+`vcfclick.summary.csv` (which carries an `Engine` column), and in the
+HTML report, which labels the INDEL rows as not hap.py-comparable.
+
+```bash
+vcfclick benchmark \
+  --truth truth.vcf.gz --query calls.vcf.gz \
+  --ref genome.fa --regions confident.bed -o report/
+```
+
+The self-benchmark invariant (truth == query ⇒ Recall = Precision =
+F1 = 1.0 for every stratum) is asserted in
+`tests/benchmark/test_pipeline.py`; the module unit tests live under
+`tests/benchmark/`.

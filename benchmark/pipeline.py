@@ -23,14 +23,19 @@ from benchmark.constants import (
 )
 from benchmark.metrics import metrics_from_counts
 from benchmark.model import NormRecord
-from benchmark.normalize import canonical_gt, left_align, split_multiallelic
+from benchmark.normalize import (
+    canonical_gt,
+    decompose_mnp,
+    left_align,
+    split_multiallelic,
+)
 from benchmark.reconcile import UnsupportedFeatureError, classify
 from benchmark.reference import BenchmarkError, Reference, canonical_contig
 from benchmark.report import write_reports
 
 log = logging.getLogger(__name__)
 
-ALL_FORMATS = ["csv", "json", "html"]
+ALL_FORMATS = ["csv", "json", "parquet", "html"]
 _MITO_KEYS = {"m", "mt", "chrm", "chrmt"}
 
 
@@ -52,6 +57,7 @@ def _parse_side(
     ref: Reference,
     on_ref_mismatch: str,
     excluded: dict,
+    decompose: bool,
 ) -> list[NormRecord]:
     """Parse one VCF into normalized biallelic NormRecords."""
     from cyvcf2 import VCF
@@ -87,23 +93,29 @@ def _parse_side(
         for altrow in split_multiallelic(var.POS, ref_allele, alts, gt):
             if 1 not in altrow.gt:
                 continue  # sample carries no copy of this alt (homref / no-call)
-            pos, r, a = left_align(ref.fetch, chrom, altrow.pos, altrow.ref, altrow.alt)
+            pieces = (
+                decompose_mnp(altrow.pos, altrow.ref, altrow.alt)
+                if decompose
+                else [(altrow.pos, altrow.ref, altrow.alt)]
+            )
             alleles = altrow.gt
             if _is_mito(chrom) and len(alleles) == 1:
                 alleles = alleles * 2  # haploid 1 ≡ diploid 1/1 on chrM
-            out.append(
-                NormRecord(
-                    side=side,
-                    chrom=chrom,
-                    pos=pos,
-                    ref=r,
-                    alt=a,
-                    gt=canonical_gt(alleles, phased),
-                    is_pass=is_pass,
-                    other_alt_present=altrow.other_alt_present,
-                    locus_id=altrow.locus_id,
+            for ppos, pref, palt in pieces:
+                pos, r, a = left_align(ref.fetch, chrom, ppos, pref, palt)
+                out.append(
+                    NormRecord(
+                        side=side,
+                        chrom=chrom,
+                        pos=pos,
+                        ref=r,
+                        alt=a,
+                        gt=canonical_gt(alleles, phased),
+                        is_pass=is_pass,
+                        other_alt_present=altrow.other_alt_present,
+                        locus_id=altrow.locus_id,
+                    )
                 )
-            )
     return out
 
 
@@ -148,12 +160,16 @@ def run_benchmark(
     engine: str = "normalized",
     report_formats: list[str] | None = None,
     on_ref_mismatch: str = "error",
+    strict: bool = False,
+    conf_containment: str = "start",
+    decompose_mnp: bool = False,
 ) -> dict:
     """Benchmark `query` against `truth` over reference `ref`, writing reports.
 
     `engine="haplotype"` is a P2 feature and raises UnsupportedFeatureError.
-    With `regions=None` every call is treated as confident (a warning is logged).
-    Returns `{"run_meta": ..., "summary": [...]}`.
+    With `regions=None` every call is treated as confident (a warning, or a hard
+    error under `strict`). `conf_containment` is "start" or "full"; `decompose_mnp`
+    atomizes MNPs into SNPs (off by default). Returns `{"run_meta", "summary"}`.
     """
     if engine == "haplotype":
         raise UnsupportedFeatureError(
@@ -166,17 +182,23 @@ def run_benchmark(
     reference = Reference(ref)
     excluded = {"symbolic": 0, "ref_mismatch": 0}
 
-    truth_recs = _parse_side(truth, "truth", reference, on_ref_mismatch, excluded)
-    query_recs = _parse_side(query, "query", reference, on_ref_mismatch, excluded)
+    truth_recs = _parse_side(
+        truth, "truth", reference, on_ref_mismatch, excluded, decompose_mnp
+    )
+    query_recs = _parse_side(
+        query, "query", reference, on_ref_mismatch, excluded, decompose_mnp
+    )
 
     if regions is None:
+        if strict:
+            raise BenchmarkError("no --regions BED given and --strict is set")
         log.warning("no --regions BED given; treating every call as confident")
         truth_recs = [dataclasses.replace(r, in_conf=True) for r in truth_recs]
         query_recs = [dataclasses.replace(r, in_conf=True) for r in query_recs]
     else:
         conf = regions_mod.ConfRegions.from_bed(regions)
-        truth_recs = conf.tag(truth_recs)
-        query_recs = conf.tag(query_recs)
+        truth_recs = conf.tag(truth_recs, containment=conf_containment)
+        query_recs = conf.tag(query_recs, containment=conf_containment)
 
     truth_recs = stratify.tag(truth_recs)
     query_recs = stratify.tag(query_recs)
@@ -206,5 +228,11 @@ def run_benchmark(
         "excluded": excluded,
         "unsummarized_types": unsummarized,
     }
-    write_reports(agg, run_meta, outdir, formats)
+
+    classified = None
+    if "parquet" in formats:
+        import pyarrow as pa
+
+        classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
+    write_reports(agg, run_meta, outdir, formats, classified=classified)
     return {"run_meta": run_meta, "summary": summary}

@@ -47,7 +47,24 @@ def left_align(
     # Restore parsimony on the left (keep ≥1 base each).
     while len(ref) > 1 and len(alt) > 1 and ref[0] == alt[0]:
         ref, alt, pos = ref[1:], alt[1:], pos + 1
+    if not ref or not alt:
+        raise ValueError(
+            f"normalization produced an empty allele at {chrom}:{pos} "
+            "(malformed input: no left anchor at the contig start)"
+        )
     return pos, ref, alt
+
+
+def decompose_mnp(pos: int, ref: str, alt: str) -> list[tuple[int, str, str]]:
+    """Split an equal-length multibase substitution (MNP) into per-position SNPs.
+
+    Only differing positions become SNPs. Non-MNPs (SNPs, indels) pass through
+    unchanged. OFF by default in the pipeline: atomizing an unphased het MNP
+    loses cis/trans phase, which a keyed comparer cannot recover (a P2 concern).
+    """
+    if len(ref) != len(alt) or len(ref) <= 1:
+        return [(pos, ref, alt)]
+    return [(pos + i, ref[i], alt[i]) for i in range(len(ref)) if ref[i] != alt[i]]
 
 
 @dataclass(frozen=True)

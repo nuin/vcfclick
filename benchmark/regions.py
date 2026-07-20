@@ -65,9 +65,33 @@ class ConfRegions:
         idx = int(np.searchsorted(starts, pos0, side="right")) - 1
         return idx >= 0 and pos0 < int(self._ends[chrom][idx])
 
-    def tag(self, records: Iterable[NormRecord]) -> list[NormRecord]:
-        """Return copies with `in_conf` set from the normalized locus start POS."""
+    def contains_span(self, chrom: str, start0: int, end0: int) -> bool:
+        """True iff the whole 0-based half-open [start0, end0) lies in one interval."""
+        starts = self._starts.get(chrom)
+        if starts is None:
+            return False
+        idx = int(np.searchsorted(starts, start0, side="right")) - 1
+        return (
+            idx >= 0
+            and start0 >= int(starts[idx])
+            and end0 <= int(self._ends[chrom][idx])
+        )
+
+    def _in_conf(self, r: NormRecord, containment: str) -> bool:
+        if containment == "full":
+            start0 = r.pos - 1
+            return self.contains_span(r.chrom, start0, start0 + len(r.ref))
+        return self.contains(r.chrom, r.pos)
+
+    def tag(
+        self, records: Iterable[NormRecord], containment: str = "start"
+    ) -> list[NormRecord]:
+        """Return copies with `in_conf` set on the normalized locus.
+
+        `start` (default): the variant's POS start is inside a region. `full`:
+        the variant's entire ref span must be inside one region.
+        """
         return [
-            dataclasses.replace(r, in_conf=self.contains(r.chrom, r.pos))
+            dataclasses.replace(r, in_conf=self._in_conf(r, containment))
             for r in records
         ]

@@ -136,3 +136,24 @@ def test_tag_sets_in_conf_and_copies():
     assert out[0] is not recs[0]
     # only in_conf changed
     assert out[0].pos == 15 and out[0].chrom == "chr1"
+
+
+def test_full_containment_rejects_boundary_straddling_indel():
+    from benchmark.model import NormRecord
+
+    # region covers 0-based [2,5) => 1-based POS 3,4,5
+    rec = NormRecord(
+        side="query",
+        chrom="chr1",
+        pos=5,
+        ref="AA",
+        alt="A",
+        gt="0/1",
+        is_pass=True,
+        other_alt_present=False,
+        locus_id=(5, "AA", ("A",)),
+    )
+    start = ConfRegions([("chr1", 2, 5)]).tag([rec], containment="start")[0]
+    full = ConfRegions([("chr1", 2, 5)]).tag([rec], containment="full")[0]
+    assert start.in_conf is True  # POS 5 start is inside
+    assert full.in_conf is False  # span 0-based [4,6) exceeds region end 5

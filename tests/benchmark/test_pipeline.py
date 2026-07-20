@@ -221,3 +221,123 @@ def test_complex_variants_surfaced_in_run_meta(tmp_path):
     query = _write_vcf(tmp_path / "query.vcf", rec)
     res = run_benchmark(truth, query, REF, str(tmp_path / "out"), regions=None)
     assert res["run_meta"]["unsummarized_types"].get("COMPLEX", 0) >= 1
+
+
+def test_strict_requires_regions(tmp_path):
+    from benchmark.reference import BenchmarkError
+
+    t = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    q = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    with pytest.raises(BenchmarkError):
+        run_benchmark(t, q, REF, str(tmp_path / "out"), regions=None, strict=True)
+
+
+def test_parquet_format_written(tmp_path):
+    t = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    q = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    run_benchmark(t, q, REF, str(outdir), regions=CONF, report_formats=["parquet"])
+    assert (outdir / "benchmark.parquet").exists()
+
+
+def test_conf_containment_full_makes_straddling_indel_unk(tmp_path):
+    # chr2 conf region is [0,4); a pos4 TA>T deletion spans 0-based [3,5) — its
+    # start is inside but its span straddles the edge.
+    q = _write_vcf(tmp_path / "q.vcf", ["chr2\t4\t.\tTA\tT\t50\tPASS\t.\tGT\t0/1\n"])
+    t = _write_vcf(tmp_path / "t.vcf", [])
+    start = run_benchmark(
+        t, q, REF, str(tmp_path / "os"), regions=CONF, conf_containment="start"
+    )
+    full = run_benchmark(
+        t, q, REF, str(tmp_path / "of"), regions=CONF, conf_containment="full"
+    )
+    assert _row(start["summary"], VT_INDEL, FILTER_ALL)["query_fp"] == 1
+    assert _row(full["summary"], VT_INDEL, FILTER_ALL)["query_unk"] == 1
+
+
+def test_decompose_mnp_flag_splits_into_snps(tmp_path):
+    rec = ["chr2\t1\t.\tAC\tGT\t50\tPASS\t.\tGT\t1/1\n"]  # MNP AC>GT
+    t = _write_vcf(tmp_path / "t.vcf", rec)
+    q = _write_vcf(tmp_path / "q.vcf", rec)
+    off = run_benchmark(
+        t, q, REF, str(tmp_path / "o1"), regions=None, decompose_mnp=False
+    )
+    assert off["run_meta"]["unsummarized_types"].get("COMPLEX", 0) >= 1
+    on = run_benchmark(
+        t, q, REF, str(tmp_path / "o2"), regions=None, decompose_mnp=True
+    )
+    assert _row(on["summary"], VT_SNP, FILTER_ALL)["truth_tp"] == 2
+
+
+def _invoke(args):
+    from click.testing import CliRunner
+
+    from cli.benchmark import benchmark
+
+    return CliRunner().invoke(benchmark, args)
+
+
+def test_cli_pass_only_headline(tmp_path):
+    t = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    q = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    res = _invoke(
+        [
+            "--truth",
+            t,
+            "--query",
+            q,
+            "--ref",
+            REF,
+            "--regions",
+            CONF,
+            "-o",
+            str(tmp_path / "out"),
+            "--pass-only",
+        ]
+    )
+    assert res.exit_code == 0, res.output
+    assert "PASS" in res.output and " ALL " not in res.output
+
+
+def test_cli_parquet_format(tmp_path):
+    t = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    q = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    res = _invoke(
+        [
+            "--truth",
+            t,
+            "--query",
+            q,
+            "--ref",
+            REF,
+            "--regions",
+            CONF,
+            "-o",
+            str(outdir),
+            "--report-formats",
+            "parquet",
+        ]
+    )
+    assert res.exit_code == 0, res.output
+    assert (outdir / "benchmark.parquet").exists()
+
+
+def test_cli_strict_without_regions_errors(tmp_path):
+    t = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    q = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    res = _invoke(
+        [
+            "--truth",
+            t,
+            "--query",
+            q,
+            "--ref",
+            REF,
+            "-o",
+            str(tmp_path / "out"),
+            "--strict",
+        ]
+    )
+    assert res.exit_code == 1  # ClickException, not a usage error (2)
+    assert "strict" in res.output.lower()

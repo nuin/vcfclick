@@ -14,7 +14,7 @@ import click
 
 from cli.main import cli
 
-_ALL_FORMATS = ("csv", "json", "html")
+_ALL_FORMATS = ("csv", "json", "parquet", "html")
 
 
 @cli.command(name="benchmark")
@@ -69,6 +69,31 @@ _ALL_FORMATS = ("csv", "json", "html")
     show_default=True,
     help="Behaviour when a REF allele disagrees with the reference.",
 )
+@click.option(
+    "--conf-containment",
+    type=click.Choice(["start", "full"]),
+    default="start",
+    show_default=True,
+    help="Confident-region membership: variant start, or whole ref span.",
+)
+@click.option(
+    "--decompose-mnp/--no-decompose-mnp",
+    default=False,
+    show_default=True,
+    help="Atomize MNPs into per-position SNPs (loses phase; off by default).",
+)
+@click.option(
+    "--strict",
+    is_flag=True,
+    default=False,
+    help="Promote warnings (e.g. missing --regions) to hard errors.",
+)
+@click.option(
+    "--pass-only/--all",
+    "pass_only",
+    default=None,
+    help="Show only the PASS (or only the ALL) filter view in the headline.",
+)
 def benchmark(
     truth: str,
     query: str,
@@ -78,6 +103,10 @@ def benchmark(
     engine: str,
     report_formats: str,
     on_ref_mismatch: str,
+    conf_containment: str,
+    decompose_mnp: bool,
+    strict: bool,
+    pass_only: bool | None,
 ) -> None:
     """Benchmark a query VCF against a truth VCF (normalized genotype concordance)."""
     from benchmark.pipeline import run_benchmark
@@ -104,11 +133,19 @@ def benchmark(
             engine=engine,
             report_formats=formats,
             on_ref_mismatch=on_ref_mismatch,
+            conf_containment=conf_containment,
+            decompose_mnp=decompose_mnp,
+            strict=strict,
         )
     except (BenchmarkError, UnsupportedFeatureError) as e:
         raise click.ClickException(str(e)) from e
 
-    for row in res["summary"]:
+    rows = res["summary"]
+    if pass_only is True:
+        rows = [r for r in rows if r["Filter"] == "PASS"]
+    elif pass_only is False:
+        rows = [r for r in rows if r["Filter"] == "ALL"]
+    for row in rows:
         click.echo(
             f"{row['Type']:5} {row['Filter']:4}  "
             f"recall={row['recall']:.4f} precision={row['precision']:.4f} "
