@@ -181,13 +181,45 @@ SNP recall denominator; vcfclick keeps it whole (typed `UNK`, surfaced in
 with `--decompose-mnp` makes vcfclick bin it the same way and the numbers
 match hap.py exactly (SNP and INDEL 1.0 / 1.0).
 
-**Scope and honesty.** This validates the comparison *logic* on a small
-synthetic case, not accuracy over a real genome. A full conformance run
-against GIAB HG002 on GRCh38 (whole-genome truth VCF + high-confidence
-BED) has not been done; SNP concordance is expected to match hap.py, and
-the INDEL/complex quantification gap above is the one known difference to
-quantify at scale. hap.py/vcfeval are dev-only oracles, never runtime
-dependencies.
+### Real GIAB HG002 / GRCh38 (chr20)
+
+Beyond the synthetic case, the same hap.py build was run against vcfclick
+on **real GIAB data**: the HG002 v4.2.1 benchmark truth over GRCh38
+`chr20:1,000,000–6,000,000` (8,288 variants — 6,986 SNP, 1,193 INDEL, 109
+multiallelic) inside the real high-confidence BED (987 intervals),
+reference streamed from the GIAB `no_alt_analysis_set`. The query is a
+controlled perturbation of that truth (332 variants dropped → known FN,
+166 genotypes flipped → known errors) so both tools score the same real,
+messy call set. Per-stratum, `ALL` filter:
+
+| stratum | metric | hap.py (xcmp) | vcfclick | Δ |
+|---|---|---|---|---|
+| SNP | recall | 0.9402 | 0.9414 | +0.001 |
+| SNP | precision | 0.9796 | 0.9795 | −0.000 |
+| SNP | FN / FP | 405 / 133 | 410 / 138 | +5 / +5 |
+| INDEL | recall | 0.9344 | 0.9453 | +0.011 |
+| INDEL | precision | 0.9747 | 0.9791 | +0.005 |
+| INDEL | FN / FP | 75 / 29 | 76 / 28 | +1 / −1 |
+
+**SNP concordance is essentially exact** (recall and precision within
+0.1%; FN/FP within 5 of ~6,900 variants). **INDEL agrees within ~1%**,
+vcfclick reading slightly higher on both — attributable to counting
+convention: vcfclick decomposes multiallelics into more biallelic rows
+(INDEL truth total 1,389 vs hap.py's 1,144). The one structural
+difference is **UNK**: hap.py buckets ~370 query calls as not-assessable
+(its confident-region intersection after re-normalization); vcfclick
+counts 0, because this truth-derived query places every call at a truth
+position inside the confident BED. A real independent caller (with calls
+genuinely outside confident regions) would give vcfclick a nonzero UNK.
+
+**Scope and honesty.** GIAB truth is pre-normalized (no standalone MNPs),
+so this run validates that vcfclick's normalization and matching **agree
+with hap.py to ~1% on thousands of real variants** (real indels-in-
+repeats, real multiallelics) — but it does not stress cross-representation
+haplotype *rescue* at scale (that axis is covered by the synthetic case
+above; stressing it at genome scale needs a real independent caller VCF,
+not yet run). Reproduce with the `jmcdani20/hap.py:v0.3.12` image;
+hap.py/vcfeval are dev-only oracles, never runtime dependencies.
 
 The self-benchmark invariant (truth == query ⇒ Recall = Precision =
 F1 = 1.0 for every stratum) is asserted in
