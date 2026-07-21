@@ -192,8 +192,10 @@ def classify_haplotype(
     fn_recs: list[NormRecord] = []
     fp_recs: list[NormRecord] = []
     for row in rows:
-        if row.bk != BK_NONE or not row.in_conf:
-            continue  # only truly-unmatched (no allele-match) residual is eligible
+        if row.bk not in (BK_NONE, BK_AM) or not row.in_conf:
+            continue  # unmatched (.) OR allele-match/GT-differ (am) residual is
+            # eligible; the diplotype check gates it, so het-alt representation
+            # differences rescue while genuine zygosity errors stay am.
         k = (row.chrom, row.pos, row.ref, row.alt)
         if row.side == "truth" and row.bd == BD_FN:
             rec = t_index.get(k)

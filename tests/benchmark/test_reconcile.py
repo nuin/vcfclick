@@ -211,3 +211,30 @@ def test_het_vs_hom_still_mismatch_after_phase_norm():
     rows = classify([t], [q], FILTER_ALL)
     s = _by_side(rows)
     assert s["truth"].bd == BD_FN and s["query"].bd == BD_FP  # am, not TP
+
+
+def test_haplotype_rescues_het_alt_spelled_two_ways():
+    # Het-alt at chr1 pos1 (ref C): sample carries C>A on one haplotype, C>T on
+    # the other. Truth spells it as a 1/2 multiallelic (other_alt_present=True on
+    # both rows); query spells it as two separate 0/1 records (other=False). Same
+    # diplotype {A.., T..} — the haplotype engine must rescue to TP, not leave am.
+    truth = [
+        nr("truth", 1, "C", "A", "0/1", other=True, locus=(1, "C", ("A", "T"))),
+        nr("truth", 1, "C", "T", "0/1", other=True, locus=(1, "C", ("A", "T"))),
+    ]
+    query = [
+        nr("query", 1, "C", "A", "0/1", other=False),
+        nr("query", 1, "C", "T", "0/1", other=False),
+    ]
+    rows = classify_haplotype(truth, query, FILTER_ALL, _chr1_fetch)
+    assert all(r.bd == BD_TP and r.bk == BK_LM for r in rows)
+
+
+def test_haplotype_does_not_rescue_real_zygosity_error():
+    # A genuine het-vs-hom error must stay am (FN+FP), never rescued to TP.
+    t = nr("truth", 2, "A", "G", "1/1")
+    q = nr("query", 2, "A", "G", "0/1")
+    rows = classify_haplotype([t], [q], FILTER_ALL, _chr1_fetch)
+    s = _by_side(rows)
+    assert s["truth"].bd == BD_FN and s["query"].bd == BD_FP
+    assert not any(r.bd == BD_TP for r in rows)

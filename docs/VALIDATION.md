@@ -225,31 +225,33 @@ genuinely **independent HG002 call set** — the assembly-based
 *phased*) — scored against the v4.2.1 truth over the same `chr20:1–6M`
 confident regions with both tools.
 
-| stratum | metric | hap.py (xcmp) | vcfclick (haplotype) | Δ |
-|---|---|---|---|---|
-| SNP | recall / precision | 1.0000 / 1.0000 | 0.9976 / 0.9973 | −0.002 / −0.003 |
-| INDEL | recall / precision | 1.0000 / 0.9991 | 0.8532 / 0.8528 | **−0.147 / −0.146** |
+| stratum | metric | hap.py (xcmp) | vcfclick before | vcfclick after | Δ after |
+|---|---|---|---|---|---|
+| SNP | recall / precision | 1.0000 / 1.0000 | 0.9976 / 0.9973 | 0.9993 / 0.9990 | −0.001 / −0.001 |
+| INDEL | recall / precision | 1.0000 / 0.9991 | 0.8532 / 0.8528 | 0.9604 / 0.9603 | −0.040 / −0.039 |
 
-**SNPs match hap.py to ~0.3%** (17 FN / 19 FP of ~7,000) even on a fully
-independent, phased caller — strong. **INDELs reveal a real gap:**
-vcfclick reads ~15 points lower on both recall and precision (≈200 FN +
-200 FP that hap.py resolves as concordant). Root cause, diagnosed:
+**SNPs match hap.py to ~0.1%** (5 FN / 7 FP of ~7,000) even on a fully
+independent, phased caller. **INDELs** initially showed a ~15-point gap
+(≈200 FN + 200 FP that hap.py resolved as concordant); the *before*
+column above. Diagnosis and fix:
 
 - It is **not** normalization. vcfclick's `left_align` matches `bcftools
   norm -f` exactly on all 1,214 query indels (0 divergences), and after
   identical normalization 1,211 / 1,217 indels share an exact key.
-- It is **het-alt multiallelic indels** (genotype `1/2` — the sample
-  carries two different indel alleles). 101 of the 102 gap positions are
-  multiallelic het-alt. vcfclick keys the genotype per split allele with
-  an `other_alt_present` flag; when the caller spells the same het-alt
-  differently (one `1/2` record vs two `0/1` records), that flag differs
-  and the locus scores as an allele-match/genotype-mismatch (`am`) — an
-  FN+FP pair — where hap.py's locus-level haplotype comparison calls it a
-  TP. This is the known per-locus-allele-multiset matching limitation
-  (design doc, the "make the classification object a sample-locus call"
-  item), now quantified: ~15 points of INDEL recall on a real assembly
-  caller. The `haplotype` engine rescues the canonical MNP/shift cases
-  but does not yet resolve these het-alt representations.
+- The gap was **het-alt multiallelic indels** (genotype `1/2` — two
+  different indel alleles): 101 of the 102 gap positions. When a caller
+  spells a het-alt differently (one `1/2` record vs two `0/1` records),
+  vcfclick's per-allele genotype key mismatched and scored it `am` — and
+  the `haplotype` engine then *skipped* `am` rows entirely, so it never
+  tried to rescue them. **Fixed:** the haplotype residual now includes
+  `am` rows, and the diplotype-equivalence check decides — het-alt
+  representations resolve to TP while genuine zygosity errors (`0/1` vs
+  `1/1`) stay `am`. That lifts INDEL recall 0.85 → 0.96 (the *after*
+  column), with zero change to the controlled-perturbation runs above.
+- **~4 points of INDEL gap remain** (52 residual `am`): harder het-alt
+  cases embedded in larger clusters or needing phased/window-extended
+  haplotype enumeration — approaching full `xcmp` complexity, and the
+  point of diminishing returns for the P1 engine.
 
 **Bug found and fixed by this run.** The independent phased caller also
 surfaced a genotype-matching bug: the keyed verdict compared the raw GT
@@ -260,12 +262,13 @@ now phase-insensitive (a real `0/1`-vs-`1/1` zygosity error still
 mismatches). Every prior test used matching phase, so only real
 independent data caught it.
 
-**Bottom line.** For **SNP** concordance, vcfclick tracks hap.py to a
-fraction of a percent, on real data, including an independent caller. For
-**INDEL** concordance it does not yet — the honest gap is ~15 points on a
-het-alt-rich assembly caller, with a known root cause and fix path.
-Reproduce with the `jmcdani20/hap.py:v0.3.12` image; hap.py/vcfeval are
-dev-only oracles, never runtime dependencies.
+**Bottom line.** On a fully independent, phased assembly caller, vcfclick's
+`haplotype` engine tracks hap.py to **~0.1% on SNPs and ~4% on INDELs** —
+the latter after fixing the het-alt handling this exercise surfaced. The
+residual INDEL gap is a handful of complex het-alt clusters that need
+near-full `xcmp`-style haplotype enumeration. Reproduce with the
+`jmcdani20/hap.py:v0.3.12` image; hap.py/vcfeval are dev-only oracles,
+never runtime dependencies.
 
 The self-benchmark invariant (truth == query ⇒ Recall = Precision =
 F1 = 1.0 for every stratum) is asserted in
