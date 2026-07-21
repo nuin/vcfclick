@@ -238,3 +238,20 @@ def test_haplotype_does_not_rescue_real_zygosity_error():
     s = _by_side(rows)
     assert s["truth"].bd == BD_FN and s["query"].bd == BD_FP
     assert not any(r.bd == BD_TP for r in rows)
+
+
+def test_haplotype_does_not_rescue_halfcall_vs_hom():
+    # ./1 (half-call) and 1/1 (hom) are different genotypes; the alt-dropped
+    # allele set must not collapse ./1 into hom and rescue it to a false TP.
+    t = nr("truth", 2, "A", "G", "./1")
+    q = nr("query", 2, "A", "G", "1/1")
+    rows = classify_haplotype([t], [q], FILTER_ALL, _chr1_fetch)
+    assert not any(r.bd == BD_TP for r in rows)
+
+
+def test_haplotype_does_not_rescue_haploid_vs_hom():
+    # Haploid 1 (single allele) must not be rescued as equal to diploid 1/1.
+    t = nr("truth", 2, "A", "G", "1")
+    q = nr("query", 2, "A", "G", "1/1")
+    rows = classify_haplotype([t], [q], FILTER_ALL, _chr1_fetch)
+    assert not any(r.bd == BD_TP for r in rows)

@@ -159,6 +159,18 @@ def _ident(r) -> tuple:
     return (r.side, r.chrom, r.pos, r.ref, r.alt)
 
 
+def _full_diploid(r: NormRecord) -> bool:
+    """True only for a fully-called diploid genotype (two present alleles).
+
+    The haplotype rescue collapses a record's alt into a single applied sequence;
+    that is faithful only for a genuine diploid genotype. A half-call (`./1`) or
+    haploid (`1`) would otherwise be treated as hom-alt and falsely rescued
+    against a real `1/1`, so such records are kept at their P1 verdict.
+    """
+    alleles = r.gt.replace("|", "/").split("/")
+    return len(alleles) == 2 and "." not in alleles
+
+
 def classify_haplotype(
     truth: list[NormRecord],
     query: list[NormRecord],
@@ -199,11 +211,11 @@ def classify_haplotype(
         k = (row.chrom, row.pos, row.ref, row.alt)
         if row.side == "truth" and row.bd == BD_FN:
             rec = t_index.get(k)
-            if rec is not None:
+            if rec is not None and _full_diploid(rec):
                 fn_recs.append(rec)
         elif row.side == "query" and row.bd == BD_FP:
             rec = q_index.get(k)
-            if rec is not None:
+            if rec is not None and _full_diploid(rec):
                 fp_recs.append(rec)
 
     reclassified: set[tuple] = set()
