@@ -181,32 +181,36 @@ SNP recall denominator; vcfclick keeps it whole (typed `UNK`, surfaced in
 with `--decompose-mnp` makes vcfclick bin it the same way and the numbers
 match hap.py exactly (SNP and INDEL 1.0 / 1.0).
 
-### Real GIAB HG002 / GRCh38 (chr20)
+### Real GIAB HG002 / GRCh38 (chr20 and chr1)
 
 Beyond the synthetic case, the same hap.py build was run against vcfclick
-on **real GIAB data**: the HG002 v4.2.1 benchmark truth over GRCh38
-`chr20:1,000,000–6,000,000` (8,288 variants — 6,986 SNP, 1,193 INDEL, 109
-multiallelic) inside the real high-confidence BED (987 intervals),
-reference streamed from the GIAB `no_alt_analysis_set`. The query is a
-controlled perturbation of that truth (332 variants dropped → known FN,
-166 genotypes flipped → known errors) so both tools score the same real,
-messy call set. Per-stratum, `ALL` filter:
+on **real GIAB data**, in two independent 5-Mb windows: the HG002 v4.2.1
+benchmark truth over GRCh38 `chr20:1,000,000–6,000,000` (8,288 variants)
+and `chr1:1,000,000–6,000,000` (7,984 variants), each inside the real
+high-confidence BED, reference streamed from the GIAB
+`no_alt_analysis_set`. The query is a controlled perturbation of that
+truth (~4% of variants dropped → known FN, ~2% of genotypes flipped →
+known errors) so both tools score the same real, messy call set.
+Per-stratum, `ALL` filter:
 
-| stratum | metric | hap.py (xcmp) | vcfclick | Δ |
-|---|---|---|---|---|
-| SNP | recall | 0.9402 | 0.9414 | +0.001 |
-| SNP | precision | 0.9796 | 0.9795 | −0.000 |
-| SNP | FN / FP | 405 / 133 | 410 / 138 | +5 / +5 |
-| INDEL | recall | 0.9344 | 0.9453 | +0.011 |
-| INDEL | precision | 0.9747 | 0.9791 | +0.005 |
-| INDEL | FN / FP | 75 / 29 | 76 / 28 | +1 / −1 |
+| region | stratum | metric | hap.py (xcmp) | vcfclick | Δ |
+|---|---|---|---|---|---|
+| chr20 | SNP | recall / prec | 0.9402 / 0.9796 | 0.9414 / 0.9795 | +0.001 / −0.000 |
+| chr20 | SNP | FN / FP | 405 / 133 | 410 / 138 | +5 / +5 |
+| chr20 | INDEL | recall / prec | 0.9344 / 0.9747 | 0.9453 / 0.9791 | +0.011 / +0.005 |
+| chr20 | INDEL | FN / FP | 75 / 29 | 76 / 28 | +1 / −1 |
+| chr1 | SNP | recall / prec | 0.9414 / 0.9803 | 0.9423 / 0.9800 | +0.001 / −0.000 |
+| chr1 | SNP | FN / FP | 403 / 130 | 410 / 137 | +7 / +7 |
+| chr1 | INDEL | recall / prec | 0.9258 / 0.9715 | 0.9355 / 0.9761 | +0.010 / +0.005 |
+| chr1 | INDEL | FN / FP | 56 / 21 | 59 / 21 | +3 / +0 |
 
-**SNP concordance is essentially exact** (recall and precision within
-0.1%; FN/FP within 5 of ~6,900 variants). **INDEL agrees within ~1%**,
-vcfclick reading slightly higher on both — attributable to counting
-convention: vcfclick decomposes multiallelics into more biallelic rows
-(INDEL truth total 1,389 vs hap.py's 1,144). The one structural
-difference is **UNK**: hap.py buckets ~370 query calls as not-assessable
+Both chromosomes reproduce the same picture. **SNP concordance is
+essentially exact** (recall and precision within 0.1%; FN/FP within ~7 of
+~6,900 variants). **INDEL agrees within ~1%**, vcfclick reading slightly
+higher on both — attributable to counting convention: vcfclick decomposes
+multiallelics into more biallelic rows (chr20 INDEL truth total 1,389 vs
+hap.py's 1,144). The one structural difference is **UNK**: hap.py buckets
+a few hundred query calls as not-assessable
 (its confident-region intersection after re-normalization); vcfclick
 counts 0, because this truth-derived query places every call at a truth
 position inside the confident BED. A real independent caller (with calls
