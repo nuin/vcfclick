@@ -7,6 +7,18 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **`vcfclick benchmark`** — a native, dependency-light truth-vs-query
+  concordance benchmark over a reference FASTA and confident-region BED. The
+  `normalized` engine reference-normalizes both call sets (left-align + trim,
+  optional MNP decomposition) and does a genotype-aware, allele/locus-keyed
+  match; the `haplotype` engine adds a vcfeval/xcmp-style local-haplotype pass
+  that rescues representation-different but sequence-equivalent calls (e.g. an
+  MNP vs two SNPs); an `exact` diagnostic engine skips normalization. Reports in
+  a GA4GH-shaped `summary.csv` (+ `vcfclick.summary.csv`, `metrics.json`,
+  `run_meta.json`, self-contained HTML, Parquet). Optional extra:
+  `pip install "vcfclick[benchmark]"`. **Not hap.py:** SNP concordance is
+  directly comparable; INDEL numbers are conservative and not yet
+  hap.py-validated. See [docs/VALIDATION.md](docs/VALIDATION.md).
 - **Runnable demo notebook**, self-contained (downloads its own example VCFs)
   and covering the headline flows — ingest → SQL, GIAB-validated trio de novo,
   compound-het + gnomAD rarity filtering, sample QC, and `combine`. Two

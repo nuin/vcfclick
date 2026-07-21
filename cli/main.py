@@ -82,6 +82,7 @@ for _module in (
     "cli.combine",
     "cli.web",
     "cli.tui",
+    "cli.benchmark",
 ):
     importlib.import_module(_module)
 

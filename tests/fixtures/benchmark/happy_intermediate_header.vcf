@@ -1,0 +1,47 @@
+##fileformat=VCFv4.2
+## ---------------------------------------------------------------------------
+## SPEC-DERIVED hap.py / GA4GH intermediate-VCF (VCF-I) header.
+##
+## This file is HEADER-ONLY and was compiled from primary sources:
+##   - GA4GH intermediate spec: ga4gh/benchmarking-tools
+##     doc/ref-impl/intermediate.md
+##   - hap.py C++ source @ Illumina/hap.py@master:
+##       src/c++/lib/quantify/GA4GHQuantify.cpp   (setupHeader, BVT/BLT emit)
+##       src/c++/lib/variant/VariantStatistics.cpp (CT_NAMES, XC_NAMES)
+##
+## It was NOT produced by running a real hap.py binary. Re-verify against the
+## exact pinned release you vendor (value sets may differ from @master).
+##
+## The ##FORMAT/##INFO lines below are reproduced byte-for-byte from
+## GA4GHQuantify.cpp setupHeader. NOTE: the BVT/BLT Description value lists in
+## hap.py's own headers are INCOMPLETE relative to what the code emits — this is
+## an upstream hap.py header-vs-code inconsistency, not a vcfclick bug. The full
+## reachable value sets the code actually emits are captured in the machine-
+## parseable ##vcfclick_spec_* lines further down, which the conformance test
+## reads as the authoritative vocabulary.
+## ---------------------------------------------------------------------------
+##INFO=<ID=BS,Number=.,Type=Integer,Description="Benchmarking superlocus ID for these variants.">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=BD,Number=1,Type=String,Description="Decision for call (TP/FP/FN/N)">
+##FORMAT=<ID=BK,Number=1,Type=String,Description="Sub-type for decision (match/mismatch type)">
+##FORMAT=<ID=BI,Number=1,Type=String,Description="Additional comparison information">
+##FORMAT=<ID=QQ,Number=1,Type=Float,Description="Variant quality for ROC creation.">
+##FORMAT=<ID=BVT,Number=1,Type=String,Description="High-level variant type (SNP|INDEL).">
+##FORMAT=<ID=BLT,Number=1,Type=String,Description="High-level location type (het|homref|hetalt|homalt|nocall).">
+##INFO=<ID=VTC,Number=.,Type=String,Description="Variant types used for counting.">
+## ---------------------------------------------------------------------------
+## Authoritative (full) reachable value sets the code emits, comma-separated.
+## These extend beyond the (incomplete) Description strings above and are the
+## vocabulary tests/benchmark/test_conformance.py asserts constants.py against.
+## Casing is significant.
+##   BD  : GA4GHQuantify.cpp L67 header + intermediate.md decision tables.
+##   BK  : intermediate.md BK table; '.' is the VCF missing value = no match.
+##   BVT : GA4GHQuantify.cpp L168 nvs[] = {"UNK","SNP","INDEL","NOCALL","HOMREF"}.
+##   BLT : CT_NAMES (VariantStatistics.cpp L93); lt = type>>4.
+##   BI  : XC_NAMES (VariantStatistics.cpp L128-145); comma-set, default '.'.
+##vcfclick_spec_BD=TP,FP,FN,N
+##vcfclick_spec_BK=gm,am,lm,.
+##vcfclick_spec_BVT=UNK,SNP,INDEL,NOCALL,HOMREF
+##vcfclick_spec_BLT=homref,het,hetalt,hemi,ambi,halfcall,nocall,homalt,unknown,fail,error
+##vcfclick_spec_BI=ti,tv,i1_5,i6_15,i16_plus,d1_5,d6_15,d16_plus,c1_5,c6_15,c16_plus
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	TRUTH	QUERY

@@ -1,6 +1,6 @@
 [project]
 name = "vcfclick"
-version = "0.7.0"
+version = "0.8.0"
 description = "Small VCF databases. One per cohort. Embedded ClickHouse engine, embedded DuckDB annotations, MCP natural-language layer."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -53,6 +53,10 @@ web = [
     "uvicorn[standard]>=0.25.0",
     "pydantic>=2",
 ]
+benchmark = [
+    "pyfaidx>=0.8",
+    "numpy>=1.24",
+]
 
 [project.urls]
 Homepage = "https://github.com/nuin/vcfclick"
@@ -95,6 +99,7 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = [
     "annotations",
+    "benchmark",
     "cli",
     "export",
     "ingest",
@@ -108,6 +113,7 @@ packages = [
 [tool.hatch.build.targets.sdist]
 include = [
     "annotations",
+    "benchmark",
     "cli",
     "export",
     "ingest",
