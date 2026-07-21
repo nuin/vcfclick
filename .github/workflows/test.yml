@@ -90,7 +90,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install project + dev deps
-        run: uv sync --extra web --group dev --python ${{ matrix.python-version }}
+        run: uv sync --extra web --extra benchmark --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
         # Suite normally completes in 25–90s on CI. The chDB session-init
@@ -138,7 +138,7 @@ jobs:
         run: uv python install ${{ matrix.python-version }}
 
       - name: Install project + dev deps
-        run: uv sync --extra web --group dev --python ${{ matrix.python-version }}
+        run: uv sync --extra web --extra benchmark --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests (DuckDB backend)
         # Faster than the chDB matrix because there is no EmbeddedServer

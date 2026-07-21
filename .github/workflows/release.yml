@@ -42,7 +42,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends tabix
-          uv sync --extra web --group dev
+          uv sync --extra web --extra benchmark --group dev
           uv run pytest tests/ -q
         timeout-minutes: 20
 
