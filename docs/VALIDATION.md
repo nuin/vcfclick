@@ -216,14 +216,56 @@ counts 0, because this truth-derived query places every call at a truth
 position inside the confident BED. A real independent caller (with calls
 genuinely outside confident regions) would give vcfclick a nonzero UNK.
 
-**Scope and honesty.** GIAB truth is pre-normalized (no standalone MNPs),
-so this run validates that vcfclick's normalization and matching **agree
-with hap.py to ~1% on thousands of real variants** (real indels-in-
-repeats, real multiallelics) — but it does not stress cross-representation
-haplotype *rescue* at scale (that axis is covered by the synthetic case
-above; stressing it at genome scale needs a real independent caller VCF,
-not yet run). Reproduce with the `jmcdani20/hap.py:v0.3.12` image;
-hap.py/vcfeval are dev-only oracles, never runtime dependencies.
+### Independent caller (GIAB T2T-Q100 assembly) vs v4.2.1 truth
+
+The controlled runs above perturb the truth, so they don't stress
+cross-representation matching at scale. This one does: the query is a
+genuinely **independent HG002 call set** — the assembly-based
+`GRCh38_HG2-T2TQ100-V1.1` dipcall (a different method entirely, and
+*phased*) — scored against the v4.2.1 truth over the same `chr20:1–6M`
+confident regions with both tools.
+
+| stratum | metric | hap.py (xcmp) | vcfclick (haplotype) | Δ |
+|---|---|---|---|---|
+| SNP | recall / precision | 1.0000 / 1.0000 | 0.9976 / 0.9973 | −0.002 / −0.003 |
+| INDEL | recall / precision | 1.0000 / 0.9991 | 0.8532 / 0.8528 | **−0.147 / −0.146** |
+
+**SNPs match hap.py to ~0.3%** (17 FN / 19 FP of ~7,000) even on a fully
+independent, phased caller — strong. **INDELs reveal a real gap:**
+vcfclick reads ~15 points lower on both recall and precision (≈200 FN +
+200 FP that hap.py resolves as concordant). Root cause, diagnosed:
+
+- It is **not** normalization. vcfclick's `left_align` matches `bcftools
+  norm -f` exactly on all 1,214 query indels (0 divergences), and after
+  identical normalization 1,211 / 1,217 indels share an exact key.
+- It is **het-alt multiallelic indels** (genotype `1/2` — the sample
+  carries two different indel alleles). 101 of the 102 gap positions are
+  multiallelic het-alt. vcfclick keys the genotype per split allele with
+  an `other_alt_present` flag; when the caller spells the same het-alt
+  differently (one `1/2` record vs two `0/1` records), that flag differs
+  and the locus scores as an allele-match/genotype-mismatch (`am`) — an
+  FN+FP pair — where hap.py's locus-level haplotype comparison calls it a
+  TP. This is the known per-locus-allele-multiset matching limitation
+  (design doc, the "make the classification object a sample-locus call"
+  item), now quantified: ~15 points of INDEL recall on a real assembly
+  caller. The `haplotype` engine rescues the canonical MNP/shift cases
+  but does not yet resolve these het-alt representations.
+
+**Bug found and fixed by this run.** The independent phased caller also
+surfaced a genotype-matching bug: the keyed verdict compared the raw GT
+string, so a phased query `1|0` never matched an unphased truth `0/1` and
+every shared heterozygote scored as a spurious mismatch (8,142
+bcftools-shared variants → 0 TP before the fix). Genotype comparison is
+now phase-insensitive (a real `0/1`-vs-`1/1` zygosity error still
+mismatches). Every prior test used matching phase, so only real
+independent data caught it.
+
+**Bottom line.** For **SNP** concordance, vcfclick tracks hap.py to a
+fraction of a percent, on real data, including an independent caller. For
+**INDEL** concordance it does not yet — the honest gap is ~15 points on a
+het-alt-rich assembly caller, with a known root cause and fix path.
+Reproduce with the `jmcdani20/hap.py:v0.3.12` image; hap.py/vcfeval are
+dev-only oracles, never runtime dependencies.
 
 The self-benchmark invariant (truth == query ⇒ Recall = Precision =
 F1 = 1.0 for every stratum) is asserted in
