@@ -48,9 +48,15 @@ def _key(r: NormRecord) -> Key:
 
 
 def _gt_key(r: NormRecord) -> tuple:
-    """Locus-level genotype identity: the remapped GT plus whether a sibling
-    alt was carried at the locus (so `1/2`≠`0/1`)."""
-    return (r.gt, r.other_alt_present)
+    """Locus-level genotype identity for the keyed match: the phase-insensitive
+    allele multiset plus whether a sibling alt was carried (so `1/2`≠`0/1`).
+
+    Genotype concordance ignores phase — a phased `1|0` and an unphased `0/1`
+    are the same heterozygous genotype (assembly callers emit phased GTs; the
+    haplotype engine still reads phase from `r.gt`, which is left intact).
+    """
+    alleles = tuple(sorted(r.gt.replace("|", "/").split("/")))
+    return (alleles, r.other_alt_present)
 
 
 def _present(records: list[NormRecord], filter_view: str) -> list[NormRecord]:

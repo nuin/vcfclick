@@ -190,3 +190,24 @@ def test_non_pass_truth_is_still_scored_in_pass_view():
     by_side = _by_side(rows)
     assert by_side["truth"].bd == BD_TP
     assert by_side["query"].bd == BD_TP
+
+
+def test_phased_and_unphased_same_genotype_match_as_tp():
+    # Genotype-level concordance is phase-insensitive: a truth 0/1 and a query
+    # 1|0 are the same heterozygous genotype and must score TP, not a GT mismatch
+    # (real assembly callers emit phased GTs; short-read truth is unphased).
+    t = nr("truth", 10, "A", "G", "0/1")
+    q = nr("query", 10, "A", "G", "1|0")
+    rows = classify([t], [q], FILTER_ALL)
+    s = _by_side(rows)
+    assert s["truth"].bd == BD_TP and s["truth"].bk == BK_GM
+    assert s["query"].bd == BD_TP and s["query"].bk == BK_GM
+
+
+def test_het_vs_hom_still_mismatch_after_phase_norm():
+    # Phase-insensitivity must NOT collapse a real zygosity error: 0/1 vs 1/1.
+    t = nr("truth", 10, "A", "G", "0/1")
+    q = nr("query", 10, "A", "G", "1/1")
+    rows = classify([t], [q], FILTER_ALL)
+    s = _by_side(rows)
+    assert s["truth"].bd == BD_FN and s["query"].bd == BD_FP  # am, not TP
