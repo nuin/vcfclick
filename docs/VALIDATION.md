@@ -135,27 +135,59 @@ NIST/GIAB v4.2.1 benchmark; see
 reference FASTA, restricted to a confident-region BED, and reports
 TP/FP/FN with precision/recall/F1 in a GA4GH-shaped `summary.csv`.
 
-**This is the `normalized` engine — not hap.py.** It does
-reference-based normalization (left-align + trim + optional MNP
-decomposition) and a genotype-aware, allele/locus-keyed match. It does
-**not** do cross-representation haplotype comparison, so its **INDEL
-precision/recall are not hap.py-comparable** — they are typically
-conservative for representation-equivalent INDELs, but the direction is
-not guaranteed and must be measured empirically. SNP numbers are
-directly comparable. The haplotype engine (`--engine haplotype`) that
-closes the INDEL gap is a planned phase-2 feature and currently raises
-`UnsupportedFeatureError`.
+Two engines:
 
-Provenance is explicit: `summary.csv` is the strict canonical shape (no
-extra columns); the engine and inputs are stamped in `run_meta.json`, in
-`vcfclick.summary.csv` (which carries an `Engine` column), and in the
-HTML report, which labels the INDEL rows as not hap.py-comparable.
+- **`normalized`** — reference normalization (left-align + trim + optional
+  MNP decomposition) and a genotype-aware, allele/locus-keyed match.
+  Resolves representation-shifted indels but not cross-representation
+  rewrites (an MNP vs two SNPs), so its INDEL numbers are a conservative
+  lower bound.
+- **`haplotype`** — adds a vcfeval/xcmp-style local-haplotype pass that
+  rescues representation-different but sequence-equivalent calls.
+
+Provenance is explicit: `summary.csv` is the strict canonical shape; the
+engine and inputs are stamped in `run_meta.json`, `vcfclick.summary.csv`
+(which carries an `Engine` column), and the HTML report.
 
 ```bash
 vcfclick benchmark \
   --truth truth.vcf.gz --query calls.vcf.gz \
-  --ref genome.fa --regions confident.bed -o report/
+  --ref genome.fa --regions confident.bed -o report/ --engine haplotype
 ```
+
+## Conformance against hap.py
+
+The `haplotype` engine's **matching** was checked directly against real
+hap.py (Illumina `hap.py` v0.3.12, `--engine=xcmp`, run from the
+`jmcdani20/hap.py` Docker image) on a purpose-built representation-
+equivalence case: a synthetic reference with (a) a truth MNP `AC>GT`
+written in the query as two SNPs `A>G` + `C>T`, and (b) a single-base
+deletion in an 8-bp homopolymer written right-shifted in the truth and
+left-aligned in the query. Both are cases a naive keyed match miscounts
+as FP+FN.
+
+| stratum | hap.py (xcmp) | vcfclick `--engine haplotype` |
+|---|---|---|
+| INDEL recall / precision | 1.0 / 1.0 | 1.0 / 1.0 |
+| SNP precision | 1.0 (0 FP) | 1.0 (0 FP) |
+| SNP recall | 1.0 | 0.0 default · **1.0 with `--decompose-mnp`** |
+
+Both tools agree the calls are **concordant — zero FP, zero FN** — on
+both the MNP-vs-two-SNP rescue and the shifted-homopolymer deletion. The
+one default divergence is *quantification, not matching*: hap.py
+decomposes the truth MNP into SNPs for BVT counting, so it lands in the
+SNP recall denominator; vcfclick keeps it whole (typed `UNK`, surfaced in
+`run_meta.json` `unsummarized_types`), so SNP recall reads 0/0. Running
+with `--decompose-mnp` makes vcfclick bin it the same way and the numbers
+match hap.py exactly (SNP and INDEL 1.0 / 1.0).
+
+**Scope and honesty.** This validates the comparison *logic* on a small
+synthetic case, not accuracy over a real genome. A full conformance run
+against GIAB HG002 on GRCh38 (whole-genome truth VCF + high-confidence
+BED) has not been done; SNP concordance is expected to match hap.py, and
+the INDEL/complex quantification gap above is the one known difference to
+quantify at scale. hap.py/vcfeval are dev-only oracles, never runtime
+dependencies.
 
 The self-benchmark invariant (truth == query ⇒ Recall = Precision =
 F1 = 1.0 for every stratum) is asserted in
