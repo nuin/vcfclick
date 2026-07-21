@@ -132,7 +132,13 @@ def classify(
         t = truth_map.get(key)
         q = query_map.get(key)
         if t is not None and q is not None:
-            if _gt_key(t) == _gt_key(q):
+            if not t.in_conf:
+                # Matched locus outside the confident region: truth is unknown
+                # there, so it is not assessed — the query call is UNK and the
+                # truth call is dropped (never TP/FN). Gating the both-present
+                # branch, like the single-sided branches below.
+                rows.append(_row(q, filter_view, BD_N, BK_NONE))
+            elif _gt_key(t) == _gt_key(q):
                 rows.append(_row(t, filter_view, BD_TP, BK_GM))
                 rows.append(_row(q, filter_view, BD_TP, BK_GM))
             else:

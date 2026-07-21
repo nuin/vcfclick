@@ -208,13 +208,12 @@ Both chromosomes reproduce the same picture. **SNP concordance is
 essentially exact** (recall and precision within 0.1%; FN/FP within ~7 of
 ~6,900 variants). **INDEL agrees within ~1%**, vcfclick reading slightly
 higher on both — attributable to counting convention: vcfclick decomposes
-multiallelics into more biallelic rows (chr20 INDEL truth total 1,389 vs
-hap.py's 1,144). The one structural difference is **UNK**: hap.py buckets
-a few hundred query calls as not-assessable
-(its confident-region intersection after re-normalization); vcfclick
-counts 0, because this truth-derived query places every call at a truth
-position inside the confident BED. A real independent caller (with calls
-genuinely outside confident regions) would give vcfclick a nonzero UNK.
+multiallelics into more biallelic rows. (These numbers predate the
+confident-region gating fix described below; the version-0.8.0 columns
+here undercounted UNK — vcfclick reported UNK = 0 where hap.py bucketed a
+few hundred out-of-region calls as not-assessable. The gating fix aligns
+vcfclick's UNK with hap.py's and shifts these matched out-of-region calls
+out of TP into UNK, moving the metrics still closer to hap.py.)
 
 ### Independent caller (GIAB T2T-Q100 assembly) vs v4.2.1 truth
 
@@ -225,33 +224,32 @@ genuinely **independent HG002 call set** — the assembly-based
 *phased*) — scored against the v4.2.1 truth over the same `chr20:1–6M`
 confident regions with both tools.
 
-| stratum | metric | hap.py (xcmp) | vcfclick before | vcfclick after | Δ after |
+| stratum | metric | hap.py (xcmp) | vcfclick v0.8.0 | vcfclick (fixed) | Δ fixed |
 |---|---|---|---|---|---|
-| SNP | recall / precision | 1.0000 / 1.0000 | 0.9976 / 0.9973 | 0.9993 / 0.9990 | −0.001 / −0.001 |
-| INDEL | recall / precision | 1.0000 / 0.9991 | 0.8532 / 0.8528 | 0.9604 / 0.9603 | −0.040 / −0.039 |
+| SNP | recall / precision | 1.0000 / 1.0000 | 0.9993 / 0.9990 | 0.9999 / 0.9996 | −0.000 / −0.000 |
+| INDEL | recall / precision | 1.0000 / 0.9991 | 0.9604 / 0.9603 | 0.9975 / 0.9975 | −0.002 / −0.002 |
 
-**SNPs match hap.py to ~0.1%** (5 FN / 7 FP of ~7,000) even on a fully
-independent, phased caller. **INDELs** initially showed a ~15-point gap
-(≈200 FN + 200 FP that hap.py resolved as concordant); the *before*
-column above. Diagnosis and fix:
+**Both strata now match hap.py to ~0.2%** on a fully independent, phased
+assembly caller. Getting there took chasing the INDEL gap through three
+successive causes — the first two real bugs, the third the actual driver:
 
-- It is **not** normalization. vcfclick's `left_align` matches `bcftools
-  norm -f` exactly on all 1,214 query indels (0 divergences), and after
-  identical normalization 1,211 / 1,217 indels share an exact key.
-- The gap was **het-alt multiallelic indels** (genotype `1/2` — two
-  different indel alleles): 101 of the 102 gap positions. When a caller
-  spells a het-alt differently (one `1/2` record vs two `0/1` records),
-  vcfclick's per-allele genotype key mismatched and scored it `am` — and
-  the `haplotype` engine then *skipped* `am` rows entirely, so it never
-  tried to rescue them. **Fixed:** the haplotype residual now includes
-  `am` rows, and the diplotype-equivalence check decides — het-alt
-  representations resolve to TP while genuine zygosity errors (`0/1` vs
-  `1/1`) stay `am`. That lifts INDEL recall 0.85 → 0.96 (the *after*
-  column), with zero change to the controlled-perturbation runs above.
-- **~4 points of INDEL gap remain** (52 residual `am`): harder het-alt
-  cases embedded in larger clusters or needing phased/window-extended
-  haplotype enumeration — approaching full `xcmp` complexity, and the
-  point of diminishing returns for the P1 engine.
+1. **Not normalization.** vcfclick's `left_align` matches `bcftools norm
+   -f` exactly on all 1,214 query indels (0 divergences); after identical
+   normalization 1,211 / 1,217 indels share an exact key.
+2. **Het-alt multiallelic indels** (`1/2` spelled as two `0/1` records)
+   were scored `am`, and the `haplotype` engine *skipped* `am` rows.
+   Fixed by feeding `am` rows through the diplotype-equivalence check
+   (representation-equal het-alts resolve to TP; genuine zygosity errors
+   stay `am`). INDEL recall 0.85 → 0.96.
+3. **Confident-region gating (the real driver).** The residual after (2)
+   was *not* an algorithm limit — the remaining ~50 indels were all
+   **outside the confident BED**, where GIAB truth is unknown and hap.py
+   marks them UNK. `classify`'s "both sides present" branch never checked
+   `in_conf` (only the single-sided branches did), so out-of-region
+   matches were scored as FN+FP instead of UNK. Gating that branch lifts
+   INDEL recall 0.96 → **0.9975** and — the same bug — turns the earlier
+   "vcfclick UNK = 0 vs hap.py ~370" discrepancy into a match (vcfclick
+   now reports UNK ≈ hap.py). The residual is 3 INDEL FN of 1,217.
 
 **Bug found and fixed by this run.** The independent phased caller also
 surfaced a genotype-matching bug: the keyed verdict compared the raw GT
@@ -263,12 +261,12 @@ mismatches). Every prior test used matching phase, so only real
 independent data caught it.
 
 **Bottom line.** On a fully independent, phased assembly caller, vcfclick's
-`haplotype` engine tracks hap.py to **~0.1% on SNPs and ~4% on INDELs** —
-the latter after fixing the het-alt handling this exercise surfaced. The
-residual INDEL gap is a handful of complex het-alt clusters that need
-near-full `xcmp`-style haplotype enumeration. Reproduce with the
-`jmcdani20/hap.py:v0.3.12` image; hap.py/vcfeval are dev-only oracles,
-never runtime dependencies.
+`haplotype` engine tracks hap.py to **~0.2% on both SNPs and INDELs**,
+after fixing the three issues this exercise surfaced (phase-insensitive
+genotypes, het-alt rescue, and confident-region gating on matched pairs).
+The residual is a handful of individual variants, not a systematic gap.
+Reproduce with the `jmcdani20/hap.py:v0.3.12` image; hap.py/vcfeval are
+dev-only oracles, never runtime dependencies.
 
 The self-benchmark invariant (truth == query ⇒ Recall = Precision =
 F1 = 1.0 for every stratum) is asserted in

@@ -6,6 +6,20 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.1]
+
+### Fixed
+- **`benchmark`: confident-region gating on matched pairs.** A truth/query
+  pair that matched by key but fell outside the confident BED was scored as
+  TP (or FN+FP for a genotype difference) instead of UNK — only the
+  single-sided branches gated on the region. Matched out-of-region calls are
+  now correctly UNK. Validated against hap.py on the independent GIAB T2T-Q100
+  assembly caller: INDEL recall/precision 0.960 → **0.9975** (SNP → 0.9999),
+  bringing both strata within ~0.2% of hap.py, and aligning UNK counts with
+  hap.py's.
+
+## [0.8.0]
+
 ### Added
 - **`vcfclick benchmark`** — a native, dependency-light truth-vs-query
   concordance benchmark over a reference FASTA and confident-region BED. The

@@ -255,3 +255,25 @@ def test_haplotype_does_not_rescue_haploid_vs_hom():
     q = nr("query", 2, "A", "G", "1/1")
     rows = classify_haplotype([t], [q], FILTER_ALL, _chr1_fetch)
     assert not any(r.bd == BD_TP for r in rows)
+
+
+def test_matched_pair_out_of_conf_is_unk_not_tp():
+    # Both present, GT equal, but OUTSIDE the confident region: the locus is not
+    # assessed (truth unknown there) — query is UNK, truth is dropped, no TP.
+    t = nr("truth", 10, "A", "G", "0/1", in_conf=False)
+    q = nr("query", 10, "A", "G", "0/1", in_conf=False)
+    rows = classify([t], [q], FILTER_ALL)
+    assert not any(r.bd == BD_TP for r in rows)
+    assert not any(r.side == "truth" for r in rows)  # out-of-conf truth dropped
+    qr = [r for r in rows if r.side == "query"]
+    assert len(qr) == 1 and qr[0].bd == BD_N
+
+
+def test_am_out_of_conf_is_unk_not_fn_fp():
+    # Allele match, GT differ, out of conf: not an FN/FP either — query UNK.
+    t = nr("truth", 10, "A", "G", "0/1", in_conf=False)
+    q = nr("query", 10, "A", "G", "1/1", in_conf=False)
+    rows = classify([t], [q], FILTER_ALL)
+    assert not any(r.bd in (BD_FN, BD_FP) for r in rows)
+    qr = [r for r in rows if r.side == "query"]
+    assert len(qr) == 1 and qr[0].bd == BD_N
