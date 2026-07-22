@@ -116,6 +116,13 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
     help="Stratify concordance by a genome-region set (e.g. lowcomplex=lc.bed); "
     "repeatable. Writes stratified_regions.csv.",
 )
+@click.option(
+    "--audit",
+    is_flag=True,
+    default=False,
+    help="Write fn_annotated.csv / fp_annotated.csv — each FN/FP joined to its "
+    "gene, ClinVar significance, and gnomAD AF.",
+)
 def benchmark(
     truth: str,
     query: str,
@@ -132,6 +139,7 @@ def benchmark(
     stratify: str | None,
     roc: bool,
     strat_region: tuple[str, ...],
+    audit: bool,
 ) -> None:
     """Benchmark a query VCF against a truth VCF (normalized genotype concordance)."""
     from benchmark.pipeline import run_benchmark
@@ -174,6 +182,7 @@ def benchmark(
             stratify=strat,
             roc=roc,
             strat_regions=strat_reg or None,
+            audit=audit,
         )
     except (BenchmarkError, UnsupportedFeatureError) as e:
         raise click.ClickException(str(e)) from e

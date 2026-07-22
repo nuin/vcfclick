@@ -479,3 +479,26 @@ def test_strat_region_writes_csv(tmp_path):
     assert out.exists()
     text = out.read_text()
     assert "lowcomplex" in text and "stratum" in text
+
+
+def test_audit_writes_annotated_errors(tmp_path, monkeypatch):
+    import duckdb
+
+    annp = tmp_path / "ann.duckdb"
+    con = duckdb.connect(str(annp))
+    for ddl in (
+        "CREATE TABLE gnomad_af (chrom VARCHAR,pos UINTEGER,ref VARCHAR,alt VARCHAR,af DOUBLE,af_grpmax DOUBLE)",
+        "CREATE TABLE clinvar_variants (chrom VARCHAR,pos UINTEGER,ref VARCHAR,alt VARCHAR,clin_sig VARCHAR,review_status VARCHAR,clinvar_id VARCHAR,condition VARCHAR)",
+        "CREATE TABLE refseq_genes (gene_symbol VARCHAR,chrom VARCHAR,start_pos UINTEGER,end_pos UINTEGER,strand VARCHAR,refseq_id VARCHAR,description VARCHAR)",
+    ):
+        con.execute(ddl)
+    con.close()
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(annp))
+
+    truth = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "q.vcf", _DEGRADED)  # has an FN and an FP
+    outdir = tmp_path / "out"
+    run_benchmark(truth, query, REF, str(outdir), regions=CONF, audit=True)
+    assert (outdir / "fn_annotated.csv").exists()
+    assert (outdir / "fp_annotated.csv").exists()
+    assert "gene" in (outdir / "fn_annotated.csv").read_text()

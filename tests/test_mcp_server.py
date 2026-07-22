@@ -42,6 +42,7 @@ EXPECTED_TOOLS = {
     "gene_at",
     "clinvar_lookup",
     "gnomad_lookup",
+    "benchmark_errors",
 }
 
 

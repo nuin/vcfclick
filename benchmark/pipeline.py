@@ -232,6 +232,7 @@ def run_benchmark(
     stratify: list[str] | None = None,
     roc: bool = False,
     strat_regions: dict[str, str] | None = None,
+    audit: bool = False,
 ) -> dict:
     """Benchmark `query` against `truth` over reference `ref`, writing reports.
 
@@ -281,11 +282,31 @@ def run_benchmark(
     }
 
     classified = None
-    if "parquet" in formats or stratify or strat_regions:
+    if "parquet" in formats or stratify or strat_regions or audit:
         import pyarrow as pa
 
         classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
     write_reports(agg, run_meta, outdir, formats, classified=classified)
+
+    if audit:
+        import csv
+        import os
+
+        from annotations.db import _store_path
+        from benchmark.audit import annotated_errors
+
+        ann_path = str(_store_path())
+        cols = ["chrom", "pos", "ref", "alt", "vtype", "gene", "clin_sig", "af"]
+        try:
+            for kind, name in (("FN", "fn_annotated.csv"), ("FP", "fp_annotated.csv")):
+                errs = annotated_errors(classified, ann_path, kind=kind)
+                with open(os.path.join(outdir, name), "w", newline="") as fh:
+                    w = csv.DictWriter(fh, fieldnames=cols)
+                    w.writeheader()
+                    w.writerows(errs)
+            run_meta["audit"] = ["fn_annotated.csv", "fp_annotated.csv"]
+        except Exception as exc:  # annotation store missing/unreadable
+            log.warning("audit skipped: %s", exc)
 
     if strat_regions:
         import csv
