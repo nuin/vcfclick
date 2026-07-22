@@ -6,6 +6,29 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0]
+
+### Added
+- **Concordance analytics beyond hap.py.** The `benchmark` results are now
+  queryable and annotation-aware — capabilities hap.py's one-pair, batch,
+  no-annotation design forecloses:
+  - `--stratify gnomad,clinvar,gene` — recall/precision per gnomAD AF bin,
+    ClinVar significance, and gene, joined from the annotation store.
+  - `--strat-region NAME=regions.bed` — stratify concordance by genome-region
+    sets (low-complexity, segdup, …); overlapping intervals merged per stratum.
+  - `--roc` — a query-quality threshold sweep (`roc.tsv`; recall/precision
+    trade-off per variant type).
+  - `--audit` — `fn_annotated.csv` / `fp_annotated.csv`: every false negative
+    and false positive joined to its gene, ClinVar significance, and gnomAD AF.
+  - **`vcfclick benchmark-cohort`** — benchmark many callers against one truth
+    in a single pass; per-caller recall/precision, each caller's relative blind
+    spots (variants others recover), and `--history`/`--label` regression
+    tracking across pipeline versions.
+  - **MCP `benchmark_errors` tool** — an LLM can ask "which variants did this
+    caller miss, and do any matter?" over a concordance parquet.
+  The matching core stays SQL-free; the new stratification/audit layers are the
+  deliberate DuckDB query layer over the annotation store.
+
 ## [0.8.1]
 
 ### Fixed

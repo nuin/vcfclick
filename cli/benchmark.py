@@ -95,6 +95,34 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
     default=None,
     help="Show only the PASS (or only the ALL) filter view in the headline.",
 )
+@click.option(
+    "--stratify",
+    default=None,
+    help="Comma-separated concordance stratification axes (gnomad,clinvar,gene) "
+    "joined against the annotation store; writes stratified_<axis>.csv.",
+)
+@click.option(
+    "--roc",
+    is_flag=True,
+    default=False,
+    help="Write roc.tsv — a query-quality threshold sweep (recall/precision "
+    "trade-off per variant type).",
+)
+@click.option(
+    "--strat-region",
+    "strat_region",
+    multiple=True,
+    metavar="NAME=REGIONS.bed",
+    help="Stratify concordance by a genome-region set (e.g. lowcomplex=lc.bed); "
+    "repeatable. Writes stratified_regions.csv.",
+)
+@click.option(
+    "--audit",
+    is_flag=True,
+    default=False,
+    help="Write fn_annotated.csv / fp_annotated.csv — each FN/FP joined to its "
+    "gene, ClinVar significance, and gnomAD AF.",
+)
 def benchmark(
     truth: str,
     query: str,
@@ -108,11 +136,34 @@ def benchmark(
     decompose_mnp: bool,
     strict: bool,
     pass_only: bool | None,
+    stratify: str | None,
+    roc: bool,
+    strat_region: tuple[str, ...],
+    audit: bool,
 ) -> None:
     """Benchmark a query VCF against a truth VCF (normalized genotype concordance)."""
     from benchmark.pipeline import run_benchmark
     from benchmark.reconcile import UnsupportedFeatureError
     from benchmark.reference import BenchmarkError
+
+    strat = [a.strip() for a in stratify.split(",") if a.strip()] if stratify else None
+    if strat:
+        from benchmark.stratify_db import AXES
+
+        unknown_axes = [a for a in strat if a not in AXES]
+        if unknown_axes:
+            raise click.ClickException(
+                f"unknown --stratify axis/axes: {', '.join(unknown_axes)} "
+                f"(choose from {', '.join(sorted(AXES))})"
+            )
+    strat_reg: dict[str, str] = {}
+    for spec in strat_region:
+        if "=" not in spec:
+            raise click.ClickException(
+                f"--strat-region must be NAME=path, got {spec!r}"
+            )
+        name, path = spec.split("=", 1)
+        strat_reg[name.strip()] = path.strip()
 
     if report_formats.strip().lower() == "all":
         formats = list(_ALL_FORMATS)
@@ -137,6 +188,10 @@ def benchmark(
             conf_containment=conf_containment,
             decompose_mnp=decompose_mnp,
             strict=strict,
+            stratify=strat,
+            roc=roc,
+            strat_regions=strat_reg or None,
+            audit=audit,
         )
     except (BenchmarkError, UnsupportedFeatureError) as e:
         raise click.ClickException(str(e)) from e
@@ -152,4 +207,125 @@ def benchmark(
             f"recall={row['recall']:.4f} precision={row['precision']:.4f} "
             f"f1={row['f1']:.4f}"
         )
+    click.echo(f"reports → {output}")
+
+
+@cli.command(name="benchmark-cohort")
+@click.option(
+    "--truth", required=True, type=click.Path(dir_okay=False), help="Truth VCF."
+)
+@click.option(
+    "--ref", required=True, type=click.Path(dir_okay=False), help="Reference FASTA."
+)
+@click.option(
+    "--regions", type=click.Path(dir_okay=False), help="Confident-region BED."
+)
+@click.option(
+    "--caller",
+    "callers",
+    multiple=True,
+    required=True,
+    metavar="NAME=QUERY.vcf",
+    help="A named query call set; repeat for each caller.",
+)
+@click.option(
+    "-o", "--output", "output", required=True, type=click.Path(file_okay=False)
+)
+@click.option(
+    "--engine",
+    type=click.Choice(["normalized", "haplotype", "exact"]),
+    default="haplotype",
+    show_default=True,
+)
+@click.option(
+    "--on-ref-mismatch", type=click.Choice(["error", "skip"]), default="error"
+)
+@click.option(
+    "--history",
+    type=click.Path(dir_okay=False),
+    help="Append per-caller metrics to this history CSV.",
+)
+@click.option(
+    "--label",
+    default="run",
+    show_default=True,
+    help="Label for the history row (e.g. a pipeline version).",
+)
+def benchmark_cohort(
+    truth: str,
+    ref: str,
+    regions: str | None,
+    callers: tuple[str, ...],
+    output: str,
+    engine: str,
+    on_ref_mismatch: str,
+    history: str | None,
+    label: str,
+) -> None:
+    """Benchmark several callers against one truth; report per-caller concordance
+    and each caller's relative blind spots (variants others catch)."""
+    import csv
+    import os
+
+    from benchmark.cohort import (
+        append_run,
+        benchmark_callers,
+        per_caller_metrics,
+        variants_missed_by,
+    )
+    from benchmark.reference import BenchmarkError
+
+    caller_map: dict[str, str] = {}
+    for spec in callers:
+        if "=" not in spec:
+            raise click.ClickException(f"--caller must be NAME=path, got {spec!r}")
+        name, path = spec.split("=", 1)
+        caller_map[name.strip()] = path.strip()
+
+    os.makedirs(output, exist_ok=True)
+    try:
+        frame = benchmark_callers(
+            truth,
+            ref,
+            caller_map,
+            regions=regions,
+            engine=engine,
+            on_ref_mismatch=on_ref_mismatch,
+        )
+    except BenchmarkError as e:
+        raise click.ClickException(str(e)) from e
+
+    metrics = per_caller_metrics(frame)
+    with open(os.path.join(output, "per_caller_metrics.csv"), "w", newline="") as fh:
+        w = csv.DictWriter(
+            fh,
+            fieldnames=list(metrics[0].keys())
+            if metrics
+            else [
+                "caller",
+                "vtype",
+                "truth_tp",
+                "truth_fn",
+                "query_tp",
+                "query_fp",
+                "recall",
+                "precision",
+            ],
+        )
+        w.writeheader()
+        w.writerows(metrics)
+
+    for row in metrics:
+        click.echo(
+            f"{row['caller']:12} {row['vtype']:5}  "
+            f"recall={row['recall']:.4f} precision={row['precision']:.4f}"
+        )
+    for name in caller_map:
+        missed = variants_missed_by(frame, name, min_others=1)
+        if missed:
+            click.echo(f"{name}: misses {len(missed)} variant(s) other callers catch")
+
+    if history:
+        append_run(history, label, metrics)
+        click.echo(f"history → {history} (label={label})")
     click.echo(f"reports → {output}")

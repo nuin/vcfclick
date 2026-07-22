@@ -282,5 +282,21 @@ def gnomad_lookup(chrom: str, pos: int, ref: str, alt: str) -> dict | None:
     }
 
 
+@mcp.tool()
+def benchmark_errors(concordance_parquet: str, kind: str = "FN") -> list[dict]:
+    """Benchmark auditability: the false negatives (`kind="FN"`) or false
+    positives (`kind="FP"`) from a `vcfclick benchmark` concordance parquet
+    (written with `--report-formats parquet`), each joined to its gene, ClinVar
+    significance, and gnomAD AF — so an LLM can explain *which* variants a caller
+    missed and whether they matter. Requires the `benchmark` extra."""
+    import pyarrow.parquet as pq
+
+    from annotations.db import _store_path
+    from benchmark.audit import annotated_errors
+
+    frame = pq.read_table(concordance_parquet)
+    return annotated_errors(frame, str(_store_path()), kind=kind)
+
+
 if __name__ == "__main__":
     mcp.run()

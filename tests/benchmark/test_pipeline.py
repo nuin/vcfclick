@@ -425,3 +425,80 @@ def test_cli_strict_without_regions_errors(tmp_path):
     )
     assert res.exit_code == 1  # ClickException, not a usage error (2)
     assert "strict" in res.output.lower()
+
+
+def test_stratify_writes_annotation_csvs(tmp_path, monkeypatch):
+    # End-to-end: benchmark then stratify the concordance against a gnomAD store.
+    import duckdb
+
+    annp = tmp_path / "ann.duckdb"
+    con = duckdb.connect(str(annp))
+    con.execute(
+        "CREATE TABLE gnomad_af (chrom VARCHAR, pos UINTEGER, ref VARCHAR, "
+        "alt VARCHAR, af DOUBLE, af_grpmax DOUBLE)"
+    )
+    con.execute("INSERT INTO gnomad_af VALUES ('chr1',2,'A','G',0.0001,0.0002)")
+    con.close()
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(annp))
+
+    truth = _write_vcf(tmp_path / "truth.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "query.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    run_benchmark(truth, query, REF, str(outdir), regions=CONF, stratify=["gnomad"])
+    assert (outdir / "stratified_gnomad.csv").exists()
+    text = (outdir / "stratified_gnomad.csv").read_text()
+    assert "stratum" in text and "recall" in text
+
+
+def test_roc_writes_tsv(tmp_path):
+    truth = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    run_benchmark(truth, query, REF, str(outdir), regions=CONF, roc=True)
+    roc = outdir / "roc.tsv"
+    assert roc.exists()
+    head = roc.read_text().splitlines()[0].split("\t")
+    assert head == ["Type", "Threshold", "TP", "FP", "Recall", "Precision"]
+
+
+def test_strat_region_writes_csv(tmp_path):
+    bed = tmp_path / "lc.bed"
+    bed.write_text("chr1\t0\t6\n")  # covers all of chr1 (len 6)
+    truth = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    run_benchmark(
+        truth,
+        query,
+        REF,
+        str(outdir),
+        regions=CONF,
+        strat_regions={"lowcomplex": str(bed)},
+    )
+    out = outdir / "stratified_regions.csv"
+    assert out.exists()
+    text = out.read_text()
+    assert "lowcomplex" in text and "stratum" in text
+
+
+def test_audit_writes_annotated_errors(tmp_path, monkeypatch):
+    import duckdb
+
+    annp = tmp_path / "ann.duckdb"
+    con = duckdb.connect(str(annp))
+    for ddl in (
+        "CREATE TABLE gnomad_af (chrom VARCHAR,pos UINTEGER,ref VARCHAR,alt VARCHAR,af DOUBLE,af_grpmax DOUBLE)",
+        "CREATE TABLE clinvar_variants (chrom VARCHAR,pos UINTEGER,ref VARCHAR,alt VARCHAR,clin_sig VARCHAR,review_status VARCHAR,clinvar_id VARCHAR,condition VARCHAR)",
+        "CREATE TABLE refseq_genes (gene_symbol VARCHAR,chrom VARCHAR,start_pos UINTEGER,end_pos UINTEGER,strand VARCHAR,refseq_id VARCHAR,description VARCHAR)",
+    ):
+        con.execute(ddl)
+    con.close()
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(annp))
+
+    truth = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "q.vcf", _DEGRADED)  # has an FN and an FP
+    outdir = tmp_path / "out"
+    run_benchmark(truth, query, REF, str(outdir), regions=CONF, audit=True)
+    assert (outdir / "fn_annotated.csv").exists()
+    assert (outdir / "fp_annotated.csv").exists()
+    assert "gene" in (outdir / "fn_annotated.csv").read_text()

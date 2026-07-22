@@ -13,7 +13,7 @@ import dataclasses
 import logging
 
 from benchmark import regions as regions_mod
-from benchmark import stratify
+from benchmark import stratify as _strat
 from benchmark.aggregate import aggregate_counts
 from benchmark.constants import (
     FILTER_ALL,
@@ -96,6 +96,7 @@ def _parse_side(
         gt = tuple(gts[0][:-1]) if gts else (-1,)
         phased = bool(gts[0][-1]) if gts else False
         is_pass = var.FILTER is None or var.FILTER in ("PASS", ".")
+        qual = float(var.QUAL) if var.QUAL is not None else 0.0
 
         for altrow in split_multiallelic(var.POS, ref_allele, alts, gt):
             if 1 not in altrow.gt:
@@ -124,6 +125,7 @@ def _parse_side(
                         is_pass=is_pass,
                         other_alt_present=altrow.other_alt_present,
                         locus_id=altrow.locus_id,
+                        qual=qual,
                     )
                 )
     return out
@@ -161,34 +163,28 @@ def _summary(agg: dict) -> list[dict]:
     return rows
 
 
-def run_benchmark(
+def classified_rows(
     truth: str,
     query: str,
     ref: str,
-    outdir: str,
     regions: str | None = None,
     engine: str = "normalized",
-    report_formats: list[str] | None = None,
     on_ref_mismatch: str = "error",
     strict: bool = False,
     conf_containment: str = "start",
     decompose_mnp: bool = False,
-) -> dict:
-    """Benchmark `query` against `truth` over reference `ref`, writing reports.
+    excluded: dict | None = None,
+) -> list:
+    """Parse, normalize, region-tag, and classify both sides into ClassifiedRows.
 
-    `engine="haplotype"` runs the P2 local-haplotype reconciliation; `engine=
-    "exact"` is an internal diagnostic that keys on the trimmed (not left-aligned)
-    representation. With `regions=None` every call is treated as confident (a
-    warning, or a hard error under `strict`). `conf_containment` is "start" or
-    "full"; `decompose_mnp` atomizes MNPs into SNPs (off by default). Returns
-    `{"run_meta", "summary"}`.
+    The reusable core of a benchmark run (no aggregation or reporting) — the
+    multi-caller cohort layer builds its combined frame from this.
     """
     if engine not in ("normalized", "haplotype", "exact"):
         raise BenchmarkError(f"unknown engine {engine!r}")
-
-    formats = list(report_formats) if report_formats else list(ALL_FORMATS)
     reference = Reference(ref)
-    excluded = {"symbolic": 0, "ref_mismatch": 0}
+    if excluded is None:
+        excluded = {"symbolic": 0, "ref_mismatch": 0}
     align = engine != "exact"  # exact keys on trimmed reps without left-shifting
 
     truth_recs = _parse_side(
@@ -209,8 +205,8 @@ def run_benchmark(
         truth_recs = conf.tag(truth_recs, containment=conf_containment)
         query_recs = conf.tag(query_recs, containment=conf_containment)
 
-    truth_recs = stratify.tag(truth_recs)
-    query_recs = stratify.tag(query_recs)
+    truth_recs = _strat.tag(truth_recs)
+    query_recs = _strat.tag(query_recs)
 
     if engine == "haplotype":
         rows = classify_haplotype(truth_recs, query_recs, FILTER_ALL, reference.fetch)
@@ -218,6 +214,49 @@ def run_benchmark(
     else:
         rows = classify(truth_recs, query_recs, FILTER_ALL)
         rows += classify(truth_recs, query_recs, FILTER_PASS)
+    return rows
+
+
+def run_benchmark(
+    truth: str,
+    query: str,
+    ref: str,
+    outdir: str,
+    regions: str | None = None,
+    engine: str = "normalized",
+    report_formats: list[str] | None = None,
+    on_ref_mismatch: str = "error",
+    strict: bool = False,
+    conf_containment: str = "start",
+    decompose_mnp: bool = False,
+    stratify: list[str] | None = None,
+    roc: bool = False,
+    strat_regions: dict[str, str] | None = None,
+    audit: bool = False,
+) -> dict:
+    """Benchmark `query` against `truth` over reference `ref`, writing reports.
+
+    `engine="haplotype"` runs the P2 local-haplotype reconciliation; `engine=
+    "exact"` is an internal diagnostic that keys on the trimmed (not left-aligned)
+    representation. With `regions=None` every call is treated as confident (a
+    warning, or a hard error under `strict`). `conf_containment` is "start" or
+    "full"; `decompose_mnp` atomizes MNPs into SNPs (off by default). Returns
+    `{"run_meta", "summary"}`.
+    """
+    formats = list(report_formats) if report_formats else list(ALL_FORMATS)
+    excluded = {"symbolic": 0, "ref_mismatch": 0}
+    rows = classified_rows(
+        truth,
+        query,
+        ref,
+        regions=regions,
+        engine=engine,
+        on_ref_mismatch=on_ref_mismatch,
+        strict=strict,
+        conf_containment=conf_containment,
+        decompose_mnp=decompose_mnp,
+        excluded=excluded,
+    )
 
     agg = aggregate_counts(rows)
     summary = _summary(agg)
@@ -242,11 +281,74 @@ def run_benchmark(
         "unsummarized_types": unsummarized,
     }
 
+    import os
+
+    os.makedirs(outdir, exist_ok=True)  # extras write here before write_reports
+
     classified = None
-    if "parquet" in formats:
+    if "parquet" in formats or stratify or strat_regions or audit:
         import pyarrow as pa
 
         classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
+
+    if audit:
+        import csv
+        import os
+
+        from annotations.db import _store_path
+        from benchmark.audit import annotated_errors
+
+        ann_path = str(_store_path())
+        cols = ["chrom", "pos", "ref", "alt", "vtype", "gene", "clin_sig", "af"]
+        try:
+            for kind, name in (("FN", "fn_annotated.csv"), ("FP", "fp_annotated.csv")):
+                errs = annotated_errors(classified, ann_path, kind=kind)
+                with open(os.path.join(outdir, name), "w", newline="") as fh:
+                    w = csv.DictWriter(fh, fieldnames=cols)
+                    w.writeheader()
+                    w.writerows(errs)
+            run_meta["audit"] = ["fn_annotated.csv", "fp_annotated.csv"]
+        except Exception as exc:  # annotation store missing/unreadable
+            log.warning("audit skipped: %s", exc)
+
+    if strat_regions:
+        import csv
+        import os
+
+        from benchmark.stratify_db import _COLS, stratify_by_regions
+
+        srows = stratify_by_regions(classified, strat_regions)
+        with open(
+            os.path.join(outdir, "stratified_regions.csv"), "w", newline=""
+        ) as fh:
+            w = csv.DictWriter(fh, fieldnames=_COLS)
+            w.writeheader()
+            w.writerows(srows)
+        run_meta["stratified_regions"] = "stratified_regions.csv"
+
+    if roc:
+        import os
+
+        from benchmark.roc import write_roc_tsv
+
+        write_roc_tsv(rows, [VT_SNP, VT_INDEL], os.path.join(outdir, "roc.tsv"))
+        run_meta["roc"] = "roc.tsv"
+
+    if stratify:
+        from annotations.db import _store_path
+        from benchmark.stratify_db import write_stratified
+
+        ann_path = str(_store_path())
+        try:
+            written = write_stratified(classified, ann_path, list(stratify), outdir)
+            run_meta["stratified"] = [p.rsplit("/", 1)[-1] for p in written]
+        except (
+            Exception
+        ) as exc:  # annotation store missing/unreadable — surface, don't crash
+            log.warning("stratification skipped: %s", exc)
+            run_meta["stratified"] = []
+
+    # Written last so run_meta.json on disk includes the roc/stratify/audit fields.
     write_reports(agg, run_meta, outdir, formats, classified=classified)
     return {"run_meta": run_meta, "summary": summary}
 
