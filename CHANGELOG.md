@@ -6,6 +6,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.1]
+
+### Added
+- **`benchmark`: full hap.py `summary.csv` column set.** The summary now carries
+  `FP.gt` / `FP.al` (the false-positive genotype-error vs allele-mismatch split)
+  and the `TiTv`/`het_hom` QC ratios per side (`NaN` when undefined), making it a
+  superset of hap.py's columns. Validated against real hap.py on the GIAB chr20
+  run: FP.gt/FP.al match exactly, ratios to ~0.2–0.3%.
+
 ## [0.9.0]
 
 ### Added
