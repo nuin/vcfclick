@@ -137,6 +137,10 @@ Start here:
 - [Combining call sets](docs/COMBINE.md) - merge multiple callers of the
   same cohort with `set=` provenance and consensus filtering (the GATK3
   CombineVariants GATK4 removed).
+- [Benchmarking VCFs](docs/BENCHMARK.md) - `benchmark` a query against a
+  truth (hap.py-style concordance), plus SQL-native stratification by
+  gnomAD/ClinVar/gene/region, ROC curves, annotated-error audit, and
+  multi-caller cohorts.
 - [Sample QC](docs/QC.md) - `db qc` per-sample het/hom, Ti/Tv, and a
   chrX-heterozygosity sex check flagged against the pedigree.
 - [Schema reference](docs/SCHEMA.md) - table definitions, query

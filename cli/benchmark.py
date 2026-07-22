@@ -61,7 +61,7 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
     "--report-formats",
     default="all",
     show_default=True,
-    help="Comma-separated subset of csv,json,html (or 'all').",
+    help="Comma-separated subset of csv,json,parquet,html (or 'all').",
 )
 @click.option(
     "--on-ref-mismatch",
