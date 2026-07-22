@@ -96,6 +96,7 @@ def _parse_side(
         gt = tuple(gts[0][:-1]) if gts else (-1,)
         phased = bool(gts[0][-1]) if gts else False
         is_pass = var.FILTER is None or var.FILTER in ("PASS", ".")
+        qual = float(var.QUAL) if var.QUAL is not None else 0.0
 
         for altrow in split_multiallelic(var.POS, ref_allele, alts, gt):
             if 1 not in altrow.gt:
@@ -124,6 +125,7 @@ def _parse_side(
                         is_pass=is_pass,
                         other_alt_present=altrow.other_alt_present,
                         locus_id=altrow.locus_id,
+                        qual=qual,
                     )
                 )
     return out
@@ -228,6 +230,7 @@ def run_benchmark(
     conf_containment: str = "start",
     decompose_mnp: bool = False,
     stratify: list[str] | None = None,
+    roc: bool = False,
 ) -> dict:
     """Benchmark `query` against `truth` over reference `ref`, writing reports.
 
@@ -282,6 +285,14 @@ def run_benchmark(
 
         classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
     write_reports(agg, run_meta, outdir, formats, classified=classified)
+
+    if roc:
+        import os
+
+        from benchmark.roc import write_roc_tsv
+
+        write_roc_tsv(rows, [VT_SNP, VT_INDEL], os.path.join(outdir, "roc.tsv"))
+        run_meta["roc"] = "roc.tsv"
 
     if stratify:
         from annotations.db import _store_path

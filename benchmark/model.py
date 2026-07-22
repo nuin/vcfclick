@@ -34,6 +34,7 @@ class NormRecord:
     vtype: str = ""  # constants.VT_*
     subtype: str = ""  # ti/tv | indel size bin | ""
     blt: str = ""  # constants.BLT_*
+    qual: float = 0.0  # query QUAL (for ROC threshold sweeps)
 
 
 @dataclass(frozen=True)
@@ -53,3 +54,4 @@ class ClassifiedRow:
     bd: str  # constants.BD_*
     bk: str  # constants.BK_*
     blt: str
+    qual: float = 0.0

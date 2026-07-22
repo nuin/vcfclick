@@ -101,6 +101,13 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
     help="Comma-separated concordance stratification axes (gnomad,clinvar,gene) "
     "joined against the annotation store; writes stratified_<axis>.csv.",
 )
+@click.option(
+    "--roc",
+    is_flag=True,
+    default=False,
+    help="Write roc.tsv — a query-quality threshold sweep (recall/precision "
+    "trade-off per variant type).",
+)
 def benchmark(
     truth: str,
     query: str,
@@ -115,6 +122,7 @@ def benchmark(
     strict: bool,
     pass_only: bool | None,
     stratify: str | None,
+    roc: bool,
 ) -> None:
     """Benchmark a query VCF against a truth VCF (normalized genotype concordance)."""
     from benchmark.pipeline import run_benchmark
@@ -147,6 +155,7 @@ def benchmark(
             decompose_mnp=decompose_mnp,
             strict=strict,
             stratify=strat,
+            roc=roc,
         )
     except (BenchmarkError, UnsupportedFeatureError) as e:
         raise click.ClickException(str(e)) from e

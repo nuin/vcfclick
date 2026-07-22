@@ -448,3 +448,14 @@ def test_stratify_writes_annotation_csvs(tmp_path, monkeypatch):
     assert (outdir / "stratified_gnomad.csv").exists()
     text = (outdir / "stratified_gnomad.csv").read_text()
     assert "stratum" in text and "recall" in text
+
+
+def test_roc_writes_tsv(tmp_path):
+    truth = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    run_benchmark(truth, query, REF, str(outdir), regions=CONF, roc=True)
+    roc = outdir / "roc.tsv"
+    assert roc.exists()
+    head = roc.read_text().splitlines()[0].split("\t")
+    assert head == ["Type", "Threshold", "TP", "FP", "Recall", "Precision"]

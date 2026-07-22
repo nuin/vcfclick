@@ -96,6 +96,7 @@ def _row(r: NormRecord, filter_view: str, bd: str, bk: str) -> ClassifiedRow:
         bd=bd,
         bk=bk,
         blt=r.blt,
+        qual=r.qual,
     )
 
 
