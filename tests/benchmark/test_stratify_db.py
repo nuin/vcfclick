@@ -140,3 +140,16 @@ def test_stratify_by_regions(tmp_path):
     assert out["lowcomplex"]["truth_tp"] == 1  # chr1:100 TP
     assert out["segdup"]["query_fp"] == 1  # chr1:300 FP
     assert out["none"]["truth_fn"] == 1  # chr1:200 in neither region
+
+
+def test_stratify_by_regions_merges_overlapping_same_stratum(tmp_path):
+    from benchmark.stratify_db import stratify_by_regions
+
+    # Two OVERLAPPING intervals in the same stratum both cover pos100 (0-based 99).
+    bed = tmp_path / "lc.bed"
+    bed.write_text("chr1\t50\t120\nchr1\t80\t150\n")
+    out = {
+        r["stratum"]: r for r in stratify_by_regions(_conc(), {"lowcomplex": str(bed)})
+    }
+    assert out["lowcomplex"]["truth_tp"] == 1  # counted once, not twice
+    assert out["lowcomplex"]["query_tp"] == 1

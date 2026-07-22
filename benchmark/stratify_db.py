@@ -69,10 +69,12 @@ def _counts_sql(bucket_expr: str, join_sql: str) -> str:
 
 
 def _run(concordance, ann_path: str, bucket_expr: str, join_sql: str) -> list[dict]:
-    con = duckdb.connect()
+    # Open the annotation store directly read-only (rather than ATTACH with an
+    # interpolated path, which is an injection/breakage surface) and register the
+    # concordance frame as a temp view on that connection.
+    con = duckdb.connect(ann_path, read_only=True)
     try:
         con.register("conc", concordance)
-        con.execute(f"ATTACH '{ann_path}' AS ann (READ_ONLY)")
         rows = con.execute(_counts_sql(bucket_expr, join_sql)).fetchall()
     finally:
         con.close()
@@ -82,7 +84,7 @@ def _run(concordance, ann_path: str, bucket_expr: str, join_sql: str) -> list[di
 def stratify_by_gnomad(concordance, ann_path: str) -> list[dict]:
     """Recall/precision per gnomAD AF bin (novel / rare / low / common)."""
     join = (
-        "LEFT JOIN ann.gnomad_af g ON c.chrom=g.chrom AND c.pos=g.pos "
+        "LEFT JOIN gnomad_af g ON c.chrom=g.chrom AND c.pos=g.pos "
         "AND c.ref=g.ref AND c.alt=g.alt"
     )
     return _run(concordance, ann_path, _AF_CASE, join)
@@ -91,7 +93,7 @@ def stratify_by_gnomad(concordance, ann_path: str) -> list[dict]:
 def stratify_by_clinvar(concordance, ann_path: str) -> list[dict]:
     """Recall/precision per ClinVar clinical significance."""
     join = (
-        "JOIN ann.clinvar_variants v ON c.chrom=v.chrom AND c.pos=v.pos "
+        "JOIN clinvar_variants v ON c.chrom=v.chrom AND c.pos=v.pos "
         "AND c.ref=v.ref AND c.alt=v.alt"
     )
     return _run(concordance, ann_path, "v.clin_sig", join)
@@ -100,7 +102,7 @@ def stratify_by_clinvar(concordance, ann_path: str) -> list[dict]:
 def stratify_by_gene(concordance, ann_path: str) -> list[dict]:
     """Recall/precision per gene (variant position within a gene's range)."""
     join = (
-        "JOIN ann.refseq_genes gn ON c.chrom=gn.chrom "
+        "JOIN refseq_genes gn ON c.chrom=gn.chrom "
         "AND c.pos BETWEEN gn.start_pos AND gn.end_pos"
     )
     return _run(concordance, ann_path, "gn.gene_symbol", join)
@@ -125,9 +127,18 @@ def stratify_by_regions(concordance, region_beds: dict[str, str]) -> list[dict]:
     half-open, matching the variant's 0-based position (`pos - 1`)."""
     import pyarrow as pa
 
-    regions: list[tuple] = []
+    from benchmark.regions import _merge
+
+    # Merge overlapping intervals within each (stratum, chrom) so a variant in a
+    # BED's overlapping intervals is not counted more than once for that stratum.
+    by_key: dict[tuple, list[tuple[int, int]]] = {}
     for name, bed in region_beds.items():
-        regions.extend(_read_bed(bed, name))
+        for chrom, s, e, stratum in _read_bed(bed, name):
+            by_key.setdefault((stratum, chrom), []).append((s, e))
+    regions: list[tuple] = []
+    for (stratum, chrom), ivals in by_key.items():
+        for s, e in _merge(ivals):
+            regions.append((chrom, s, e, stratum))
     reg = pa.table(
         {
             "chrom": [r[0] for r in regions],

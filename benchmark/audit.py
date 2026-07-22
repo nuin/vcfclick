@@ -20,25 +20,26 @@ def annotated_errors(concordance, ann_path: str, kind: str = "FN") -> list[dict]
     if side is None:
         raise ValueError(f"kind must be 'FN' or 'FP', got {kind!r}")
 
+    # `side`/`kind` are validated against _SIDE above (not injectable). Open the
+    # annotation store directly read-only rather than ATTACH an interpolated path.
     sql = f"""
         SELECT c.chrom, c.pos, c.ref, c.alt, c.vtype,
                gn.gene_symbol AS gene,
                v.clin_sig     AS clin_sig,
                g.af           AS af
         FROM conc c
-        LEFT JOIN ann.refseq_genes gn
+        LEFT JOIN refseq_genes gn
             ON c.chrom=gn.chrom AND c.pos BETWEEN gn.start_pos AND gn.end_pos
-        LEFT JOIN ann.clinvar_variants v
+        LEFT JOIN clinvar_variants v
             ON c.chrom=v.chrom AND c.pos=v.pos AND c.ref=v.ref AND c.alt=v.alt
-        LEFT JOIN ann.gnomad_af g
+        LEFT JOIN gnomad_af g
             ON c.chrom=g.chrom AND c.pos=g.pos AND c.ref=g.ref AND c.alt=g.alt
         WHERE c.side='{side}' AND c.bd='{kind}' AND c.filter_view='ALL'
         ORDER BY c.chrom, c.pos
     """
-    con = duckdb.connect()
+    con = duckdb.connect(ann_path, read_only=True)
     try:
         con.register("conc", concordance)
-        con.execute(f"ATTACH '{ann_path}' AS ann (READ_ONLY)")
         cur = con.execute(sql)
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()

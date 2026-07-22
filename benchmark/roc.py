@@ -24,7 +24,11 @@ def roc_curve(rows: list, vtype: str) -> list[dict]:
     fixed_fn = sum(1 for r in rows if r.side == "truth" and r.bd == BD_FN)
     total_truth = fixed_fn + len(tp_quals)  # every query TP recovers one truth call
 
-    thresholds = sorted({0.0, *tp_quals, *fp_quals})
+    # Include a terminal threshold above the max quality (everything filtered:
+    # tp=fp=0) so the PR curve reaches its origin for downstream plotting.
+    all_quals = tp_quals + fp_quals
+    terminal = [max(all_quals) + 1.0] if all_quals else []
+    thresholds = sorted({0.0, *tp_quals, *fp_quals, *terminal})
     out: list[dict] = []
     for t in thresholds:
         tp = sum(1 for q in tp_quals if q >= t)

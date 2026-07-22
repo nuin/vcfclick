@@ -147,6 +147,15 @@ def benchmark(
     from benchmark.reference import BenchmarkError
 
     strat = [a.strip() for a in stratify.split(",") if a.strip()] if stratify else None
+    if strat:
+        from benchmark.stratify_db import AXES
+
+        unknown_axes = [a for a in strat if a not in AXES]
+        if unknown_axes:
+            raise click.ClickException(
+                f"unknown --stratify axis/axes: {', '.join(unknown_axes)} "
+                f"(choose from {', '.join(sorted(AXES))})"
+            )
     strat_reg: dict[str, str] = {}
     for spec in strat_region:
         if "=" not in spec:

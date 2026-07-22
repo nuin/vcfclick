@@ -281,12 +281,15 @@ def run_benchmark(
         "unsummarized_types": unsummarized,
     }
 
+    import os
+
+    os.makedirs(outdir, exist_ok=True)  # extras write here before write_reports
+
     classified = None
     if "parquet" in formats or stratify or strat_regions or audit:
         import pyarrow as pa
 
         classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
-    write_reports(agg, run_meta, outdir, formats, classified=classified)
 
     if audit:
         import csv
@@ -345,6 +348,8 @@ def run_benchmark(
             log.warning("stratification skipped: %s", exc)
             run_meta["stratified"] = []
 
+    # Written last so run_meta.json on disk includes the roc/stratify/audit fields.
+    write_reports(agg, run_meta, outdir, formats, classified=classified)
     return {"run_meta": run_meta, "summary": summary}
 
 
