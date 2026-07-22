@@ -161,35 +161,28 @@ def _summary(agg: dict) -> list[dict]:
     return rows
 
 
-def run_benchmark(
+def classified_rows(
     truth: str,
     query: str,
     ref: str,
-    outdir: str,
     regions: str | None = None,
     engine: str = "normalized",
-    report_formats: list[str] | None = None,
     on_ref_mismatch: str = "error",
     strict: bool = False,
     conf_containment: str = "start",
     decompose_mnp: bool = False,
-    stratify: list[str] | None = None,
-) -> dict:
-    """Benchmark `query` against `truth` over reference `ref`, writing reports.
+    excluded: dict | None = None,
+) -> list:
+    """Parse, normalize, region-tag, and classify both sides into ClassifiedRows.
 
-    `engine="haplotype"` runs the P2 local-haplotype reconciliation; `engine=
-    "exact"` is an internal diagnostic that keys on the trimmed (not left-aligned)
-    representation. With `regions=None` every call is treated as confident (a
-    warning, or a hard error under `strict`). `conf_containment` is "start" or
-    "full"; `decompose_mnp` atomizes MNPs into SNPs (off by default). Returns
-    `{"run_meta", "summary"}`.
+    The reusable core of a benchmark run (no aggregation or reporting) — the
+    multi-caller cohort layer builds its combined frame from this.
     """
     if engine not in ("normalized", "haplotype", "exact"):
         raise BenchmarkError(f"unknown engine {engine!r}")
-
-    formats = list(report_formats) if report_formats else list(ALL_FORMATS)
     reference = Reference(ref)
-    excluded = {"symbolic": 0, "ref_mismatch": 0}
+    if excluded is None:
+        excluded = {"symbolic": 0, "ref_mismatch": 0}
     align = engine != "exact"  # exact keys on trimmed reps without left-shifting
 
     truth_recs = _parse_side(
@@ -219,6 +212,46 @@ def run_benchmark(
     else:
         rows = classify(truth_recs, query_recs, FILTER_ALL)
         rows += classify(truth_recs, query_recs, FILTER_PASS)
+    return rows
+
+
+def run_benchmark(
+    truth: str,
+    query: str,
+    ref: str,
+    outdir: str,
+    regions: str | None = None,
+    engine: str = "normalized",
+    report_formats: list[str] | None = None,
+    on_ref_mismatch: str = "error",
+    strict: bool = False,
+    conf_containment: str = "start",
+    decompose_mnp: bool = False,
+    stratify: list[str] | None = None,
+) -> dict:
+    """Benchmark `query` against `truth` over reference `ref`, writing reports.
+
+    `engine="haplotype"` runs the P2 local-haplotype reconciliation; `engine=
+    "exact"` is an internal diagnostic that keys on the trimmed (not left-aligned)
+    representation. With `regions=None` every call is treated as confident (a
+    warning, or a hard error under `strict`). `conf_containment` is "start" or
+    "full"; `decompose_mnp` atomizes MNPs into SNPs (off by default). Returns
+    `{"run_meta", "summary"}`.
+    """
+    formats = list(report_formats) if report_formats else list(ALL_FORMATS)
+    excluded = {"symbolic": 0, "ref_mismatch": 0}
+    rows = classified_rows(
+        truth,
+        query,
+        ref,
+        regions=regions,
+        engine=engine,
+        on_ref_mismatch=on_ref_mismatch,
+        strict=strict,
+        conf_containment=conf_containment,
+        decompose_mnp=decompose_mnp,
+        excluded=excluded,
+    )
 
     agg = aggregate_counts(rows)
     summary = _summary(agg)
