@@ -17,10 +17,16 @@ CANONICAL_COLUMNS = [
     "QUERY.TP",
     "QUERY.FP",
     "QUERY.UNK",
+    "FP.gt",
+    "FP.al",
     "METRIC.Recall",
     "METRIC.Precision",
     "METRIC.Frac_NA",
     "METRIC.F1_Score",
+    "TRUTH.TOTAL.TiTv_ratio",
+    "QUERY.TOTAL.TiTv_ratio",
+    "TRUTH.TOTAL.het_hom_ratio",
+    "QUERY.TOTAL.het_hom_ratio",
 ]
 
 
@@ -77,25 +83,34 @@ def test_summary_csv_header_is_canonical_no_engine(tmp_path):
 def test_summary_csv_values_correct(tmp_path):
     write_reports(_agg(), _meta(), str(tmp_path), ["csv"])
     rows = _read_csv(os.path.join(str(tmp_path), "summary.csv"))
-    by_key = {(r[0], r[1]): r for r in rows[1:]}
+    header = rows[0]
+    idx = {c: i for i, c in enumerate(header)}
+    by_key = {(r[idx["Type"]], r[idx["Filter"]]): r for r in rows[1:]}
 
-    snp_pass = by_key[("SNP", "PASS")]
-    assert snp_pass[2] == "10"  # TRUTH.TOTAL = 9 + 1
-    assert snp_pass[3] == "9"  # TRUTH.TP
-    assert snp_pass[4] == "1"  # TRUTH.FN
-    assert snp_pass[5] == "12"  # QUERY.TOTAL = 9 + 1 + 2
-    assert snp_pass[6] == "9"  # QUERY.TP
-    assert snp_pass[7] == "1"  # QUERY.FP
-    assert snp_pass[8] == "2"  # QUERY.UNK
-    assert float(snp_pass[9]) == 0.9  # Recall = 9/10
-    assert float(snp_pass[10]) == 0.9  # Precision = 9/10
-    assert abs(float(snp_pass[11]) - (2 / 12)) < 1e-9  # Frac_NA = 2/12
-    assert abs(float(snp_pass[12]) - 0.9) < 1e-9  # F1 = 2*.9*.9/1.8
+    def val(row, col):
+        return row[idx[col]]
 
-    indel_all = by_key[("INDEL", "ALL")]
-    assert indel_all[2] == "4"  # TRUTH.TOTAL
-    assert float(indel_all[9]) == 1.0  # Recall = 4/4
-    assert abs(float(indel_all[10]) - (4 / 5)) < 1e-9  # Precision = 4/5
+    sp = by_key[("SNP", "PASS")]
+    assert val(sp, "TRUTH.TOTAL") == "10"  # 9 + 1
+    assert val(sp, "TRUTH.TP") == "9"
+    assert val(sp, "TRUTH.FN") == "1"
+    assert val(sp, "QUERY.TOTAL") == "12"  # 9 + 1 + 2
+    assert val(sp, "QUERY.FP") == "1"
+    assert val(sp, "QUERY.UNK") == "2"
+    assert float(val(sp, "METRIC.Recall")) == 0.9
+    assert float(val(sp, "METRIC.Precision")) == 0.9
+    assert abs(float(val(sp, "METRIC.Frac_NA")) - (2 / 12)) < 1e-9
+
+    indel = by_key[("INDEL", "ALL")]
+    assert val(indel, "TRUTH.TOTAL") == "4"
+    assert float(val(indel, "METRIC.Recall")) == 1.0
+    assert abs(float(val(indel, "METRIC.Precision")) - (4 / 5)) < 1e-9
+
+    # hap.py columns present; agg has no subtype/blt so ratios are NaN and FP
+    # is all-allele (FP.gt = 0, FP.al = QUERY.FP).
+    assert val(sp, "FP.gt") == "0"
+    assert val(sp, "FP.al") == "1"
+    assert val(sp, "TRUTH.TOTAL.TiTv_ratio") == "NaN"
 
 
 def test_summary_csv_has_four_rows(tmp_path):
