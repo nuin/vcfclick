@@ -459,3 +459,23 @@ def test_roc_writes_tsv(tmp_path):
     assert roc.exists()
     head = roc.read_text().splitlines()[0].split("\t")
     assert head == ["Type", "Threshold", "TP", "FP", "Recall", "Precision"]
+
+
+def test_strat_region_writes_csv(tmp_path):
+    bed = tmp_path / "lc.bed"
+    bed.write_text("chr1\t0\t6\n")  # covers all of chr1 (len 6)
+    truth = _write_vcf(tmp_path / "t.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "q.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    run_benchmark(
+        truth,
+        query,
+        REF,
+        str(outdir),
+        regions=CONF,
+        strat_regions={"lowcomplex": str(bed)},
+    )
+    out = outdir / "stratified_regions.csv"
+    assert out.exists()
+    text = out.read_text()
+    assert "lowcomplex" in text and "stratum" in text

@@ -231,6 +231,7 @@ def run_benchmark(
     decompose_mnp: bool = False,
     stratify: list[str] | None = None,
     roc: bool = False,
+    strat_regions: dict[str, str] | None = None,
 ) -> dict:
     """Benchmark `query` against `truth` over reference `ref`, writing reports.
 
@@ -280,11 +281,26 @@ def run_benchmark(
     }
 
     classified = None
-    if "parquet" in formats or stratify:
+    if "parquet" in formats or stratify or strat_regions:
         import pyarrow as pa
 
         classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
     write_reports(agg, run_meta, outdir, formats, classified=classified)
+
+    if strat_regions:
+        import csv
+        import os
+
+        from benchmark.stratify_db import _COLS, stratify_by_regions
+
+        srows = stratify_by_regions(classified, strat_regions)
+        with open(
+            os.path.join(outdir, "stratified_regions.csv"), "w", newline=""
+        ) as fh:
+            w = csv.DictWriter(fh, fieldnames=_COLS)
+            w.writeheader()
+            w.writerows(srows)
+        run_meta["stratified_regions"] = "stratified_regions.csv"
 
     if roc:
         import os

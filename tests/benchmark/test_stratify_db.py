@@ -120,3 +120,23 @@ def test_stratify_by_gene(tmp_path):
     # chr1:100 (TP) and chr1:200 (FN) fall within GENEA [50,150]? 200 is outside.
     assert out["GENEA"]["truth_tp"] == 1  # chr1:100
     assert out["GENEA"]["truth_fn"] == 0  # chr1:200 is outside 50..150
+
+
+def test_stratify_by_regions(tmp_path):
+    from benchmark.stratify_db import stratify_by_regions
+
+    # BED is 0-based half-open. pos100 -> 0-based 99 in [50,150); pos300 -> 299 in [250,350).
+    lc = tmp_path / "lowcomplex.bed"
+    lc.write_text("chr1\t50\t150\n")
+    sd = tmp_path / "segdup.bed"
+    sd.write_text("chr1\t250\t350\n")
+
+    out = {
+        r["stratum"]: r
+        for r in stratify_by_regions(
+            _conc(), {"lowcomplex": str(lc), "segdup": str(sd)}
+        )
+    }
+    assert out["lowcomplex"]["truth_tp"] == 1  # chr1:100 TP
+    assert out["segdup"]["query_fp"] == 1  # chr1:300 FP
+    assert out["none"]["truth_fn"] == 1  # chr1:200 in neither region

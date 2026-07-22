@@ -108,6 +108,14 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
     help="Write roc.tsv — a query-quality threshold sweep (recall/precision "
     "trade-off per variant type).",
 )
+@click.option(
+    "--strat-region",
+    "strat_region",
+    multiple=True,
+    metavar="NAME=REGIONS.bed",
+    help="Stratify concordance by a genome-region set (e.g. lowcomplex=lc.bed); "
+    "repeatable. Writes stratified_regions.csv.",
+)
 def benchmark(
     truth: str,
     query: str,
@@ -123,6 +131,7 @@ def benchmark(
     pass_only: bool | None,
     stratify: str | None,
     roc: bool,
+    strat_region: tuple[str, ...],
 ) -> None:
     """Benchmark a query VCF against a truth VCF (normalized genotype concordance)."""
     from benchmark.pipeline import run_benchmark
@@ -130,6 +139,14 @@ def benchmark(
     from benchmark.reference import BenchmarkError
 
     strat = [a.strip() for a in stratify.split(",") if a.strip()] if stratify else None
+    strat_reg: dict[str, str] = {}
+    for spec in strat_region:
+        if "=" not in spec:
+            raise click.ClickException(
+                f"--strat-region must be NAME=path, got {spec!r}"
+            )
+        name, path = spec.split("=", 1)
+        strat_reg[name.strip()] = path.strip()
 
     if report_formats.strip().lower() == "all":
         formats = list(_ALL_FORMATS)
@@ -156,6 +173,7 @@ def benchmark(
             strict=strict,
             stratify=strat,
             roc=roc,
+            strat_regions=strat_reg or None,
         )
     except (BenchmarkError, UnsupportedFeatureError) as e:
         raise click.ClickException(str(e)) from e

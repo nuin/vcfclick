@@ -106,6 +106,50 @@ def stratify_by_gene(concordance, ann_path: str) -> list[dict]:
     return _run(concordance, ann_path, "gn.gene_symbol", join)
 
 
+def _read_bed(path: str, stratum: str) -> list[tuple]:
+    rows: list[tuple] = []
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith(("#", "track", "browser")):
+                continue
+            f = line.split("\t")
+            rows.append((f[0], int(f[1]), int(f[2]), stratum))
+    return rows
+
+
+def stratify_by_regions(concordance, region_beds: dict[str, str]) -> list[dict]:
+    """Recall/precision per genome-stratification region set (e.g. low-complexity,
+    segdup). Each BED is a named stratum; a variant in overlapping strata counts
+    in each, and variants in no stratum fall under 'none'. BED is 0-based
+    half-open, matching the variant's 0-based position (`pos - 1`)."""
+    import pyarrow as pa
+
+    regions: list[tuple] = []
+    for name, bed in region_beds.items():
+        regions.extend(_read_bed(bed, name))
+    reg = pa.table(
+        {
+            "chrom": [r[0] for r in regions],
+            "s": [r[1] for r in regions],
+            "e": [r[2] for r in regions],
+            "stratum": [r[3] for r in regions],
+        }
+    )
+    sql = _counts_sql(
+        "coalesce(r.stratum, 'none')",
+        "LEFT JOIN reg r ON c.chrom=r.chrom AND (c.pos-1) >= r.s AND (c.pos-1) < r.e",
+    )
+    con = duckdb.connect()
+    try:
+        con.register("conc", concordance)
+        con.register("reg", reg)
+        rows = con.execute(sql).fetchall()
+    finally:
+        con.close()
+    return _metrics_rows(rows)
+
+
 AXES = {
     "gnomad": stratify_by_gnomad,
     "clinvar": stratify_by_clinvar,
