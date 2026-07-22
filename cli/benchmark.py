@@ -95,6 +95,12 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
     default=None,
     help="Show only the PASS (or only the ALL) filter view in the headline.",
 )
+@click.option(
+    "--stratify",
+    default=None,
+    help="Comma-separated concordance stratification axes (gnomad,clinvar,gene) "
+    "joined against the annotation store; writes stratified_<axis>.csv.",
+)
 def benchmark(
     truth: str,
     query: str,
@@ -108,11 +114,14 @@ def benchmark(
     decompose_mnp: bool,
     strict: bool,
     pass_only: bool | None,
+    stratify: str | None,
 ) -> None:
     """Benchmark a query VCF against a truth VCF (normalized genotype concordance)."""
     from benchmark.pipeline import run_benchmark
     from benchmark.reconcile import UnsupportedFeatureError
     from benchmark.reference import BenchmarkError
+
+    strat = [a.strip() for a in stratify.split(",") if a.strip()] if stratify else None
 
     if report_formats.strip().lower() == "all":
         formats = list(_ALL_FORMATS)
@@ -137,6 +146,7 @@ def benchmark(
             conf_containment=conf_containment,
             decompose_mnp=decompose_mnp,
             strict=strict,
+            stratify=strat,
         )
     except (BenchmarkError, UnsupportedFeatureError) as e:
         raise click.ClickException(str(e)) from e

@@ -13,7 +13,7 @@ import dataclasses
 import logging
 
 from benchmark import regions as regions_mod
-from benchmark import stratify
+from benchmark import stratify as _strat
 from benchmark.aggregate import aggregate_counts
 from benchmark.constants import (
     FILTER_ALL,
@@ -173,6 +173,7 @@ def run_benchmark(
     strict: bool = False,
     conf_containment: str = "start",
     decompose_mnp: bool = False,
+    stratify: list[str] | None = None,
 ) -> dict:
     """Benchmark `query` against `truth` over reference `ref`, writing reports.
 
@@ -209,8 +210,8 @@ def run_benchmark(
         truth_recs = conf.tag(truth_recs, containment=conf_containment)
         query_recs = conf.tag(query_recs, containment=conf_containment)
 
-    truth_recs = stratify.tag(truth_recs)
-    query_recs = stratify.tag(query_recs)
+    truth_recs = _strat.tag(truth_recs)
+    query_recs = _strat.tag(query_recs)
 
     if engine == "haplotype":
         rows = classify_haplotype(truth_recs, query_recs, FILTER_ALL, reference.fetch)
@@ -243,11 +244,26 @@ def run_benchmark(
     }
 
     classified = None
-    if "parquet" in formats:
+    if "parquet" in formats or stratify:
         import pyarrow as pa
 
         classified = pa.Table.from_pylist([dataclasses.asdict(r) for r in rows])
     write_reports(agg, run_meta, outdir, formats, classified=classified)
+
+    if stratify:
+        from annotations.db import _store_path
+        from benchmark.stratify_db import write_stratified
+
+        ann_path = str(_store_path())
+        try:
+            written = write_stratified(classified, ann_path, list(stratify), outdir)
+            run_meta["stratified"] = [p.rsplit("/", 1)[-1] for p in written]
+        except (
+            Exception
+        ) as exc:  # annotation store missing/unreadable — surface, don't crash
+            log.warning("stratification skipped: %s", exc)
+            run_meta["stratified"] = []
+
     return {"run_meta": run_meta, "summary": summary}
 
 

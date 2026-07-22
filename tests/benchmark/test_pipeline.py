@@ -425,3 +425,26 @@ def test_cli_strict_without_regions_errors(tmp_path):
     )
     assert res.exit_code == 1  # ClickException, not a usage error (2)
     assert "strict" in res.output.lower()
+
+
+def test_stratify_writes_annotation_csvs(tmp_path, monkeypatch):
+    # End-to-end: benchmark then stratify the concordance against a gnomAD store.
+    import duckdb
+
+    annp = tmp_path / "ann.duckdb"
+    con = duckdb.connect(str(annp))
+    con.execute(
+        "CREATE TABLE gnomad_af (chrom VARCHAR, pos UINTEGER, ref VARCHAR, "
+        "alt VARCHAR, af DOUBLE, af_grpmax DOUBLE)"
+    )
+    con.execute("INSERT INTO gnomad_af VALUES ('chr1',2,'A','G',0.0001,0.0002)")
+    con.close()
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(annp))
+
+    truth = _write_vcf(tmp_path / "truth.vcf", _TRUTH)
+    query = _write_vcf(tmp_path / "query.vcf", _TRUTH)
+    outdir = tmp_path / "out"
+    run_benchmark(truth, query, REF, str(outdir), regions=CONF, stratify=["gnomad"])
+    assert (outdir / "stratified_gnomad.csv").exists()
+    text = (outdir / "stratified_gnomad.csv").read_text()
+    assert "stratum" in text and "recall" in text
