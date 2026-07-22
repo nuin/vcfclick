@@ -118,6 +118,8 @@ Start here:
 
 - [Getting started](docs/GETTING_STARTED.md) - install, pull the demo,
   run first SQL queries, launch the TUI.
+- [CLI reference](docs/CLI.md) - every command, with a summary, an
+  example, and its full option list.
 - [User guide](docs/USER_GUIDE.md) - create databases, ingest VCFs,
   query, inspect, compare, export, bundle, and restore.
 - [Backends](docs/BACKENDS.md) - chDB vs DuckDB, install paths, conda,
