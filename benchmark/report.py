@@ -23,10 +23,16 @@ SUMMARY_COLUMNS = [
     "QUERY.TP",
     "QUERY.FP",
     "QUERY.UNK",
+    "FP.gt",
+    "FP.al",
     "METRIC.Recall",
     "METRIC.Precision",
     "METRIC.Frac_NA",
     "METRIC.F1_Score",
+    "TRUTH.TOTAL.TiTv_ratio",
+    "QUERY.TOTAL.TiTv_ratio",
+    "TRUTH.TOTAL.het_hom_ratio",
+    "QUERY.TOTAL.het_hom_ratio",
 ]
 
 # One row per (Type, Filter) in this deterministic order.
@@ -36,6 +42,14 @@ _ROW_ORDER = [
     (VT_INDEL, FILTER_PASS),
     (VT_INDEL, FILTER_ALL),
 ]
+
+
+def _ratio(num: int, den: int):
+    """Ratio for the Ti/Tv and het/hom columns; `NaN` when undefined (hap.py's
+    rendering for e.g. INDEL Ti/Tv), else a rounded float."""
+    if den == 0:
+        return "NaN"
+    return round(num / den, 6)
 
 
 def _summary_rows(agg: dict) -> list[dict]:
@@ -49,6 +63,7 @@ def _summary_rows(agg: dict) -> list[dict]:
         query_fp = c.get("query_fp", 0)
         query_unk = c.get("query_unk", 0)
         m = metrics_from_counts(truth_tp, truth_fn, query_tp, query_fp, query_unk)
+        fp_gt = c.get("query_fp_gt", 0)
         rows.append(
             {
                 "Type": vtype,
@@ -60,10 +75,24 @@ def _summary_rows(agg: dict) -> list[dict]:
                 "QUERY.TP": query_tp,
                 "QUERY.FP": query_fp,
                 "QUERY.UNK": query_unk,
+                "FP.gt": fp_gt,  # FPs that are genotype errors (allele matched)
+                "FP.al": query_fp - fp_gt,  # FPs with no truth allele match
                 "METRIC.Recall": m.recall,
                 "METRIC.Precision": m.precision,
                 "METRIC.Frac_NA": m.frac_na,
                 "METRIC.F1_Score": m.f1,
+                "TRUTH.TOTAL.TiTv_ratio": _ratio(
+                    c.get("truth_ti", 0), c.get("truth_tv", 0)
+                ),
+                "QUERY.TOTAL.TiTv_ratio": _ratio(
+                    c.get("query_ti", 0), c.get("query_tv", 0)
+                ),
+                "TRUTH.TOTAL.het_hom_ratio": _ratio(
+                    c.get("truth_het", 0), c.get("truth_hom", 0)
+                ),
+                "QUERY.TOTAL.het_hom_ratio": _ratio(
+                    c.get("query_het", 0), c.get("query_hom", 0)
+                ),
             }
         )
     return rows
