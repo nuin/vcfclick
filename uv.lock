@@ -1457,7 +1457,7 @@ wheels = [
 
 [[package]]
 name = "vcfclick"
-version = "0.7.0"
+version = "0.9.1"
 source = { editable = "." }
 dependencies = [
     { name = "chdb" },
@@ -1497,7 +1497,7 @@ requires-dist = [
     { name = "chdb", specifier = ">=4.1.8" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "cyvcf2", specifier = ">=0.31.0" },
-    { name = "duckdb", specifier = ">=1.0.0" },
+    { name = "duckdb", specifier = ">=1.0.0,<2" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.100.0" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "numpy", marker = "extra == 'benchmark'", specifier = ">=1.24" },

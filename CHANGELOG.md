@@ -6,6 +6,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **Cap `duckdb < 2.0`.** DuckDB storage is backward- but not forward-compatible
+  (a 2.0-written file can't be read by 1.x). To keep `db push`/`db pull` bundles,
+  shared annotation stores, and the demo readable across installs, stay on the
+  1.x line until 2.0 support is validated. (2.0 is not yet on PyPI; this is a
+  pre-emptive guard, verified empirically: a 1.5.x file opens under 1.6-dev, but
+  a 1.6-dev file is rejected by 1.5.x.)
+
 ## [0.9.1]
 
 ### Added

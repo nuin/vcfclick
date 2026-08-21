@@ -39,7 +39,12 @@ dependencies = [
     "cyvcf2>=0.31.0",
     "chdb>=4.1.8",
     "pyarrow>=15.0.0",
-    "duckdb>=1.0.0",
+    # Capped below 2.0: DuckDB storage is backward- but not forward-compatible,
+    # so a database/annotation store or `db push` bundle written by DuckDB 2.0
+    # cannot be read by a 1.x install — which would silently break the portable
+    # bundles and shared demo vcfclick relies on. Stay on the mutually-readable
+    # 1.x line until 2.0 support is validated. (2.0 is not on PyPI yet anyway.)
+    "duckdb>=1.0.0,<2",
     "mcp>=1.0.0",
     "click>=8.1.0",
 ]
