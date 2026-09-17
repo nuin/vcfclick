@@ -64,6 +64,39 @@ genotype is taken from the **first input with a non-missing call**. A
 **Consensus filter.** `--min-callsets N` keeps only sites present in at
 least N inputs, for "agreed by ≥N callers" workflows.
 
+## GATK CombineVariants parity options
+
+Four opt-in options bring `combine` closer to GATK3 `CombineVariants`.
+**All default to off — current behaviour is unchanged unless you ask.**
+
+- **`--pass-only`** — count only PASS calls toward `--min-callsets`. A
+  filtered input that has the site is still named `filterIn<name>` in
+  `set=` (GATK's convention), e.g. `freebayes-gatk-gatk3-filterInoctopus`.
+  A `FILTER` of `.` counts as PASS.
+- **`--count-by site|allele`** (default `allele`) — `allele` counts inputs
+  that call the exact `(POS, REF, ALT)`; `site` counts inputs with any
+  record at the position and keeps every allele there (GATK's `--minimumN`
+  semantics), each labelled with the position's `set=`.
+- **`--reference REF.fa`** — split multi-allelic records and left-align +
+  trim against the reference internally (the `bcftools norm -m - -f`
+  equivalent), instead of refusing multi-allelic input. This lets raw
+  caller VCFs — multi-allelic, padded indels, even missing `##contig`
+  headers — combine with **no separate `bcftools` step**; contig order is
+  taken from the reference `.fai`. Needs `pyfaidx` (`vcfclick[benchmark]`).
+  (Complex substitutions are not atomized — the same as `bcftools norm`.)
+- **`--carry-info`** — carry `QUAL`, `FILTER`, and `INFO` (with their
+  `##INFO`/`##FILTER` header lines) from the highest-priority input that
+  called each allele, rather than writing `QUAL`/`FILTER` as `.` and
+  `INFO` as only `set=`.
+
+```bash
+# Combine raw caller VCFs with GATK-like semantics, no bcftools step:
+vcfclick combine freebayes.vcf gatk.vcf gatk3.vcf octopus.vcf \
+    -o merged.vcf --reference hg19.fasta \
+    --min-callsets 2 --pass-only --count-by site --carry-info \
+    --name freebayes --name gatk --name gatk3 --name octopus
+```
+
 ## Output and limits
 
 - Output is a fresh VCF with the union of input samples (priority
