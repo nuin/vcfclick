@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0]
+
 ### Added
 - **`combine`: GATK CombineVariants parity options** (all opt-in; defaults
   unchanged). `--pass-only` counts only PASS calls toward `--min-callsets` and
