@@ -74,7 +74,7 @@ def test_filter_dot_treated_as_pass(tmp_path):
 
 
 def _alts_at(path: Path, pos: int) -> list[str]:
-    return sorted(rec.ALT[0] for rec in VCF(str(path)) if rec.POS == pos)
+    return sorted(rec.ALT[0] for rec in VCF(str(path)) if rec.POS == pos and rec.ALT)
 
 
 def test_count_by_site_keeps_all_alleles_at_shared_position(tmp_path):
@@ -180,3 +180,115 @@ def test_cli_wires_all_four_options(tmp_path):
     rec = _sites(out)[100]
     assert rec.INFO.get("set") == "gatk3-filterInoctopus"  # pass-only naming
     assert rec.QUAL == 9 and rec.INFO.get("DP") == 30  # carry from priority
+
+
+# --- codex-review fixes ---------------------------------------------------
+
+import pytest  # noqa: E402
+
+from ingest.combine import CombineError  # noqa: E402
+
+
+def _raw_col(path: Path, pos: int, col: int) -> str:
+    for line in path.read_text().splitlines():
+        if line.startswith("#"):
+            continue
+        c = line.split("\t")
+        if int(c[1]) == pos:
+            return c[col]
+    return ""
+
+
+def test_carry_info_filter_dot_stays_verbatim(tmp_path):
+    # #7: carried FILTER must be verbatim '.', not rewritten to PASS.
+    a = _wv(tmp_path / "a.vcf", [(100, "C", "T", "9", ".", "DP=30", "0/1")])
+    b = _wv(tmp_path / "b.vcf", [(100, "C", "T", "1", ".", "DP=8", "0/1")])
+    out = tmp_path / "o.vcf"
+    combine_vcfs([a, b], out, carry_info=True)
+    assert _raw_col(out, 100, 6) == "."  # FILTER column verbatim
+
+
+def test_carry_info_strips_existing_set(tmp_path):
+    # #2: an input that already has set= must not yield a duplicate INFO key.
+    a = _wv(tmp_path / "a.vcf", [(100, "C", "T", "9", "PASS", "set=old;DP=30", "0/1")])
+    b = _wv(tmp_path / "b.vcf", [(100, "C", "T", "1", "PASS", "DP=8", "0/1")])
+    out = tmp_path / "o.vcf"
+    combine_vcfs([a, b], out, carry_info=True)
+    assert _raw_col(out, 100, 7).count("set=") == 1
+
+
+def test_reference_handles_contig_start_indel(tmp_path):
+    # #3: POS=1 insertion must not crash left-align.
+    pytest.importorskip("pyfaidx")
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">chr1\nACGT\n")
+    a = _wv(tmp_path / "a.vcf", [(1, "A", "AA", ".", "PASS", ".", "0/1")])
+    b = _wv(tmp_path / "b.vcf", [(1, "A", "AA", ".", "PASS", ".", "0/1")])
+    out = tmp_path / "o.vcf"
+    combine_vcfs([a, b], out, reference=str(ref))  # must not raise
+    assert 1 in _sites(out)
+
+
+def test_reference_carry_info_projects_per_allele(tmp_path):
+    # #1: per-alt INFO (Number=A) must be projected to each split allele.
+    pytest.importorskip("pyfaidx")
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">chr1\nACGT\n")
+    a = _wv(tmp_path / "a.vcf", [(1, "A", "C,G", ".", "PASS", "AO=3,7", "1/2")])
+    b = _wv(tmp_path / "b.vcf", [(1, "A", "C", ".", "PASS", "AO=5", "0/1")])
+    out = tmp_path / "o.vcf"
+    combine_vcfs([a, b], out, reference=str(ref), carry_info=True)
+    recs = {rec.ALT[0]: rec for rec in VCF(str(out))}
+    assert recs["C"].INFO.get("AO") == 3
+    assert recs["G"].INFO.get("AO") == 7
+
+
+_HDR_AD = (
+    "##fileformat=VCFv4.2\n##contig=<ID=chr1>\n"
+    '##FILTER=<ID=PASS,Description="x">\n'
+    '##FORMAT=<ID=GT,Number=1,Type=String,Description="g">\n'
+    '##FORMAT=<ID=AD,Number=R,Type=Integer,Description="ad">\n'
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\n"
+)
+
+
+def test_reference_splits_multiallelic_ad_per_allele(tmp_path):
+    # #4: AD (Number=R) must be subset to [ref, alt_j] per split allele.
+    pytest.importorskip("pyfaidx")
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">chr1\nACGT\n")
+    a = tmp_path / "a.vcf"
+    a.write_text(_HDR_AD + "chr1\t1\t.\tA\tC,G\t.\tPASS\t.\tGT:AD\t1/2:10,3,7\n")
+    b = tmp_path / "b.vcf"
+    b.write_text(_HDR_AD + "chr1\t1\t.\tA\tC\t.\tPASS\t.\tGT:AD\t0/1:12,5\n")
+    out = tmp_path / "o.vcf"
+    combine_vcfs([str(a), str(b)], out, reference=str(ref))
+    recs = {rec.ALT[0]: rec for rec in VCF(str(out))}
+    assert list(recs["C"].format("AD")[0]) == [10, 3]
+    assert list(recs["G"].format("AD")[0]) == [10, 7]
+
+
+def test_reference_keeps_reference_record_for_site_consensus(tmp_path):
+    # #5: an ALT='.' (monomorphic) record must still count at the position.
+    pytest.importorskip("pyfaidx")
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">chr1\nACGT\n")
+    a = _wv(tmp_path / "a.vcf", [(1, "A", ".", ".", "PASS", ".", "0/0")])
+    b = _wv(tmp_path / "b.vcf", [(1, "A", "C", ".", "PASS", ".", "0/1")])
+    out = tmp_path / "o.vcf"
+    combine_vcfs([a, b], out, reference=str(ref), count_by="site", min_callsets=2)
+    assert "C" in _alts_at(out, 1)
+
+
+def test_carry_info_rejects_incompatible_header(tmp_path):
+    # #6: same INFO ID with a different Type across inputs must error, not
+    # silently misparse.
+    ha = _HDR
+    hb = _HDR.replace("ID=DP,Number=1,Type=Integer", "ID=DP,Number=1,Type=String")
+    a = tmp_path / "a.vcf"
+    a.write_text(ha + "chr1\t100\t.\tC\tT\t.\tPASS\tDP=30\tGT\t0/1\n")
+    b = tmp_path / "b.vcf"
+    b.write_text(hb + "chr1\t200\t.\tC\tT\t.\tPASS\tDP=9\tGT\t0/1\n")
+    out = tmp_path / "o.vcf"
+    with pytest.raises(CombineError, match="incompatible"):
+        combine_vcfs([str(a), str(b)], out, carry_info=True)

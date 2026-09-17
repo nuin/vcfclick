@@ -101,6 +101,46 @@ def _hdr_lines_by_id(raw_header: str, tag: str) -> dict[str, str]:
     return out
 
 
+def _hdr_fields(line: str) -> tuple[str, str | None]:
+    """(Number, Type) declared by an INFO header line, for compatibility checks."""
+    num = re.search(r"Number=([^,>]+)", line)
+    typ = re.search(r"Type=([^,>]+)", line)
+    return (num.group(1) if num else ".", typ.group(1) if typ else None)
+
+
+def _project_info(info: str, alt_index: int | None, numbers: dict[str, str]) -> str:
+    """Project a record's INFO onto a single (split) allele: drop the input's own
+    `set` (combine recomputes it), and — when the record was split (`alt_index`
+    set) — subset `Number=A` fields to that alt and `Number=R` fields to
+    [ref, alt]. `Number=G` fields are dropped (they need genotype context to
+    project). Returns `.` when nothing remains."""
+    if info in ("", "."):
+        return "."
+    out: list[str] = []
+    for field in info.split(";"):
+        if not field:
+            continue
+        key, _, val = field.partition("=")
+        if key == "set":
+            continue
+        if not val or alt_index is None:
+            out.append(field)
+            continue
+        num = numbers.get(key, ".")
+        if num == "A":
+            parts = val.split(",")
+            if alt_index - 1 < len(parts):
+                val = parts[alt_index - 1]
+        elif num == "R":
+            parts = val.split(",")
+            if alt_index < len(parts):
+                val = f"{parts[0]},{parts[alt_index]}"
+        elif num == "G":
+            continue  # genotype-cardinality: cannot project per-allele
+        out.append(f"{key}={val}")
+    return ";".join(out) if out else "."
+
+
 def _is_pass(variant) -> bool:
     """A record counts as PASS when FILTER is PASS, `.`, or empty — cyvcf2
     reports all of those as None or the literal string (§6: `.` is PASS)."""
@@ -130,31 +170,36 @@ def _scalar_token(arr, i: int) -> str | None:
     return str(v) if v >= 0 else None
 
 
-def _ad_token(arr, i: int) -> str | None:
-    """Sample i's AD as 'ref,alt', or None if absent/missing. Output
-    records are always biallelic, so AD is Number=R = exactly two values.
-    A source AD with any other length (e.g. an improperly decomposed input
-    still carrying original multi-allelic depths) is dropped rather than
-    written as an uninterpretable cell for a single-ALT record."""
+def _ad_token(arr, i: int, alt_index: int | None = None) -> str | None:
+    """Sample i's AD as 'ref,alt' for the output biallelic record, or None if
+    absent/missing. When `--reference` split a multi-allelic record, `alt_index`
+    (1-based) selects [ref, alt_j] from the source AD [ref, alt1, ...]; otherwise
+    the source AD must already be exactly two values."""
     if arr is None:
         return None
     try:
         vals = [int(x) for x in arr[i]]
     except (IndexError, TypeError, ValueError):
         return None
+    if alt_index is not None:
+        if alt_index < len(vals) and vals[0] >= 0 and vals[alt_index] >= 0:
+            return f"{vals[0]},{vals[alt_index]}"
+        return None
     if len(vals) != 2 or any(x < 0 for x in vals):
         return None
     return ",".join(str(x) for x in vals)
 
 
-def _sample_cell(gt: str, variant, fmt_arrs: dict, i: int) -> dict:
+def _sample_cell(gt: str, variant, fmt_arrs: dict, i: int, alt_index=None) -> dict:
     """Build sample i's output cell from the source record: its GT plus
     the GQ/DP/AD tokens, so passed-through quality travels with the
-    genotype it describes."""
+    genotype it describes. `alt_index` subsets AD when a record was split."""
     cell = {"GT": gt}
     for f in _PASSTHROUGH:
         cell[f] = (
-            _ad_token(fmt_arrs[f], i) if f == "AD" else _scalar_token(fmt_arrs[f], i)
+            _ad_token(fmt_arrs[f], i, alt_index)
+            if f == "AD"
+            else _scalar_token(fmt_arrs[f], i)
         )
     return cell
 
@@ -268,17 +313,20 @@ def combine_vcfs(
     seen_samples: set[str] = set()
     info_hdrs: dict[str, str] = {}
     filter_hdrs: dict[str, str] = {}
+    info_numbers: dict[str, str] = {}  # INFO ID -> Number (for --carry-info projection)
 
     # --reference: split multi-allelics + left-align/trim internally (the
     # `bcftools norm -m - -f` equivalent) instead of refusing. Reuses the
     # benchmark normalizer, which needs pyfaidx.
     ref_fetch = None
     left_align = None
+    trim = None
     if reference is not None:
         if not Path(reference).exists():
             raise CombineError(f"reference not found: {reference}")
         try:
             from benchmark.normalize import left_align as _left_align
+            from benchmark.normalize import trim as _trim
             from benchmark.reference import Reference
         except ImportError as e:  # pragma: no cover - environment guard
             raise CombineError(
@@ -290,7 +338,7 @@ def combine_vcfs(
             raise CombineError(
                 "--reference requires pyfaidx; install 'vcfclick[benchmark]'."
             ) from e
-        ref_fetch, left_align = ref_obj.fetch, _left_align
+        ref_fetch, left_align, trim = ref_obj.fetch, _left_align, _trim
         # Seed contig order from the reference .fai (§6: inputs may lack
         # ##contig headers; the reference is the authoritative order).
         fai = Path(f"{reference}.fai")
@@ -304,7 +352,15 @@ def combine_vcfs(
         samples = list(vcf.samples)
         if carry_info:
             for _id, ln in _hdr_lines_by_id(vcf.raw_header, "INFO").items():
-                info_hdrs.setdefault(_id, ln)
+                if _id in info_hdrs:
+                    if _hdr_fields(info_hdrs[_id]) != _hdr_fields(ln):
+                        raise CombineError(
+                            f"incompatible INFO header for ID={_id!r} across "
+                            f"inputs: '{info_hdrs[_id]}' vs '{ln}'"
+                        )
+                else:
+                    info_hdrs[_id] = ln
+                    info_numbers[_id] = _hdr_fields(ln)[0]
             for _id, ln in _hdr_lines_by_id(vcf.raw_header, "FILTER").items():
                 filter_hdrs.setdefault(_id, ln)
         # Output sample order = first appearance across inputs (priority).
@@ -333,12 +389,21 @@ def combine_vcfs(
                     )
                 alt = alts[0] if alts else "."
                 allele_rows = [((variant.CHROM, variant.POS, variant.REF, alt), None)]
+            elif not alts:
+                # Reference/monomorphic record (ALT='.'): keep it unnormalized so
+                # it still counts at the position for --count-by site.
+                allele_rows = [((variant.CHROM, variant.POS, variant.REF, "."), None)]
             else:
                 allele_rows = []
                 for j, alt in enumerate(alts, start=1):
-                    npos, nref, nalt = left_align(
-                        ref_fetch, variant.CHROM, variant.POS, variant.REF, alt
-                    )
+                    try:
+                        npos, nref, nalt = left_align(
+                            ref_fetch, variant.CHROM, variant.POS, variant.REF, alt
+                        )
+                    except ValueError:
+                        # Unshiftable (e.g. an insertion anchored at contig start):
+                        # keep the minimal-trim representation, like bcftools norm.
+                        npos, nref, nalt = trim(variant.POS, variant.REF, alt)
                     allele_rows.append(((variant.CHROM, npos, nref, nalt), j))
 
             genotypes = variant.genotypes
@@ -358,12 +423,13 @@ def combine_vcfs(
                     union.site_passes.setdefault(spos, set()).add(idx)
                 if carry_info and key not in union.meta:
                     # First (highest-priority) input to call this allele supplies
-                    # its QUAL/FILTER/INFO, taken verbatim from the source record.
+                    # its QUAL/FILTER (verbatim) and INFO (projected onto this
+                    # allele, with the input's own `set` dropped).
                     cols = str(variant).rstrip("\n").split("\t")
                     union.meta[key] = {
                         "qual": cols[5],
                         "filter": cols[6],
-                        "info": cols[7],
+                        "info": _project_info(cols[7], alt_index, info_numbers),
                     }
                 gts = union.gts.setdefault(key, {})
                 for s_i, sample in enumerate(samples):
@@ -377,7 +443,7 @@ def combine_vcfs(
                         else _remap_gt(genotypes[s_i], alt_index)
                     )
                     if g is not None:
-                        gts[sample] = _sample_cell(g, variant, fmt_arrs, s_i)
+                        gts[sample] = _sample_cell(g, variant, fmt_arrs, s_i, alt_index)
 
     out_path = Path(output)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -530,8 +596,8 @@ def _write_combined(
             info = f"set={setval}"
             if carry_info:
                 m = union.meta.get(key, {"qual": ".", "filter": ".", "info": "."})
-                qual = m["qual"]
-                flt = m["filter"] if m["filter"] not in ("", ".") else "PASS"
+                qual = m["qual"] or "."
+                flt = m["filter"] or "."  # verbatim: '.' (not applied) stays '.'
                 parts = [f"set={setval}"]
                 if m["info"] not in ("", "."):
                     parts.append(m["info"])
