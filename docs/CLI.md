@@ -279,6 +279,33 @@ Combine callers' call sets with `set=` provenance (GATK3 CombineVariants). See [
 vcfclick combine gatk.vcf dv.vcf -o out.vcf --name gatk --name dv
 ```
 
+<details><summary>options</summary>
+
+```
+Usage: vcfclick combine [OPTIONS] VCFS...
+
+  Combine two or more VCF call sets into one, with set= provenance.
+
+Options:
+  -o, --out FILE            Output combined VCF path (.vcf or .vcf.gz). [required]
+  --name TEXT               Set name for an input (repeat once per input, in order).
+  --min-callsets INTEGER    Keep only sites present in at least this many inputs.
+                            [default: 1]
+  --pass-only               Count only PASS calls toward --min-callsets; a filtered
+                            input is named filterIn<name> in set=. FILTER '.' = PASS.
+  --count-by [allele|site]  Count inputs by exact allele (default) or by position
+                            ('site' keeps every allele there; GATK --minimumN).
+                            [default: allele]
+  --reference FILE          Reference FASTA. Split multi-allelics and left-align/trim
+                            internally (bcftools norm -m - -f equivalent) instead of
+                            refusing. Needs pyfaidx (vcfclick[benchmark]).
+  --carry-info              Carry QUAL/FILTER/INFO (plus header lines) from the
+                            highest-priority input that called each allele.
+  --help                    Show this message and exit.
+```
+
+</details>
+
 ### discover
 
 Report which VCF fields land in typed columns vs the overflow map.

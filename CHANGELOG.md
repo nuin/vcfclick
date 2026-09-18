@@ -6,6 +6,18 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.10.0]
+
+### Added
+- **`combine`: GATK CombineVariants parity options** (all opt-in; defaults
+  unchanged). `--pass-only` counts only PASS calls toward `--min-callsets` and
+  names filtered inputs `filterIn<name>`; `--count-by site` counts by position
+  rather than exact allele (GATK's `--minimumN`); `--reference REF.fa` splits
+  multi-allelics and left-aligns/trims internally so raw caller VCFs combine with
+  no `bcftools norm` step; `--carry-info` carries QUAL/FILTER/INFO (with header
+  lines) from the priority input. Validated against a 48-sample GATK3
+  CombineVariants shadow comparison.
+
 ### Changed
 - **Cap `duckdb < 2.0`.** DuckDB storage is backward- but not forward-compatible
   (a 2.0-written file can't be read by 1.x). To keep `db push`/`db pull` bundles,

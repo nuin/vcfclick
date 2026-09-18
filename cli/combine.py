@@ -47,19 +47,55 @@ from cli.main import cli
     show_default=True,
     help="Keep only sites present in at least this many inputs (consensus filter).",
 )
+@click.option(
+    "--pass-only",
+    is_flag=True,
+    default=False,
+    help="Count only PASS calls toward --min-callsets; a filtered input is still "
+    "named filterIn<name> in set= (GATK convention). FILTER '.' counts as PASS.",
+)
+@click.option(
+    "--count-by",
+    type=click.Choice(["allele", "site"]),
+    default="allele",
+    show_default=True,
+    help="Count inputs by exact allele (default) or by position. 'site' keeps "
+    "every allele at a position counted by enough inputs (GATK --minimumN).",
+)
+@click.option(
+    "--reference",
+    type=click.Path(dir_okay=False),
+    help="Reference FASTA. Split multi-allelics and left-align/trim internally "
+    "(the bcftools norm -m - -f equivalent) instead of refusing. Needs pyfaidx "
+    "(vcfclick[benchmark]).",
+)
+@click.option(
+    "--carry-info",
+    is_flag=True,
+    default=False,
+    help="Carry QUAL, FILTER, and INFO (plus their header lines) from the "
+    "highest-priority input that called each allele.",
+)
 def combine(
     vcfs: tuple[str, ...],
     output: str,
     names: tuple[str, ...],
     min_callsets: int,
+    pass_only: bool,
+    count_by: str,
+    reference: str | None,
+    carry_info: bool,
 ) -> None:
     """Combine two or more VCF call sets into one, with set= provenance.
 
-    Inputs are unionized by (chrom, pos, ref, alt) and must be decomposed
-    (one ALT per record). A sample shared across inputs is resolved by
-    PRIORITY — input order is highest-first. Output carries GT plus a
-    set= INFO field; per-sample FORMAT fields (GQ/DP/AD) are not yet
-    propagated.
+    Inputs are unionized by (chrom, pos, ref, alt); a sample shared across
+    inputs is resolved by PRIORITY (input order, highest first). Output
+    carries GT + GQ/DP/AD from the priority source, plus a set= INFO field.
+
+    Opt-in GATK CombineVariants parity (defaults keep current behaviour):
+    --pass-only, --count-by site, --reference (split + normalize internally,
+    so raw multi-allelic/padded inputs combine with no bcftools step), and
+    --carry-info (carry QUAL/FILTER/INFO from the priority input).
     """
     from ingest.combine import CombineError, combine_vcfs
 
@@ -71,6 +107,10 @@ def combine(
             output,
             names=list(names) or None,
             min_callsets=min_callsets,
+            pass_only=pass_only,
+            count_by=count_by,
+            reference=reference,
+            carry_info=carry_info,
         )
     except CombineError as e:
         raise click.ClickException(str(e)) from e
