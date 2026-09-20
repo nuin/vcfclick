@@ -323,6 +323,54 @@ def count_expr() -> str:
     return "count(*)" if backend() == "duckdb" else "count()"
 
 
+def typed_columns_sql(table: str) -> str:
+    """SQL listing a table's columns as (name, type, is_flag).
+
+    `is_flag` marks a column whose "populated" test is `!= 0` rather than
+    `IS NOT NULL`: in ClickHouse those are the non-`Nullable` flag columns;
+    in DuckDB the same columns are nullable but declared `DEFAULT 0`, so
+    `IS NOT NULL` would count every row.
+    """
+    if not _TABLE_NAME_RE.match(table):
+        raise ValueError(f"Unsafe table name: {table!r}")
+    if backend() == "duckdb":
+        return (
+            "SELECT column_name, data_type, "
+            "CASE WHEN column_default = '0' THEN 1 ELSE 0 END "
+            "FROM information_schema.columns "
+            f"WHERE table_name = '{table}' ORDER BY ordinal_position"
+        )
+    return (
+        "SELECT name, type, CASE WHEN type LIKE 'Nullable%' THEN 0 ELSE 1 END "
+        "FROM system.columns "
+        f"WHERE table = '{table}' AND database = currentDatabase() "
+        "ORDER BY position"
+    )
+
+
+def populated_expr(col: str, is_flag: bool) -> str:
+    """Per-column "is populated" aggregate. ClickHouse has `countIf`; DuckDB
+    uses the SQL-standard `count(*) FILTER (WHERE ...)`."""
+    test = f'"{col}" != 0' if is_flag else f'"{col}" IS NOT NULL'
+    if backend() == "duckdb":
+        return f'count(*) FILTER (WHERE {test}) AS "{col}"'
+    test = test.replace('"', "`")
+    return f"countIf({test}) AS `{col}`"
+
+
+def map_keys_from(table: str, map_col: str) -> str:
+    """A FROM-clause exposing one row per Map key as `k`.
+
+    ClickHouse flattens a Map with `ARRAY JOIN mapKeys(m)`; DuckDB uses
+    `unnest(map_keys(m))` in a subquery.
+    """
+    if not _TABLE_NAME_RE.match(table) or not _TABLE_NAME_RE.match(map_col):
+        raise ValueError(f"Unsafe identifier: {table!r}/{map_col!r}")
+    if backend() == "duckdb":
+        return f"(SELECT unnest(map_keys({map_col})) AS k FROM {table})"
+    return f"{table} ARRAY JOIN mapKeys({map_col}) AS k"
+
+
 def table_exists(name: str) -> bool:
     """Return True if `name` is a table in the active database.
 

@@ -34,42 +34,30 @@ _STATS_SKIP = {
 }
 
 
-def _list_typed_columns(sess, table: str) -> list[tuple[str, str]]:
-    """Return typed, non-structural columns for `table`."""
-    out = (
-        sess.query(
-            f"SELECT name, type FROM system.columns "
-            f"WHERE table = '{table}' AND database = currentDatabase() "
-            f"ORDER BY position",
-            "TSV",
-        )
-        .bytes()
-        .decode()
-        .strip()
-    )
+def _list_typed_columns(sess, table: str) -> list[tuple[str, bool]]:
+    """Typed, non-structural columns for `table` as (name, is_flag)."""
+    from storage import typed_columns_sql
+
+    out = sess.query(typed_columns_sql(table), "TSV").bytes().decode().strip()
     skip = _STATS_SKIP.get(table, set())
-    cols: list[tuple[str, str]] = []
+    cols: list[tuple[str, bool]] = []
     for line in out.splitlines():
-        name, type_str = line.split("\t", 1)
+        parts = line.split("\t")
+        if len(parts) < 3:
+            continue
+        name, _type, is_flag = parts[0], parts[1], parts[2]
         if name not in skip:
-            cols.append((name, type_str))
+            cols.append((name, is_flag.strip() in ("1", "true", "True")))
     return cols
 
 
-def _population_expr(col_name: str, col_type: str) -> str:
-    """Build the per-column aggregation fragment."""
-    if "Nullable" in col_type:
-        return f"countIf(`{col_name}` IS NOT NULL) AS `{col_name}`"
-    return f"countIf(`{col_name}` != 0) AS `{col_name}`"
-
-
-def _query_population(
-    sess, table: str, columns: list[tuple[str, str]]
-) -> dict[str, int]:
+def _query_population(sess, table: str, columns: list[tuple[str, bool]]) -> dict:
     """Return `{column_name: populated_row_count}` for typed columns."""
+    from storage import populated_expr
+
     if not columns:
         return {}
-    exprs = ", ".join(_population_expr(n, t) for n, t in columns)
+    exprs = ", ".join(populated_expr(n, flag) for n, flag in columns)
     out = sess.query(f"SELECT {exprs} FROM {table}", "TSV").bytes().decode().strip()
     values = [int(v) for v in out.split("\t")]
     return dict(zip([n for n, _ in columns], values))
@@ -79,11 +67,11 @@ def _query_map_keys(
     sess, table: str, map_col: str, top: int
 ) -> tuple[list[tuple[str, int]], int]:
     """Return top Map keys and total distinct key count."""
+    from storage import count_expr, map_keys_from
+
+    src = map_keys_from(table, map_col)
     n_distinct = int(
-        sess.query(
-            f"SELECT count(DISTINCT k) FROM {table} ARRAY JOIN mapKeys({map_col}) AS k",
-            "TSV",
-        )
+        sess.query(f"SELECT count(DISTINCT k) FROM {src}", "TSV")
         .bytes()
         .decode()
         .strip()
@@ -93,8 +81,7 @@ def _query_map_keys(
         return [], 0
     out = (
         sess.query(
-            f"SELECT k, count() AS n FROM {table} "
-            f"ARRAY JOIN mapKeys({map_col}) AS k "
+            f"SELECT k, {count_expr()} AS n FROM {src} "
             f"GROUP BY k ORDER BY n DESC, k LIMIT {int(top)}",
             "TSV",
         )
@@ -121,25 +108,34 @@ def _query_rows(sess, sql: str) -> list[list[str]]:
 
 
 def _stats_payload(sess, top: int) -> dict:
+    from storage import backend, count_expr
+
+    cnt = count_expr()
     counts = {
         t: int(
-            sess.query(f"SELECT count() FROM {t}", "TSV").bytes().decode().strip()
-            or "0"
+            sess.query(f"SELECT {cnt} FROM {t}", "TSV").bytes().decode().strip() or "0"
         )
         for t in ("variants", "genotypes", "samples", "ingestions")
     }
     variants_cols = _list_typed_columns(sess, "variants")
     genotypes_cols = _list_typed_columns(sess, "genotypes")
+    # ClickHouse counts distinct tuples directly; DuckDB needs the pair
+    # concatenated into one expression.
+    distinct_pair = (
+        "count(DISTINCT (ingest_id, sample_id))"
+        if backend() != "duckdb"
+        else "count(DISTINCT (ingest_id || '' || sample_id))"
+    )
     return {
         "counts": counts,
         "cohorts": _query_rows(
             sess,
-            "SELECT cohort, count(DISTINCT (ingest_id, sample_id)) AS n "
+            f"SELECT cohort, {distinct_pair} AS n "
             "FROM samples GROUP BY cohort ORDER BY n DESC, cohort",
         ),
         "contigs": _query_rows(
             sess,
-            "SELECT chrom, count() AS n FROM variants "
+            f"SELECT chrom, {cnt} AS n FROM variants "
             "GROUP BY chrom ORDER BY n DESC, chrom",
         ),
         "variants_pop": _query_population(sess, "variants", variants_cols),
@@ -186,18 +182,7 @@ def _render_map_keys(
 )
 def db_stats(name: str, top: int) -> None:
     """Schema-population stats for an ingested cohort."""
-    from storage import backend, db_disk_size, db_path, get_session
-
-    if backend() == "duckdb":
-        # The current implementation depends on chDB-specific SQL
-        # (system.columns, countIf, ARRAY JOIN mapKeys). Porting to
-        # DuckDB requires SQL-dialect helpers (information_schema,
-        # FILTER clause, UNNEST(map_keys)); that lands as a follow-up.
-        raise click.ClickException(
-            "db stats is not yet implemented on the DuckDB backend. "
-            "Set VCFCLICK_BACKEND=chdb (and `pip install vcfclick[chdb]`) "
-            "to run stats today."
-        )
+    from storage import db_disk_size, db_path, get_session
 
     path = db_path(name)
     if not path.exists():

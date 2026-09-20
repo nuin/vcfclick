@@ -19,16 +19,10 @@ import shutil
 import subprocess
 from pathlib import Path
 
-import pytest
 
-# The current db_stats implementation depends on chDB-specific SQL
-# (system.columns, countIf, ARRAY JOIN mapKeys). A DuckDB port lands
-# as a follow-up; skip the suite for now when the DuckDB backend is
-# active so the rest of the matrix is informative.
-pytestmark = pytest.mark.skipif(
-    os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb",
-    reason="db stats not yet ported to DuckDB backend",
-)
+# `db stats` runs on both backends (the dialect differences live in
+# storage.db: typed_columns_sql / populated_expr / map_keys_from), so these
+# assertions must hold on chDB and DuckDB alike.
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
