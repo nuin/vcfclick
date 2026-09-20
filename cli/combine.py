@@ -70,6 +70,14 @@ from cli.main import cli
     "(vcfclick[benchmark]).",
 )
 @click.option(
+    "--atomize",
+    is_flag=True,
+    default=False,
+    help="Split complex alleles into primitives (SNPs + one indel) after "
+    "left-alignment, so a caller packing substitutions into one record "
+    "converges with one that emits them separately. Requires --reference.",
+)
+@click.option(
     "--carry-info",
     is_flag=True,
     default=False,
@@ -84,6 +92,7 @@ def combine(
     pass_only: bool,
     count_by: str,
     reference: str | None,
+    atomize: bool,
     carry_info: bool,
 ) -> None:
     """Combine two or more VCF call sets into one, with set= provenance.
@@ -110,6 +119,7 @@ def combine(
             pass_only=pass_only,
             count_by=count_by,
             reference=reference,
+            atomize=atomize,
             carry_info=carry_info,
         )
     except CombineError as e:

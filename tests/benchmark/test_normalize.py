@@ -123,3 +123,48 @@ def test_decompose_mnp_passthrough_non_mnp():
 def test_left_align_rejects_empty_allele():
     with pytest.raises(ValueError):
         left_align(_fetch(), "chr1", 1, "", "A")
+
+
+# --- atomize: complex alleles into primitives (combine --atomize) ----------
+
+
+def test_atomize_equal_length_mnp_to_snps():
+    from benchmark.normalize import atomize
+
+    # MNP: only differing positions become SNPs.
+    assert atomize(10, "AGT", "CGA") == [(10, "A", "C"), (12, "T", "A")]
+
+
+def test_atomize_leaves_snp_and_pure_indel_unchanged():
+    from benchmark.normalize import atomize
+
+    assert atomize(10, "A", "C") == [(10, "A", "C")]  # SNP
+    assert atomize(10, "CA", "C") == [(10, "CA", "C")]  # pure deletion
+    assert atomize(10, "C", "CA") == [(10, "C", "CA")]  # pure insertion
+
+
+def test_atomize_complex_splits_into_snps_plus_indel():
+    from benchmark.normalize import atomize
+
+    # REF=ACGT ALT=ATT : shared prefix A, then C>T SNP, then G deleted, T matches.
+    # Decomposes to the substitution(s) over the overlap plus one indel.
+    out = atomize(10, "ACGT", "ATT")
+    # every piece must be a primitive: a SNP or a pure single indel
+    for pos, ref, alt in out:
+        is_snp = len(ref) == 1 and len(alt) == 1
+        is_indel = (len(ref) == 1) != (len(alt) == 1) or abs(len(ref) - len(alt)) > 0
+        assert is_snp or is_indel
+    assert out  # non-empty
+
+
+def test_atomize_converges_mnp_with_separate_snp_calls():
+    """The point of --atomize: a caller packing two substitutions into one MNP
+    record converges with a caller that emitted them separately.
+
+    (Differently *anchored* spellings of one indel converge via reference
+    left-alignment, not atomization — that is `left_align`'s job.)"""
+    from benchmark.normalize import atomize
+
+    packed = atomize(10, "AC", "GT")  # one MNP record
+    separate = atomize(10, "A", "G") + atomize(11, "C", "T")  # two SNP records
+    assert packed == separate

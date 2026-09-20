@@ -292,3 +292,30 @@ def test_carry_info_rejects_incompatible_header(tmp_path):
     out = tmp_path / "o.vcf"
     with pytest.raises(CombineError, match="incompatible"):
         combine_vcfs([str(a), str(b)], out, carry_info=True)
+
+
+def test_atomize_splits_complex_allele_into_primitives(tmp_path):
+    # An MNP packed by one caller vs the same two SNPs emitted separately:
+    # --atomize converges them so --min-callsets 2 keeps both.
+    pytest.importorskip("pyfaidx")
+    ref = tmp_path / "ref.fa"
+    ref.write_text(">chr1\nACGT\n")
+    a = _wv(tmp_path / "a.vcf", [(1, "AC", "GT", ".", "PASS", ".", "0/1")])
+    b = _wv(
+        tmp_path / "b.vcf",
+        [
+            (1, "A", "G", ".", "PASS", ".", "0/1"),
+            (2, "C", "T", ".", "PASS", ".", "0/1"),
+        ],
+    )
+    out = tmp_path / "o.vcf"
+    combine_vcfs([a, b], out, reference=str(ref), atomize=True, min_callsets=2)
+    got = sorted((rec.POS, rec.REF, rec.ALT[0]) for rec in VCF(str(out)))
+    assert got == [(1, "A", "G"), (2, "C", "T")]
+
+
+def test_atomize_requires_reference(tmp_path):
+    a = _wv(tmp_path / "a.vcf", [(1, "A", "G", ".", "PASS", ".", "0/1")])
+    b = _wv(tmp_path / "b.vcf", [(1, "A", "G", ".", "PASS", ".", "0/1")])
+    with pytest.raises(CombineError, match="--atomize requires --reference"):
+        combine_vcfs([a, b], tmp_path / "o.vcf", atomize=True)

@@ -83,7 +83,13 @@ Four opt-in options bring `combine` closer to GATK3 `CombineVariants`.
   caller VCFs — multi-allelic, padded indels, even missing `##contig`
   headers — combine with **no separate `bcftools` step**; contig order is
   taken from the reference `.fai`. Needs `pyfaidx` (`vcfclick[benchmark]`).
-  (Complex substitutions are not atomized — the same as `bcftools norm`.)
+- **`--atomize`** (requires `--reference`) — after left-alignment, split
+  complex alleles into primitives (SNPs plus at most one indel), so a
+  caller that packs substitutions into one record converges with one that
+  emits them separately. Note the division of labour: differently
+  *anchored* spellings of the same indel converge via reference
+  left-alignment (`--reference`); `--atomize` handles the packed-substitution
+  case that left-alignment alone cannot.
 - **`--carry-info`** — carry `QUAL`, `FILTER`, and `INFO` (with their
   `##INFO`/`##FILTER` header lines) from the highest-priority input that
   called each allele, rather than writing `QUAL`/`FILTER` as `.` and

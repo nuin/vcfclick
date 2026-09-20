@@ -67,6 +67,37 @@ def decompose_mnp(pos: int, ref: str, alt: str) -> list[tuple[int, str, str]]:
     return [(pos + i, ref[i], alt[i]) for i in range(len(ref)) if ref[i] != alt[i]]
 
 
+def atomize(pos: int, ref: str, alt: str) -> list[tuple[int, str, str]]:
+    """Split an allele into primitives: SNPs plus at most one indel.
+
+    Trims to the minimal representation first, then:
+      * equal-length multibase (MNP) -> one SNP per differing position;
+      * a pure indel (one side is the single anchor base) -> unchanged, it is
+        already primitive;
+      * a genuine complex allele (both sides multibase, lengths differ) -> the
+        leading substitutions as SNPs, then the length change as one anchored
+        indel.
+
+    This converges callers that pack substitutions into one record with callers
+    that emit them separately. It does NOT converge differently *anchored*
+    spellings of the same indel — that is reference left-alignment's job
+    (`left_align`), which `--reference` applies first.
+    """
+    pos, ref, alt = trim(pos, ref, alt)
+    if len(ref) == len(alt):
+        if len(ref) == 1:
+            return [(pos, ref, alt)]
+        return [(pos + i, ref[i], alt[i]) for i in range(len(ref)) if ref[i] != alt[i]]
+    if len(ref) == 1 or len(alt) == 1:
+        return [(pos, ref, alt)]  # pure indel: already a primitive
+    # Complex: substitutions over the shared span, then the indel. The last
+    # shared position stays as the indel's anchor base.
+    n = min(len(ref), len(alt))
+    out = [(pos + i, ref[i], alt[i]) for i in range(n - 1) if ref[i] != alt[i]]
+    out.append((pos + n - 1, ref[n - 1 :], alt[n - 1 :]))
+    return out
+
+
 @dataclass(frozen=True)
 class AltRow:
     """One biallelic record after splitting a multiallelic site."""

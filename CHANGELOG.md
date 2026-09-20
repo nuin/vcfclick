@@ -6,6 +6,16 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- **`db stats` works on the DuckDB backend.** It previously raised "not yet
+  implemented" — a dead command for every conda user, since bioconda ships the
+  DuckDB backend. The dialect differences now live in `storage/db.py`
+  (`typed_columns_sql`, `populated_expr`, `map_keys_from`). Validated by running
+  the existing chDB-written stats suite unchanged against DuckDB.
+- **`combine --atomize`** (with `--reference`) — split complex alleles into
+  primitives after left-alignment, so a caller packing substitutions into one
+  record converges with one that emits them separately.
+
 ## [0.10.0]
 
 ### Added

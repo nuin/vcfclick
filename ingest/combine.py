@@ -269,6 +269,7 @@ def combine_vcfs(
     count_by: str = "allele",
     carry_info: bool = False,
     reference: str | Path | None = None,
+    atomize: bool = False,
 ) -> Path:
     """Combine `inputs` (>=2 VCFs, priority = input order) into `output`.
 
@@ -286,6 +287,10 @@ def combine_vcfs(
     for p in in_paths:
         if not p.exists():
             raise CombineError(f"input not found: {p}")
+    if atomize and reference is None:
+        raise CombineError(
+            "--atomize requires --reference (it follows left-alignment)."
+        )
     if count_by not in ("allele", "site"):
         raise CombineError(f"--count-by must be 'allele' or 'site', got {count_by!r}.")
     if min_callsets < 1 or min_callsets > len(in_paths):
@@ -321,10 +326,12 @@ def combine_vcfs(
     ref_fetch = None
     left_align = None
     trim = None
+    atomize_fn = None
     if reference is not None:
         if not Path(reference).exists():
             raise CombineError(f"reference not found: {reference}")
         try:
+            from benchmark.normalize import atomize as _atomize
             from benchmark.normalize import left_align as _left_align
             from benchmark.normalize import trim as _trim
             from benchmark.reference import Reference
@@ -339,6 +346,7 @@ def combine_vcfs(
                 "--reference requires pyfaidx; install 'vcfclick[benchmark]'."
             ) from e
         ref_fetch, left_align, trim = ref_obj.fetch, _left_align, _trim
+        atomize_fn = _atomize
         # Seed contig order from the reference .fai (§6: inputs may lack
         # ##contig headers; the reference is the authoritative order).
         fai = Path(f"{reference}.fai")
@@ -404,7 +412,11 @@ def combine_vcfs(
                         # Unshiftable (e.g. an insertion anchored at contig start):
                         # keep the minimal-trim representation, like bcftools norm.
                         npos, nref, nalt = trim(variant.POS, variant.REF, alt)
-                    allele_rows.append(((variant.CHROM, npos, nref, nalt), j))
+                    if atomize:
+                        for apos, aref, aalt in atomize_fn(npos, nref, nalt):
+                            allele_rows.append(((variant.CHROM, apos, aref, aalt), j))
+                    else:
+                        allele_rows.append(((variant.CHROM, npos, nref, nalt), j))
 
             genotypes = variant.genotypes
             fmt_arrs = {f: _format_arr(variant, f) for f in _PASSTHROUGH}
