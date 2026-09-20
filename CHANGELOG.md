@@ -12,6 +12,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   DuckDB backend. The dialect differences now live in `storage/db.py`
   (`typed_columns_sql`, `populated_expr`, `map_keys_from`). Validated by running
   the existing chDB-written stats suite unchanged against DuckDB.
+- **Transcript / exon / CDS annotations** (the Phase-2 hierarchy, previously
+  stubbed). `vcfclick annotations load-transcripts` populates them from the
+  *same* GENCODE GFF3 the gene loader already caches — no new download. Enables
+  `cds_regions_for_gene` (coding-only ranges from the MANE Select transcript —
+  the clinically meaningful alternative to whole-gene spans, which include
+  introns and UTRs), `canonical_transcript`, `transcripts_for_gene`, `exon_at`,
+  and `splice_site_distance`. Three new MCP tools expose them. Validated against
+  real GENCODE data: BRCA1 resolves to MANE Select ENST00000357654.9 with a
+  5,592 bp CDS, matching its known coding length.
 - **`combine --atomize`** (with `--reference`) — split complex alleles into
   primitives after left-alignment, so a caller packing substitutions into one
   record converges with one that emits them separately.

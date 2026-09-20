@@ -85,6 +85,9 @@ def get_connection() -> duckdb.DuckDBPyConnection:
     """Open (and initialise on first use) the DuckDB annotation store."""
     conn = duckdb.connect(str(_store_path()))
     conn.execute(SCHEMA_DDL)
+    from annotations.transcripts import TRANSCRIPTS_SCHEMA_DDL
+
+    conn.execute(TRANSCRIPTS_SCHEMA_DDL)
     return conn
 
 

@@ -283,6 +283,51 @@ def gnomad_lookup(chrom: str, pos: int, ref: str, alt: str) -> dict | None:
 
 
 @mcp.tool()
+def cds_regions_for_gene(symbol: str) -> list[dict]:
+    """Coding (CDS) ranges for a gene — the clinically meaningful version of
+    position_for_gene(). Use this instead of the whole-gene span when the
+    question is about coding variants: the gene span includes introns and UTRs,
+    which are usually noise for interpretation. Ranges come from the MANE
+    Select transcript when one is defined. Requires `vcfclick annotations
+    load-transcripts`."""
+    from annotations.transcripts import cds_regions_for_gene as _cds
+
+    return [{"chrom": c, "start": s, "end": e} for c, s, e in _cds(symbol)]
+
+
+@mcp.tool()
+def canonical_transcript(symbol: str) -> dict | None:
+    """The MANE Select (canonical) transcript for a gene, avoiding spurious
+    hits on rare isoforms. None if the gene has no MANE Select transcript or
+    transcripts are not loaded."""
+    from annotations.transcripts import canonical_transcript as _canon
+
+    t = _canon(symbol)
+    if t is None:
+        return None
+    return {
+        "transcript_id": t.transcript_id,
+        "gene_symbol": t.gene_symbol,
+        "chrom": t.chrom,
+        "start": t.start_pos,
+        "end": t.end_pos,
+        "strand": t.strand,
+        "biotype": t.biotype,
+    }
+
+
+@mcp.tool()
+def splice_site_distance(chrom: str, pos: int) -> int | None:
+    """Distance in bp from a position to the nearest exon/intron boundary
+    (0 = on the boundary). A variant a few bases from a boundary is a
+    candidate splice variant even when it looks intronic. None if no exon is
+    on that contig or transcripts are not loaded."""
+    from annotations.transcripts import splice_site_distance as _dist
+
+    return _dist(chrom, pos)
+
+
+@mcp.tool()
 def benchmark_errors(concordance_parquet: str, kind: str = "FN") -> list[dict]:
     """Benchmark auditability: the false negatives (`kind="FN"`) or false
     positives (`kind="FP"`) from a `vcfclick benchmark` concordance parquet

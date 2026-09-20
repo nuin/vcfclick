@@ -25,6 +25,10 @@ The server exposes:
 | `gene_at` | Return genes overlapping one position. |
 | `clinvar_lookup` | Return ClinVar significance for one allele. |
 | `gnomad_lookup` | Return the gnomAD allele frequency (and popmax) for one allele. |
+| `cds_regions_for_gene` | Coding (CDS) ranges for a gene — the coding-only alternative to `position_for_gene`. |
+| `canonical_transcript` | The MANE Select transcript for a gene. |
+| `splice_site_distance` | Distance in bp from a position to the nearest exon/intron boundary. |
+| `benchmark_errors` | The annotated FN/FP rows from a `benchmark` concordance parquet. |
 
 ## Load Annotation Data
 
@@ -41,6 +45,20 @@ release:
 ```bash
 vcfclick annotations load --gff gencode.v45.annotation.gff3.gz
 ```
+
+Transcript-level tools (`cds_regions_for_gene`, `canonical_transcript`,
+`splice_site_distance`) need the transcript/exon/CDS tables, read from the
+*same* GENCODE GFF3 — so the download above is reused:
+
+```bash
+vcfclick annotations load-transcripts
+```
+
+This is what makes coding-only questions expressible. `position_for_gene`
+returns the whole gene span, which includes introns and UTRs;
+`cds_regions_for_gene` returns only the coding ranges of the MANE Select
+transcript — so *"non-ref in BRCA1 CDS, AF < 0.01"* is the question you can
+actually ask.
 
 ClinVar lookup requires the ClinVar table:
 

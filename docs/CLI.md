@@ -10,7 +10,7 @@ Run `vcfclick --help` or `vcfclick <command> --help` any time for the same infor
 - **Ingesting variants** — [`db ingest`](#db-ingest) · [`db ingest-batch`](#db-ingest-batch) · [`merge`](#merge) · [`combine`](#combine) · [`discover`](#discover)
 - **Family / trio analysis** — [`db ped`](#db-ped) · [`db trio`](#db-trio) · [`db qc`](#db-qc)
 - **Benchmarking** — [`benchmark`](#benchmark) · [`benchmark-cohort`](#benchmark-cohort)
-- **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-gnomad`](#annotations-load-gnomad)
+- **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad)
 - **Export & sharing** — [`db dump`](#db-dump) · [`db ingest-parquet`](#db-ingest-parquet) · [`db push`](#db-push) · [`db pull`](#db-pull)
 - **Interactive UIs** — [`tui`](#tui) · [`web`](#web)
 
@@ -568,6 +568,15 @@ Options:
 ```
 
 </details>
+
+### annotations load-transcripts
+
+Populate the transcript / exon / CDS tables from the same GENCODE GFF3, enabling
+CDS-only filtering, MANE Select lookup, and splice-site distance. See [MCP.md](MCP.md).
+
+```bash
+vcfclick annotations load-transcripts
+```
 
 ### annotations load-gnomad
 

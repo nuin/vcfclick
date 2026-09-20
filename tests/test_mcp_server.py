@@ -43,6 +43,9 @@ EXPECTED_TOOLS = {
     "clinvar_lookup",
     "gnomad_lookup",
     "benchmark_errors",
+    "cds_regions_for_gene",
+    "canonical_transcript",
+    "splice_site_distance",
 }
 
 

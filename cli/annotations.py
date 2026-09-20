@@ -86,3 +86,33 @@ def annotations_load_gnomad(vcf: str, replace: bool) -> None:
 
     n = load(Path(vcf), replace=replace)
     click.echo(f"\nloaded   {n:,} gnomAD allele frequencies into the annotation store")
+
+
+@annotations.command(name="load-transcripts")
+@click.option(
+    "--gff",
+    type=click.Path(exists=True, dir_okay=False),
+    default=None,
+    help="Local GENCODE GFF3 (.gff3 or .gff3.gz). Reuses the cached v45 "
+    "download from `annotations load` if omitted.",
+)
+@click.option(
+    "--keep-existing",
+    is_flag=True,
+    help="Don't truncate transcripts/exons/cds before loading (default: replace).",
+)
+def annotations_load_transcripts(gff: str | None, keep_existing: bool) -> None:
+    """Populate the transcript / exon / CDS tables from a GENCODE GFF3.
+
+    Enables CDS-only filtering ("non-ref in BRCA1 CDS" rather than the whole
+    gene span including introns and UTRs), MANE Select canonical-transcript
+    lookup, and splice-site distance. Reads the same GFF3 as `annotations
+    load`, so the download is shared.
+    """
+    from annotations.loaders.gencode_transcripts import load
+
+    counts = load(Path(gff) if gff else None, replace=not keep_existing)
+    click.echo(
+        f"\nloaded   {counts['transcripts']:,} transcripts, "
+        f"{counts['exons']:,} exons, {counts['cds']:,} CDS rows"
+    )
