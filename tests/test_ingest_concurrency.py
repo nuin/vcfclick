@@ -22,6 +22,15 @@ from pathlib import Path
 
 import pytest
 
+
+
+def _active_backend() -> str:
+    """The backend actually in use — not just the env var, which is unset
+    when vcfclick falls back (e.g. chDB missing)."""
+    from storage import backend
+
+    return backend()
+
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 
@@ -96,7 +105,7 @@ def test_sql_quote_str_handles_backslash_escape_bypass():
 
 
 @pytest.mark.skipif(
-    os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb",
+    _active_backend() == "duckdb",
     reason="explicitly exercises chDB quote-handling via JSONCompact roundtrip",
 )
 def test_sql_quote_str_roundtrips_through_chdb(vcfclick_home, monkeypatch):

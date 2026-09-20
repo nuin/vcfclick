@@ -26,6 +26,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
+
+def _active_backend() -> str:
+    """The backend actually in use, so these tests follow the install
+    instead of assuming chDB is available."""
+    from storage import backend
+
+    return backend()
+
+
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 TINY_VCF = Path(__file__).parent / "fixtures" / "tiny.vcf.gz"
@@ -70,7 +79,7 @@ def test_parallel_ingest_falls_back_when_tabix_returns_empty(
     the patch has to land on the source module.
     """
     monkeypatch.setenv("VCFCLICK_DB_NAME", "par")
-    monkeypatch.setenv("VCFCLICK_BACKEND", os.environ.get("VCFCLICK_BACKEND", "chdb"))
+    monkeypatch.setenv("VCFCLICK_BACKEND", os.environ.get("VCFCLICK_BACKEND") or _active_backend())
 
     # Both backends enforce a single live session per (process, DB).
     # Clear any session cache state leaked from earlier tests in the

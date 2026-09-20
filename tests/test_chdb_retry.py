@@ -16,6 +16,12 @@ from unittest.mock import patch
 
 import pytest
 
+# These mock chDB's Session to exercise *our* retry wrapper, but chDB must still
+# be importable to patch it. Skip (don't fail) where the engine can't load — its
+# prebuilt wheel does not load on every macOS/Python combination. CI installs a
+# working chDB, so coverage is retained there.
+pytest.importorskip("chdb.session", reason="chDB engine not loadable here")
+
 
 def test_non_race_error_propagates_without_retry():
     """A garden-variety exception (e.g., disk full) must not get

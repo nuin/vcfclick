@@ -16,6 +16,15 @@ from pathlib import Path
 
 import pytest
 
+
+def _active_backend() -> str:
+    """The backend actually in use, so these tests follow the install
+    instead of assuming chDB is available."""
+    from storage import backend
+
+    return backend()
+
+
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -93,7 +102,7 @@ def test_merged_vcf_ingests_cleanly(tmp_path):
     env_home = tmp_path / "home"
     env = os.environ.copy()
     env["VCFCLICK_HOME"] = str(env_home)
-    env["VCFCLICK_BACKEND"] = os.environ.get("VCFCLICK_BACKEND", "chdb")
+    env["VCFCLICK_BACKEND"] = os.environ.get("VCFCLICK_BACKEND") or _active_backend()
 
     def run(*args):
         r = subprocess.run(

@@ -22,6 +22,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
+
+
+def _active_backend() -> str:
+    """The backend actually in use — not just the env var, which is unset
+    when vcfclick falls back (e.g. chDB missing)."""
+    from storage import backend
+
+    return backend()
+
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 DRAGEN_VCF = Path(__file__).parent / "fixtures" / "dragen.vcf.gz"
@@ -134,7 +143,7 @@ def test_no_dragen_field_leaks_into_info_extra(vcfclick_home):
     # chDB exposes `mapKeys(MAP)`; DuckDB names it `map_keys(MAP)`.
     fn = (
         "map_keys"
-        if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb"
+        if _active_backend() == "duckdb"
         else "mapKeys"
     )
     rows = _tsv(

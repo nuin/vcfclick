@@ -27,6 +27,15 @@ import shutil
 import subprocess
 from pathlib import Path
 
+
+
+def _active_backend() -> str:
+    """The backend actually in use — not just the env var, which is unset
+    when vcfclick falls back (e.g. chDB missing)."""
+    from storage import backend
+
+    return backend()
+
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 ROUTING_VCF = Path(__file__).parent / "fixtures" / "routing.vcf.gz"
@@ -147,7 +156,7 @@ def test_info_extra_is_empty_when_no_unknown_fields(vcfclick_home):
     # has `cardinality(MAP)`. Pick at SQL build time.
     fn = (
         "cardinality"
-        if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb"
+        if _active_backend() == "duckdb"
         else "length"
     )
     rows = _tsv(
@@ -162,7 +171,7 @@ def test_unknown_info_does_NOT_leak_into_typed_columns(vcfclick_home):
     # System-catalog tables differ between backends. chDB exposes
     # `system.columns`; DuckDB uses the SQL-standard
     # `information_schema.columns` (column `column_name`, not `name`).
-    if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb":
+    if _active_backend() == "duckdb":
         sql = (
             "SELECT column_name FROM information_schema.columns "
             "WHERE table_name = 'variants'"
@@ -243,7 +252,7 @@ def test_format_extra_empty_when_only_reserved_fields(vcfclick_home):
     _ingest_routing(vcfclick_home)
     fn = (
         "cardinality"
-        if os.environ.get("VCFCLICK_BACKEND", "").lower() == "duckdb"
+        if _active_backend() == "duckdb"
         else "length"
     )
     rows = _tsv(
