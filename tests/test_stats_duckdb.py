@@ -147,3 +147,44 @@ def test_dialect_helpers_reject_unsafe_identifiers(monkeypatch):
         typed_columns_sql("variants; DROP TABLE x")
     with pytest.raises(ValueError):
         map_keys_from("variants", "info_extra); --")
+
+
+# Real ClickHouse type spellings from the vcfclick schema. A nullable column can
+# be *wrapped*, e.g. LowCardinality(Nullable(String)) — the flag test must treat
+# those as nullable, not as flags. (Regression: a prefix match instead of a
+# substring match sent `!= 0` at a String column and chDB raised NO_COMMON_TYPE.)
+_CH_TYPES = [
+    ("Nullable(Float32)", False),
+    ("LowCardinality(Nullable(String))", False),  # the one that broke
+    ("Nullable(UInt32)", False),
+    ("Map(String, String)", True),
+    ("UInt8", True),  # a real flag column
+    ("String", True),
+]
+
+
+def test_chdb_flag_classification_handles_wrapped_nullable_types(monkeypatch):
+    """Evaluate the chDB CASE predicate (in DuckDB, which shares LIKE
+    semantics) against real ClickHouse type strings. Pins the classification,
+    not just the SQL text — chDB itself cannot be exercised on every machine."""
+    import re
+
+    import duckdb
+
+    monkeypatch.setenv("VCFCLICK_BACKEND", "chdb")
+    sql = typed_columns_sql("genotypes")
+    m = re.search(r"(CASE WHEN type LIKE .*? END)", sql)
+    assert m, f"no CASE expression in: {sql}"
+    case_expr = m.group(1)
+
+    con = duckdb.connect()
+    try:
+        for type_str, expect_flag in _CH_TYPES:
+            got = con.execute(
+                f"SELECT {case_expr.replace('type', '?')}", [type_str]
+            ).fetchone()[0]
+            assert bool(got) is expect_flag, (
+                f"{type_str!r} classified is_flag={bool(got)}, want {expect_flag}"
+            )
+    finally:
+        con.close()

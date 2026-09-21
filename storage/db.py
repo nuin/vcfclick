@@ -340,8 +340,11 @@ def typed_columns_sql(table: str) -> str:
             "FROM information_schema.columns "
             f"WHERE table_name = '{table}' ORDER BY ordinal_position"
         )
+    # '%Nullable%', not 'Nullable%': ClickHouse wraps types, so a nullable
+    # column can read `LowCardinality(Nullable(String))`. A prefix match would
+    # misclassify those as flags and emit `!= 0` against a String.
     return (
-        "SELECT name, type, CASE WHEN type LIKE 'Nullable%' THEN 0 ELSE 1 END "
+        "SELECT name, type, CASE WHEN type LIKE '%Nullable%' THEN 0 ELSE 1 END "
         "FROM system.columns "
         f"WHERE table = '{table}' AND database = currentDatabase() "
         "ORDER BY position"
