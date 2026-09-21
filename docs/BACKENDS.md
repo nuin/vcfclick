@@ -71,6 +71,47 @@ vcfclick db ingest study cohort.vcf.gz --cohort cases
 vcfclick db stats study
 ```
 
+### macOS: why chDB is version-pinned
+
+On macOS, `pyproject.toml` pins `chdb==4.2.0` and `chdb-core==26.5.0`
+rather than tracking the latest release. This is a workaround for an
+upstream packaging bug, not a preference.
+
+chDB's prebuilt `_chdb.abi3.so` places its `__LINKEDIT` symbol string
+table on a 4-byte boundary in most published builds. macOS 26+ (Darwin
+27) tightened dyld's Mach-O checks to require **8-byte** alignment, so
+those builds fail to load at import:
+
+```
+ImportError: dlopen(.../chdb/_chdb.abi3.so):
+  mis-aligned LINKEDIT string pool, fileOffset=0x12C00DE4
+```
+
+The reported offset is exactly the binary's `LC_SYMTAB.stroff`. You can
+check any build yourself:
+
+```bash
+otool -l .../chdb/_chdb.abi3.so | grep -A5 LC_SYMTAB | grep stroff
+# stroff % 8 == 0  -> loads;  != 0  -> dyld refuses
+```
+
+Measured across published wheels (arm64):
+
+| package | `stroff % 8` | loads on macOS 26+ |
+|---|---|---|
+| chdb 4.1.8 (bundled engine) | 4 | no |
+| chdb-core 26.3.0 | 4 | no |
+| **chdb-core 26.5.0** | **0** | **yes** |
+| chdb-core 26.7.3 | 4 | no |
+
+`chdb` 4.2+ ships no macOS wheel of its own — the engine comes from
+`chdb-core` — and 4.2.0 is the matching Python package (4.2.1 hits an
+unrelated circular import on Python 3.14; 4.3+ require a misaligned
+core). Linux is unaffected and tracks `chdb>=4.1.8` as before.
+
+**Lift the pin** once upstream links the string table aligned: drop the
+two `sys_platform == 'darwin'` entries from `pyproject.toml`.
+
 ## DuckDB
 
 DuckDB is selected explicitly:

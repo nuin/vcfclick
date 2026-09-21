@@ -37,7 +37,16 @@ classifiers = [
 ]
 dependencies = [
     "cyvcf2>=0.31.0",
-    "chdb>=4.1.8",
+    # macOS: pinned to the one published build that actually loads. chDB's
+    # prebuilt `_chdb.abi3.so` lands its __LINKEDIT symbol string table on a
+    # 4-byte boundary in most releases; macOS 26+/Darwin 27 dyld requires
+    # 8-byte and refuses to load it ("mis-aligned LINKEDIT string pool").
+    # chdb-core 26.5.0 is 8-byte aligned; chdb 4.2.0 is the matching Python
+    # package (4.2.1 hits an unrelated circular import). Lift this once
+    # upstream links the string table aligned — see docs/BACKENDS.md.
+    "chdb==4.2.0; sys_platform == 'darwin'",
+    "chdb-core==26.5.0; sys_platform == 'darwin'",
+    "chdb>=4.1.8; sys_platform != 'darwin'",
     "pyarrow>=15.0.0",
     # Capped below 2.0: DuckDB storage is backward- but not forward-compatible,
     # so a database/annotation store or `db push` bundle written by DuckDB 2.0

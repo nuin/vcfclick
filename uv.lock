@@ -4,10 +4,12 @@ requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14' and sys_platform == 'win32'",
     "python_full_version >= '3.14' and sys_platform == 'emscripten'",
-    "python_full_version >= '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'darwin'",
+    "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
     "python_full_version < '3.14' and sys_platform == 'win32'",
     "python_full_version < '3.14' and sys_platform == 'emscripten'",
-    "python_full_version < '3.14' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.14' and sys_platform == 'darwin'",
+    "python_full_version < '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
 [[package]]
@@ -133,8 +135,16 @@ wheels = [
 name = "chdb"
 version = "4.1.8"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version < '3.14' and sys_platform == 'emscripten'",
+    "python_full_version < '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
 dependencies = [
-    { name = "chdb-core" },
+    { name = "chdb-core", version = "26.3.0", source = { registry = "https://pypi.org/simple" } },
     { name = "pandas" },
     { name = "pyarrow" },
 ]
@@ -143,18 +153,58 @@ wheels = [
 ]
 
 [[package]]
+name = "chdb"
+version = "4.2.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'darwin'",
+    "python_full_version < '3.14' and sys_platform == 'darwin'",
+]
+dependencies = [
+    { name = "chdb-core", version = "26.5.0", source = { registry = "https://pypi.org/simple" } },
+    { name = "pandas" },
+    { name = "pyarrow" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/f4/a2/f484976f9e5dcd8eb5968bec3c92506dc8f3c5503913d5811efc74cc4661/chdb-4.2.0-py3-none-any.whl", hash = "sha256:70aeea83cba1ff30861912710d44abd3d6032deff938c52f0e3ee03e24d4fbb3", size = 1586290, upload-time = "2026-07-02T05:18:27.176Z" },
+]
+
+[[package]]
 name = "chdb-core"
 version = "26.3.0"
 source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'win32'",
+    "python_full_version >= '3.14' and sys_platform == 'emscripten'",
+    "python_full_version >= '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+    "python_full_version < '3.14' and sys_platform == 'win32'",
+    "python_full_version < '3.14' and sys_platform == 'emscripten'",
+    "python_full_version < '3.14' and sys_platform != 'darwin' and sys_platform != 'emscripten' and sys_platform != 'win32'",
+]
 dependencies = [
     { name = "pandas" },
     { name = "pyarrow" },
 ]
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/d5/77/7cd81c89c2bf3d6ad592474fbd01926206cd5be1dfbb80c8423eeea21103/chdb_core-26.3.0-cp39-abi3-macosx_10_15_x86_64.whl", hash = "sha256:83b76bd4bb026a74b5a3134582fc552fde10451969f3a20722f664b3b712d913", size = 108507808, upload-time = "2026-05-11T08:51:33.692Z" },
-    { url = "https://files.pythonhosted.org/packages/49/69/dc1b788581b7544c21db42fe02bc27ade24477c2baef004c4e95024af665/chdb_core-26.3.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:bc2d889ed2f9273c44a89cba7383f2b4d8f0bdfeed38af09f49160484a625d42", size = 91972510, upload-time = "2026-05-11T07:46:00.153Z" },
     { url = "https://files.pythonhosted.org/packages/03/b1/ef4add0ffcf903d094a7974f8d41f7af92f1937e4b852e61fe908c4cd97c/chdb_core-26.3.0-cp39-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:dcbec93852abaa94937242da65644c563bde389ae5d0d67caae6d46067af95c5", size = 120790107, upload-time = "2026-05-11T08:22:29.125Z" },
     { url = "https://files.pythonhosted.org/packages/8a/ef/de277cc1b1e452eda2669581c2be1899daf523af3125141183548817e00c/chdb_core-26.3.0-cp39-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:2b91a47a69db1185908f51aebdb32d1258cf7c0646e7dc6be3d2922cb694e3ad", size = 158980348, upload-time = "2026-05-11T07:52:27.176Z" },
+]
+
+[[package]]
+name = "chdb-core"
+version = "26.5.0"
+source = { registry = "https://pypi.org/simple" }
+resolution-markers = [
+    "python_full_version >= '3.14' and sys_platform == 'darwin'",
+    "python_full_version < '3.14' and sys_platform == 'darwin'",
+]
+dependencies = [
+    { name = "pandas" },
+    { name = "pyarrow" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/10/64/584953f24530357270bf16747cc9e0b5136d002011eb3713cded079a65e1/chdb_core-26.5.0-cp39-abi3-macosx_10_15_x86_64.whl", hash = "sha256:a4b896feb536b75b0cae0612410e3cc93e8161d41eab9bd55720303aef1aa047", size = 110710168, upload-time = "2026-06-08T03:33:44.677Z" },
+    { url = "https://files.pythonhosted.org/packages/63/f4/04fc1be6d5576aa04a22faa168351431c3689fde1b1ac51c54eca2af895f/chdb_core-26.5.0-cp39-abi3-macosx_11_0_arm64.whl", hash = "sha256:4902bdf2e58e49567dbfcb8d9b88607edf6d472f6c21f33c4674574e0444bd28", size = 96683215, upload-time = "2026-06-08T01:52:15.76Z" },
 ]
 
 [[package]]
@@ -1457,10 +1507,12 @@ wheels = [
 
 [[package]]
 name = "vcfclick"
-version = "0.9.1"
+version = "0.14.0"
 source = { editable = "." }
 dependencies = [
-    { name = "chdb" },
+    { name = "chdb", version = "4.1.8", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform != 'darwin'" },
+    { name = "chdb", version = "4.2.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
+    { name = "chdb-core", version = "26.5.0", source = { registry = "https://pypi.org/simple" }, marker = "sys_platform == 'darwin'" },
     { name = "click" },
     { name = "cyvcf2" },
     { name = "duckdb" },
@@ -1494,7 +1546,9 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "chdb", specifier = ">=4.1.8" },
+    { name = "chdb", marker = "sys_platform != 'darwin'", specifier = ">=4.1.8" },
+    { name = "chdb", marker = "sys_platform == 'darwin'", specifier = "==4.2.0" },
+    { name = "chdb-core", marker = "sys_platform == 'darwin'", specifier = "==26.5.0" },
     { name = "click", specifier = ">=8.1.0" },
     { name = "cyvcf2", specifier = ">=0.31.0" },
     { name = "duckdb", specifier = ">=1.0.0,<2" },

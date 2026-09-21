@@ -6,6 +6,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- **macOS: pin chDB to a build that actually loads.** chDB's prebuilt
+  `_chdb.abi3.so` aligns its `__LINKEDIT` string table to 4 bytes in most
+  releases; macOS 26+ (Darwin 27) dyld requires 8 and refuses to load them
+  ("mis-aligned LINKEDIT string pool"), making the default backend unusable.
+  Pin `chdb==4.2.0` + `chdb-core==26.5.0` under a `sys_platform == 'darwin'`
+  marker — the one published combination whose binary is 8-byte aligned. Linux
+  is unaffected. See docs/BACKENDS.md for the diagnostic and how to lift it.
+
 ## [0.14.0]
 
 ### Added
