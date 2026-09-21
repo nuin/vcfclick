@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.0]
+
 ### Added
 - **`db stats` works on the DuckDB backend.** It previously raised "not yet
   implemented" — a dead command for every conda user, since bioconda ships the
@@ -24,6 +26,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - **`combine --atomize`** (with `--reference`) — split complex alleles into
   primitives after left-alignment, so a caller packing substitutions into one
   record converges with one that emits them separately.
+
+### Fixed
+- **Tests pick the backend from `storage.backend()`, not the environment
+  variable.** Several tests branched on `VCFCLICK_BACKEND` to choose
+  backend-specific SQL; with the variable unset and vcfclick falling back to
+  DuckDB, they sent chDB SQL to DuckDB. Tests that genuinely require chDB now
+  skip rather than fail where its prebuilt wheel cannot load.
 
 ## [0.10.0]
 
