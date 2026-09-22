@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.1]
+
 ### Fixed
 - **macOS: pin chDB to a build that actually loads.** chDB's prebuilt
   `_chdb.abi3.so` aligns its `__LINKEDIT` string table to 4 bytes in most
