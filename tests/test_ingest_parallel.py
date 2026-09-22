@@ -79,7 +79,9 @@ def test_parallel_ingest_falls_back_when_tabix_returns_empty(
     the patch has to land on the source module.
     """
     monkeypatch.setenv("VCFCLICK_DB_NAME", "par")
-    monkeypatch.setenv("VCFCLICK_BACKEND", os.environ.get("VCFCLICK_BACKEND") or _active_backend())
+    monkeypatch.setenv(
+        "VCFCLICK_BACKEND", os.environ.get("VCFCLICK_BACKEND") or _active_backend()
+    )
 
     # Both backends enforce a single live session per (process, DB).
     # Clear any session cache state leaked from earlier tests in the

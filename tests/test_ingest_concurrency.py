@@ -23,13 +23,13 @@ from pathlib import Path
 import pytest
 
 
-
 def _active_backend() -> str:
     """The backend actually in use — not just the env var, which is unset
     when vcfclick falls back (e.g. chDB missing)."""
     from storage import backend
 
     return backend()
+
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")

@@ -28,13 +28,13 @@ import subprocess
 from pathlib import Path
 
 
-
 def _active_backend() -> str:
     """The backend actually in use — not just the env var, which is unset
     when vcfclick falls back (e.g. chDB missing)."""
     from storage import backend
 
     return backend()
+
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
@@ -154,11 +154,7 @@ def test_info_extra_is_empty_when_no_unknown_fields(vcfclick_home):
     _ingest_routing(vcfclick_home)
     # Backend-portable empty-map check: chDB has `length(MAP)`, DuckDB
     # has `cardinality(MAP)`. Pick at SQL build time.
-    fn = (
-        "cardinality"
-        if _active_backend() == "duckdb"
-        else "length"
-    )
+    fn = "cardinality" if _active_backend() == "duckdb" else "length"
     rows = _tsv(
         vcfclick_home, "rt", f"SELECT {fn}(info_extra) FROM variants WHERE pos = 200"
     )
@@ -250,11 +246,7 @@ def test_dp_populates_when_FORMAT_order_changes_mid_vcf(vcfclick_home):
 
 def test_format_extra_empty_when_only_reserved_fields(vcfclick_home):
     _ingest_routing(vcfclick_home)
-    fn = (
-        "cardinality"
-        if _active_backend() == "duckdb"
-        else "length"
-    )
+    fn = "cardinality" if _active_backend() == "duckdb" else "length"
     rows = _tsv(
         vcfclick_home,
         "rt",
