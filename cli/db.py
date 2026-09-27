@@ -17,6 +17,9 @@ for _module in (
     "cli.db_stats",
     "cli.db_trio",
     "cli.db_qc",
+    "cli.db_relatedness",
+    "cli.db_gene",
+    "cli.db_export",
 ):
     importlib.import_module(_module)
 

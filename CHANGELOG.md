@@ -6,6 +6,28 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `vcfclick db export`: write an ingestion back to VCF, whole or sliced by
+  `--region` (repeatable), `--regions-bed`, `--gene`, `--samples`, `--where`,
+  `--pass-only` or `--sites-only`. `.vcf.gz` is BGZF, so `tabix` indexes it;
+  `-o -` streams to stdout. Samples without a stored call are written `0/0`
+  (`--absent-as nocall` for `./.`); `--keep-reference` ingestions keep true
+  no-calls. A header note records what the sparse store can't recover
+  (phase, PL/GL, FILTER `PASS` vs `.`). Round-trips losslessly otherwise:
+  ingest -> export -> re-ingest gives identical variants and genotypes.
+- `vcfclick db relatedness`: KING-robust pairwise kinship per ingestion —
+  duplicates, parent/child vs full siblings (by IBS0), second and third
+  degree — plus a check of every declared parent in a loaded pedigree.
+  Refuses to classify when the data covers too small a region (a single
+  gene makes unrelated haplotype-sharers look like duplicates); `--force`
+  overrides. See docs/QC.md#relatedness.
+- `vcfclick db gene NAME SYMBOL`: every variant in a gene (± `--flank`)
+  with carrier and hom-alt counts; table, JSON or TSV. Matches `chr17` and
+  `17` naming.
+- MCP tool `variants_in_gene`: the same query for MCP clients, returning
+  the SQL it ran.
+
 ## [0.14.1]
 
 ### Fixed

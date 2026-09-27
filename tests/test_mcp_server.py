@@ -46,6 +46,7 @@ EXPECTED_TOOLS = {
     "cds_regions_for_gene",
     "canonical_transcript",
     "splice_site_distance",
+    "variants_in_gene",
 }
 
 

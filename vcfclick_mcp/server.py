@@ -67,6 +67,7 @@ ingestions — catalog: (ingest_id, cohort, vcf_path, n_variants,
 ──────────────── ANNOTATION TOOLS (DuckDB, reference) ────────────
 
 position_for_gene(symbol)   → (chrom, start_pos, end_pos)
+variants_in_gene(symbol, flank=0, limit=200) → variants in the gene with carriers/hom_alt counts + the SQL (prefer this for per-gene questions)
 gene_at(chrom, pos)         → overlapping gene symbols
 clinvar_lookup(chrom, pos, ref, alt) → ClinVar significance
 gnomad_lookup(chrom, pos, ref, alt)  → gnomAD allele frequency (popmax)
@@ -227,6 +228,20 @@ def position_for_gene(symbol: str) -> dict | None:
         "end_pos": g.end_pos,
         "strand": g.strand,
     }
+
+
+@mcp.tool()
+def variants_in_gene(symbol: str, flank: int = 0, limit: int = 200) -> dict | None:
+    """Every variant in a gene (HGNC symbol, +/- flank bp) with carrier and
+    hom-alt counts per variant, plus the SQL that ran. Use this instead of
+    writing the position_for_gene + genotypes join yourself. None means the
+    gene isn't in the annotation store (`vcfclick annotations load`)."""
+    from storage.gene_query import GeneNotFound, gene_variants
+
+    try:
+        return gene_variants(get_session(), symbol, flank=flank, limit=limit)
+    except GeneNotFound:
+        return None
 
 
 @mcp.tool()
