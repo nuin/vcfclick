@@ -6,12 +6,12 @@ Run `vcfclick --help` or `vcfclick <command> --help` any time for the same infor
 
 ## Commands
 
-- **Databases** — [`db create`](#db-create) · [`db list`](#db-list) · [`db info`](#db-info) · [`db path`](#db-path) · [`db rm`](#db-rm) · [`db query`](#db-query) · [`db stats`](#db-stats) · [`db diff`](#db-diff)
+- **Databases** — [`db create`](#db-create) · [`db list`](#db-list) · [`db info`](#db-info) · [`db path`](#db-path) · [`db rm`](#db-rm) · [`db query`](#db-query) · [`db stats`](#db-stats) · [`db diff`](#db-diff) · [`db gene`](#db-gene)
 - **Ingesting variants** — [`db ingest`](#db-ingest) · [`db ingest-batch`](#db-ingest-batch) · [`merge`](#merge) · [`combine`](#combine) · [`discover`](#discover)
-- **Family / trio analysis** — [`db ped`](#db-ped) · [`db trio`](#db-trio) · [`db qc`](#db-qc)
+- **Family / trio analysis** — [`db ped`](#db-ped) · [`db trio`](#db-trio) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
 - **Benchmarking** — [`benchmark`](#benchmark) · [`benchmark-cohort`](#benchmark-cohort)
 - **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad)
-- **Export & sharing** — [`db dump`](#db-dump) · [`db ingest-parquet`](#db-ingest-parquet) · [`db push`](#db-push) · [`db pull`](#db-pull)
+- **Export & sharing** — [`db export`](#db-export) · [`db dump`](#db-dump) · [`db ingest-parquet`](#db-ingest-parquet) · [`db push`](#db-push) · [`db pull`](#db-pull)
 - **Interactive UIs** — [`tui`](#tui) · [`web`](#web)
 
 ## Databases
@@ -193,6 +193,32 @@ Options:
   --format TEXT    chDB output format (PrettyCompact, JSON, CSV, TSV, ...).
                    [default: PrettyCompact]
   --help           Show this message and exit.
+```
+
+</details>
+
+### db gene
+
+Every variant in a gene (HGNC symbol), with how many samples carry it and how many are homozygous. Needs gene coordinates loaded once with [`annotations load`](#annotations-load); `chr17` and `17` naming both match.
+
+```bash
+vcfclick db gene brca_cohort BRCA1
+vcfclick db gene brca_cohort BRCA1 --flank 5000 --format tsv > brca1_variants.tsv
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db gene [OPTIONS] NAME SYMBOL
+
+  Variants in a gene (by HGNC symbol), with carrier and hom-alt counts.
+
+Options:
+  --flank INTEGER            Extend the gene by this many bp on each side.
+                             [default: 0]
+  --limit INTEGER            At most this many variants.  [default: 500]
+  --format [table|json|tsv]  [default: table]
+  --help                     Show this message and exit.
 ```
 
 </details>
@@ -398,6 +424,38 @@ Usage: vcfclick db qc [OPTIONS] NAME
   Per-sample QC: het/hom ratio, Ti/Tv, and a chrX-het sex check.
 
 Options:
+  --format [table|json]  [default: table]
+  --help                 Show this message and exit.
+```
+
+</details>
+
+### db relatedness
+
+Pairwise kinship between the samples of an ingestion (KING-robust): finds duplicates, parent/child and sibling pairs, and checks a loaded pedigree against the genotypes. Needs genome-wide data: on a single gene or small region it warns instead of classifying, because unrelated people sharing a haplotype would look related. See [QC.md](QC.md#relatedness).
+
+```bash
+vcfclick db relatedness cohort
+vcfclick db relatedness trio --all --format json
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db relatedness [OPTIONS] NAME
+
+  Pairwise kinship (KING-robust): duplicates, relatives, pedigree errors.
+
+Options:
+  --ingest-id TEXT       Only this ingestion (default: each ingestion
+                         separately).
+  --min-kinship FLOAT    Report pairs at or above this kinship (third degree
+                         by default).  [default: 0.0442]
+  --all                  Report every pair, including unrelated ones.
+  --max-sites INTEGER    Thin to at most this many SNVs (evenly spread) to
+                         bound memory.  [default: 200000]
+  --force                Classify pairs even when the data covers too small a
+                         region.
   --format [table|json]  [default: table]
   --help                 Show this message and exit.
 ```
@@ -610,6 +668,48 @@ Options:
 ## Export & sharing
 
 Move databases between machines and backends.
+
+### db export
+
+Write an ingestion back to VCF, whole or sliced by region, BED, gene, samples or a SQL condition. `.vcf.gz` output is BGZF, so `tabix -p vcf` indexes it. Genotypes are stored sparsely, so samples with no stored call are written `0/0` by default (`--absent-as nocall` for `./.`); ingestions made with `--keep-reference` keep true no-calls. Phase, PL/GL, and the difference between FILTER `PASS` and `.` are not recoverable and the header says so.
+
+```bash
+vcfclick db export cohort -o cohort.vcf.gz
+vcfclick db export cohort -o brca1.vcf.gz --gene BRCA1 --samples S1,S2 --pass-only
+vcfclick db export cohort -o - --where "info_AF < 0.01" --sites-only | bcftools view -H | wc -l
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db export [OPTIONS] NAME
+
+  Export an ingestion to VCF, optionally sliced by region, gene, samples or
+  SQL.
+
+Options:
+  -o, --out TEXT            Output path: .vcf.gz (BGZF, tabix-indexable),
+                            .vcf, or - for stdout.  [required]
+  --ingest-id TEXT          Ingestion to export (required when the database
+                            has several).
+  --samples TEXT            Comma-separated sample IDs to keep.
+  --region TEXT             chr1, chr1:1000 or chr1:1000-2000 (repeatable).
+  --regions-bed FILE        BED file of regions.
+  --gene TEXT               Only variants in this gene (needs `vcfclick
+                            annotations load`).
+  --flank INTEGER           Extend --gene by this many bp each side.
+                            [default: 0]
+  --where TEXT              Extra SQL condition on the variants table, e.g.
+                            "info_AF < 0.01".
+  --pass-only               Only variants whose FILTER is PASS or unset.
+  --sites-only              No genotypes: write the first eight columns only.
+  --absent-as [ref|nocall]  How to write samples with no stored genotype
+                            (ignored for --keep-reference ingestions, where
+                            absent always means no-call).  [default: ref]
+  --help                    Show this message and exit.
+```
+
+</details>
 
 ### db dump
 

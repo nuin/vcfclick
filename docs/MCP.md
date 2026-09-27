@@ -22,6 +22,7 @@ The server exposes:
 | `get_schema` | Return the schema and query rules given to the client. |
 | `run_sql` | Execute SQL against the active vcfclick database. |
 | `position_for_gene` | Resolve an HGNC gene symbol to GRCh38 coordinates. |
+| `variants_in_gene` | Every variant in a gene (± flank) with carrier and hom-alt counts, plus the SQL that ran. |
 | `gene_at` | Return genes overlapping one position. |
 | `clinvar_lookup` | Return ClinVar significance for one allele. |
 | `gnomad_lookup` | Return the gnomAD allele frequency (and popmax) for one allele. |
@@ -175,11 +176,10 @@ database, ask the MCP client:
 How many samples have a non-reference call in BRCA1? Show the SQL.
 ```
 
-The expected plan is:
-
-1. call `position_for_gene("BRCA1")`;
-2. query `genotypes` in that coordinate range;
-3. return both the SQL and the result.
+The expected plan is one call, `variants_in_gene("BRCA1")`, which returns
+each variant with its carrier count and the SQL it ran. For questions it
+doesn't cover, the client falls back to `position_for_gene("BRCA1")` and
+its own query against `genotypes` in that range.
 
 ## Troubleshooting
 
