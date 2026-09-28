@@ -169,3 +169,17 @@ the 4 confident sites and excludes the 3 sampled no-call sites, and
 The MCP server teaches an LLM the pedigree table, the inheritance
 models, and the de-novo sparse caveat, so you can ask trio questions in
 English and get the SQL back to inspect. See [MCP](MCP.md).
+
+## Machine-readable output
+
+`vcfclick db trio NAME --proband ID --format json` reports every model in one
+document: per model the candidate count, whether it is blocked by a missing
+`--keep-reference` ingest, and the candidates with their trio genotypes,
+population AF and, when those annotations are loaded, gene, gnomAD popmax and
+ClinVar significance. Compound hets come grouped by gene with the paternal and
+maternal hits. `--limit` caps candidates per model (default 1000). The desktop
+apps use this.
+
+A trio can be declared without a PED file:
+`vcfclick db ped NAME --proband HG002 --father HG003 --mother HG004`.
+

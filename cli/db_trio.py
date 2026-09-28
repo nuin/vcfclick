@@ -29,6 +29,7 @@ allele balance) and population-AF rarity:
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import NamedTuple
 
 import click
@@ -72,20 +73,49 @@ def _sole_ingest_id(name: str) -> str | None:
 
 @db.command(name="ped")
 @click.argument("name")
-@click.argument("ped_path", type=click.Path(exists=True, dir_okay=False))
+@click.argument(
+    "ped_path", required=False, type=click.Path(exists=True, dir_okay=False)
+)
 @click.option(
     "--ingest-id",
     default=None,
     help="Ingest_id the pedigree's samples belong to. Inferred when the "
     "database has exactly one ingestion.",
 )
-def db_ped(name: str, ped_path: str, ingest_id: str | None) -> None:
-    """Load family relationships from a PED/FAM file into NAME.
+@click.option(
+    "--proband",
+    default=None,
+    help="Without a PED file: the affected child's sample id.",
+)
+@click.option(
+    "--father", default=None, help="Without a PED file: the father's sample id."
+)
+@click.option(
+    "--mother", default=None, help="Without a PED file: the mother's sample id."
+)
+@click.option(
+    "--proband-sex",
+    type=click.Choice(["male", "female", "unknown"]),
+    default="unknown",
+    show_default=True,
+    help="Without a PED file: the proband's sex.",
+)
+def db_ped(
+    name: str,
+    ped_path: str | None,
+    ingest_id: str | None,
+    proband: str | None,
+    father: str | None,
+    mother: str | None,
+    proband_sex: str,
+) -> None:
+    """Load family relationships into NAME, from a PED/FAM file or as a
+    trio given by sample ids (--proband/--father/--mother).
 
-    The PED's individual ids must match sample ids already ingested
-    under the target ingest_id (v1 assumes a joint-called trio, so all
-    members share one ingest_id). Re-loading replaces the prior
-    pedigree for that ingest_id.
+    The individual ids must match sample ids already ingested under the
+    target ingest_id (v1 assumes a joint-called trio, so all members share
+    one ingest_id). Re-loading replaces the prior pedigree for that
+    ingest_id.
     """
     from storage import db_path
 
@@ -104,10 +134,39 @@ def db_ped(name: str, ped_path: str, ingest_id: str | None) -> None:
 
     from ingest.pedigree import load_pedigree
 
+    names = {"--proband": proband, "--father": father, "--mother": mother}
+    if ped_path is None:
+        missing = [k for k, v in names.items() if not v]
+        if missing:
+            raise click.ClickException(
+                "give a PED file, or all of --proband, --father and --mother "
+                f"(missing: {', '.join(missing)})"
+            )
+    elif any(names.values()):
+        raise click.ClickException(
+            "give either a PED file or --proband/--father/--mother, not both"
+        )
+
+    import tempfile
+
+    tmp = None
     try:
+        if ped_path is None:
+            sex = {"male": "1", "female": "2", "unknown": "0"}[proband_sex]
+            tmp = tempfile.NamedTemporaryFile("w", suffix=".ped", delete=False)
+            tmp.write(
+                f"fam1\t{father}\t0\t0\t1\t1\n"
+                f"fam1\t{mother}\t0\t0\t2\t1\n"
+                f"fam1\t{proband}\t{father}\t{mother}\t{sex}\t2\n"
+            )
+            tmp.close()
+            ped_path = tmp.name
         n = load_pedigree(ingest_id, ped_path)
     except ValueError as e:
         raise click.ClickException(str(e)) from e
+    finally:
+        if tmp is not None:
+            Path(tmp.name).unlink(missing_ok=True)
     click.echo(f"loaded pedigree: {n} individuals under ingest_id={ingest_id}")
 
 
@@ -308,6 +367,22 @@ def _gnomad_keep(chrom: str, pos, ref: str, alt: str, max_af: float) -> bool:
     "(needs `vcfclick annotations load-gnomad`). Variants absent from the "
     "loaded gnomAD slice are kept as rare.",
 )
+@click.option(
+    "--format",
+    "out_format",
+    type=click.Choice(["text", "json"]),
+    default="text",
+    show_default=True,
+    help="json: every model's count and candidates (with gene, gnomAD and "
+    "ClinVar when loaded) in one document.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=1000,
+    show_default=True,
+    help="json: at most this many candidates per model.",
+)
 def db_trio(
     name: str,
     proband: str,
@@ -318,6 +393,8 @@ def db_trio(
     min_ab: float,
     max_ab: float,
     gnomad_max_af: float | None,
+    out_format: str,
+    limit: int,
 ) -> None:
     """Report candidate variants under Mendelian inheritance models for
     a trio, with genotype quality gates and an AF rarity filter."""
@@ -364,6 +441,24 @@ def db_trio(
         rows = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
         return _comphet_genes(_gnomad(rows))
 
+    if out_format == "json":
+        click.echo(
+            json.dumps(
+                _trio_json(
+                    trio,
+                    gates,
+                    category,
+                    has_ref,
+                    gnomad_max_af,
+                    limit,
+                    detail_rows,
+                    comphet_genes,
+                ),
+                indent=2,
+            )
+        )
+        return
+
     click.echo(f"trio: proband={proband} father={father} mother={mother}")
     if not has_ref and (category in needs_ref or category == "all"):
         click.echo(
@@ -406,3 +501,121 @@ def db_trio(
             f"  {chrom}:{pos} {ref}>{alt}  proband_gt={pgt} "
             f"father_gt={fgt} mother_gt={mgt}  AF={af_s}"
         )
+
+
+# ─────────────────────── JSON (for the desktop apps) ───────────────────────
+
+_NEEDS_REF = {"denovo", "dominant", "comphet"}
+
+
+def _annotation_status() -> dict:
+    """Which annotation sources hold data (each lookup is skipped if not)."""
+    try:
+        from annotations.db import get_connection
+
+        conn = get_connection()
+        have = {}
+        for key, table in (
+            ("genes", "refseq_genes"),
+            ("clinvar", "clinvar_variants"),
+            ("gnomad", "gnomad_af"),
+        ):
+            try:
+                have[key] = (
+                    conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] > 0
+                )
+            except Exception:  # noqa: BLE001 - table absent in older stores
+                have[key] = False
+        return have
+    except Exception:  # noqa: BLE001 - no annotation store at all
+        return {"genes": False, "clinvar": False, "gnomad": False}
+
+
+def _enrich(chrom: str, pos, ref: str, alt: str, have: dict) -> dict:
+    from annotations import clinvar_lookup, gene_at, gnomad_af
+
+    out = {"genes": [], "gnomad_popmax": None, "clinvar": None}
+    if have["genes"]:
+        out["genes"] = [g.gene_symbol for g in gene_at(chrom, int(pos))]
+    if have["gnomad"]:
+        g = gnomad_af(chrom, int(pos), ref, alt)
+        out["gnomad_popmax"] = None if g is None else g.popmax
+    if have["clinvar"]:
+        c = clinvar_lookup(chrom, int(pos), ref, alt)
+        out["clinvar"] = None if c is None else c.clin_sig
+    return out
+
+
+def _num(v):
+    if v is None:
+        return None
+    f = float(v)
+    return int(f) if f.is_integer() else f
+
+
+def _trio_json(
+    trio, gates, category, has_ref, gnomad_max_af, limit, detail_rows, comphet_genes
+) -> dict:
+    have = _annotation_status()
+
+    def candidate(chrom, pos, ref, alt, pgt, fgt, mgt, af) -> dict:
+        return {
+            "chrom": chrom,
+            "pos": int(pos),
+            "ref": ref,
+            "alt": alt,
+            "proband_gt": int(pgt),
+            "father_gt": int(fgt),
+            "mother_gt": int(mgt),
+            "af": _num(af),
+            **_enrich(chrom, pos, ref, alt, have),
+        }
+
+    models = {}
+    for cat in ("denovo", "recessive", "dominant"):
+        if category not in ("all", cat):
+            continue
+        rows = detail_rows(cat)
+        models[cat] = {
+            "count": len(rows),
+            "blocked": cat in _NEEDS_REF and not has_ref,
+            "truncated": len(rows) > limit,
+            "candidates": [candidate(*r) for r in rows[:limit]],
+        }
+    if category in ("all", "comphet"):
+        genes = comphet_genes()
+        entries = []
+        for sym in sorted(genes)[:limit]:
+            entry = {"gene": sym}
+            for origin in ("paternal", "maternal"):
+                entry[origin] = [
+                    {"chrom": c, "pos": int(p), "ref": r, "alt": a, "af": _num(af)}
+                    for c, p, r, a, af in genes[sym][origin]
+                ]
+            entries.append(entry)
+        models["comphet"] = {
+            "count": len(genes),
+            "blocked": not has_ref,
+            "needs_genes": not have["genes"],
+            "truncated": len(genes) > limit,
+            "genes": entries,
+        }
+    return {
+        "trio": {
+            "ingest_id": trio.ingest_id,
+            "proband": trio.proband,
+            "father": trio.father,
+            "mother": trio.mother,
+        },
+        "keep_reference": has_ref,
+        "gates": {
+            "min_gq": gates.min_gq,
+            "min_dp": gates.min_dp,
+            "max_af": gates.max_af,
+            "min_ab": gates.min_ab,
+            "max_ab": gates.max_ab,
+            "gnomad_max_af": gnomad_max_af,
+        },
+        "annotations": have,
+        "models": models,
+    }

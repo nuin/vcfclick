@@ -355,18 +355,27 @@ vcfclick db ped trio fam.ped
 <details><summary>options</summary>
 
 ```
-Usage: vcfclick db ped [OPTIONS] NAME PED_PATH
+Usage: vcfclick db ped [OPTIONS] NAME [PED_PATH]
 
-  Load family relationships from a PED/FAM file into NAME.
+  Load family relationships into NAME, from a PED/FAM file or as a trio given
+  by sample ids (--proband/--father/--mother).
 
-  The PED's individual ids must match sample ids already ingested under the
-  target ingest_id (v1 assumes a joint-called trio, so all members share one
+  The individual ids must match sample ids already ingested under the target
+  ingest_id (v1 assumes a joint-called trio, so all members share one
   ingest_id). Re-loading replaces the prior pedigree for that ingest_id.
 
 Options:
-  --ingest-id TEXT  Ingest_id the pedigree's samples belong to. Inferred when
-                    the database has exactly one ingestion.
-  --help            Show this message and exit.
+  --ingest-id TEXT                Ingest_id the pedigree's samples belong to.
+                                  Inferred when the database has exactly one
+                                  ingestion.
+  --proband TEXT                  Without a PED file: the affected child's
+                                  sample id.
+  --father TEXT                   Without a PED file: the father's sample id.
+  --mother TEXT                   Without a PED file: the mother's sample id.
+  --proband-sex [male|female|unknown]
+                                  Without a PED file: the proband's sex.
+                                  [default: unknown]
+  --help                          Show this message and exit.
 ```
 
 </details>
@@ -403,6 +412,11 @@ Options:
                                   annotations load-gnomad`). Variants absent
                                   from the loaded gnomAD slice are kept as
                                   rare.
+  --format [text|json]            json: every model's count and candidates
+                                  (with gene, gnomAD and ClinVar when loaded)
+                                  in one document.  [default: text]
+  --limit INTEGER                 json: at most this many candidates per
+                                  model.  [default: 1000]
   --help                          Show this message and exit.
 ```
 
