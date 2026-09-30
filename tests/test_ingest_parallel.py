@@ -21,6 +21,7 @@ fixed:
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -62,77 +63,66 @@ def _scalar(home: Path, db: str, sql: str) -> str:
     return _vc(home, "db", "query", db, sql + " FORMAT TabSeparated").stdout.strip()
 
 
-def test_parallel_ingest_falls_back_when_tabix_returns_empty(
-    vcfclick_home, monkeypatch
-):
+_EMPTY_SPLIT_INGEST = """
+import json
+import sys
+
+import ingest._tabix as tabix_mod
+from ingest.parallel import ingest_parallel
+from storage import apply_schema, db_path, get_session
+
+db_path("par").mkdir(parents=True, exist_ok=True)
+apply_schema()
+tabix_mod.split_via_tbi = lambda *a, **k: []
+ingest_parallel(sys.argv[1], cohort="A", ingest_id="t1", workers=2)
+
+sess = get_session("par")
+
+
+def scalar(sql):
+    raw = sess.query(sql, "CSV").bytes().decode().strip()
+    return [ln for ln in raw.splitlines() if ln.strip()][-1]
+
+
+print("COUNTS " + json.dumps({
+    "variants": scalar("SELECT count(*) FROM variants"),
+    "genotypes": scalar("SELECT count(*) FROM genotypes"),
+    "samples": scalar("SELECT count(DISTINCT sample_id) FROM samples"),
+}))
+"""
+
+
+def test_parallel_ingest_falls_back_when_tabix_returns_empty(vcfclick_home, run_python):
     """Lock the empty-list fallback specifically. Without forcing the
     tabix splitter to return [], we can't reliably observe the
     regression — after the variant_density fix, the tabix path on the
     tiny fixture returns a non-empty list. To prove the `if not regions`
-    branch is the load-bearing change, monkeypatch split_via_tbi to
-    return [] and require the ingest to still succeed via the cyvcf2
-    pre-pass fallback.
+    branch is the load-bearing change, patch split_via_tbi to return []
+    and require the ingest to still succeed via the cyvcf2 pre-pass
+    fallback.
 
-    Done in-process (not via the CLI subprocess) because monkeypatches
-    do not cross the process boundary. `ingest_parallel()` lazy-imports
-    `split_via_tbi` from `ingest._tabix` inside the function body, so
-    the patch has to land on the source module.
+    The patch has to live in the process that ingests (`ingest_parallel()`
+    lazy-imports `split_via_tbi` from `ingest._tabix`, and the CLI can't
+    be patched from here), so patch, ingest and counts all run in one
+    fresh interpreter rather than in the pytest process: chDB allows a
+    single embedded server per process, and an in-process run collides
+    with whichever test opened one first. The counts are read through
+    the ingesting session because both backends are one-writer-per-DB.
+
+    If the fallback is broken (regions == [] is not None-checked), the
+    subprocess either raises during the bulk import ("no files match the
+    pattern variants_*.parquet") or lands zero rows.
     """
-    monkeypatch.setenv("VCFCLICK_DB_NAME", "par")
-    monkeypatch.setenv(
-        "VCFCLICK_BACKEND", os.environ.get("VCFCLICK_BACKEND") or _active_backend()
-    )
-
-    # Both backends enforce a single live session per (process, DB).
-    # Clear any session cache state leaked from earlier tests in the
-    # same pytest process so the chdb EmbeddedServer can re-init under
-    # the tmp_path VCFCLICK_HOME this test was handed.
-    import storage.db as sdb
-
-    sdb._sessions.clear()
-
-    from storage import apply_schema, db_path, get_session
-
-    db_path("par").mkdir(parents=True, exist_ok=True)
-    apply_schema()
-
-    import ingest._tabix as tabix_mod
-    from ingest.parallel import ingest_parallel
-
-    monkeypatch.setattr(tabix_mod, "split_via_tbi", lambda *a, **k: [])
-
-    # If the fallback is broken (regions == [] is not None-checked),
-    # this call surfaces the failure either as an exception during the
-    # bulk-import phase ("no files match the pattern variants_*.parquet")
-    # or as zero rows landed when the workers loop got no work to do.
-    # Either way the assertions below catch it.
-    ingest_parallel(
+    out = run_python(
+        vcfclick_home,
+        _EMPTY_SPLIT_INGEST,
         str(TINY_VCF),
-        cohort="A",
-        ingest_id="t1",
-        workers=2,
+        VCFCLICK_DB_NAME="par",
+        VCFCLICK_BACKEND=os.environ.get("VCFCLICK_BACKEND") or _active_backend(),
     )
-
-    # Query through the live in-process session — both backends enforce
-    # one-writer-per-DB-file, so spawning a CLI subprocess to query
-    # would collide with this process's session.
-    sess = get_session("par")
-    raw = sess.query("SELECT count(*) FROM variants", "CSV").bytes().decode().strip()
-    last = [ln for ln in raw.splitlines() if ln.strip()]
-    assert last and last[-1] == "5", f"variants count {last!r}"
-
-    raw = sess.query("SELECT count(*) FROM genotypes", "CSV").bytes().decode().strip()
-    last = [ln for ln in raw.splitlines() if ln.strip()]
-    assert last and last[-1] == "10", f"genotypes count {last!r}"
-
-    raw = (
-        sess.query("SELECT count(DISTINCT sample_id) FROM samples", "CSV")
-        .bytes()
-        .decode()
-        .strip()
-    )
-    last = [ln for ln in raw.splitlines() if ln.strip()]
-    assert last and last[-1] == "3", f"samples count {last!r}"
+    line = [ln for ln in out.splitlines() if ln.startswith("COUNTS ")][-1]
+    counts = json.loads(line.removeprefix("COUNTS "))
+    assert counts == {"variants": "5", "genotypes": "10", "samples": "3"}, counts
 
 
 def test_parallel_ingest_lands_same_rows_as_serial(vcfclick_home):

@@ -104,29 +104,42 @@ def test_sql_quote_str_handles_backslash_escape_bypass():
     )
 
 
+_QUOTE_ROUNDTRIP = """
+import json
+import sys
+
+from storage import get_session, sql_quote_str
+
+sess = get_session("qs")
+out = []
+for p in json.loads(sys.argv[1]):
+    raw = sess.query(f"SELECT {sql_quote_str(p)} AS s FORMAT JSONCompact")
+    out.append(json.loads(raw.bytes().decode())["data"])
+print("ROUNDTRIP " + json.dumps(out))
+"""
+
+
 @pytest.mark.skipif(
     _active_backend() == "duckdb",
     reason="explicitly exercises chDB quote-handling via JSONCompact roundtrip",
 )
-def test_sql_quote_str_roundtrips_through_chdb(vcfclick_home, monkeypatch):
+def test_sql_quote_str_roundtrips_through_chdb(vcfclick_home, run_python):
     """End-to-end check: chDB must accept the quoted form and return
     a string of the right length. Uses FORMAT JSONCompact so the
     decoder isn't fighting TSV's `\\'` escaping.
+
+    Runs in a fresh interpreter: a chDB session opened inside the pytest
+    process would stay bound to this test's database and break the next
+    test that opens a different one.
     """
     import json
 
-    monkeypatch.setenv("VCFCLICK_HOME", str(vcfclick_home))
-    monkeypatch.setenv("VCFCLICK_DB_NAME", "qs")
     subprocess.run(
         [VCFCLICK_BIN, "db", "create", "qs"],
-        env={**os.environ},
+        env={**os.environ, "VCFCLICK_HOME": str(vcfclick_home)},
         check=True,
         capture_output=True,
     )
-
-    from storage import get_session, sql_quote_str
-
-    sess = get_session("qs")
     payloads = [
         "plain",
         "o'brien",
@@ -134,16 +147,15 @@ def test_sql_quote_str_roundtrips_through_chdb(vcfclick_home, monkeypatch):
         "embedded \\ chars",
         "\\'; DROP TABLE variants; --",
     ]
-    for p in payloads:
-        raw = (
-            sess.query(f"SELECT {sql_quote_str(p)} AS s FORMAT JSONCompact")
-            .bytes()
-            .decode()
-        )
-        parsed = json.loads(raw)
-        assert parsed["data"] == [[p]], (
-            f"chDB round-trip diverged for {p!r}: got {parsed['data']!r}"
-        )
+    out = run_python(
+        vcfclick_home,
+        _QUOTE_ROUNDTRIP,
+        json.dumps(payloads),
+        VCFCLICK_DB_NAME="qs",
+    )
+    line = [ln for ln in out.splitlines() if ln.startswith("ROUNDTRIP ")][-1]
+    got = json.loads(line.removeprefix("ROUNDTRIP "))
+    assert got == [[[p]] for p in payloads], f"chDB round-trip diverged: {got!r}"
 
 
 # ─────────────────────── lazy DB_ROOT / VCFCLICK_HOME ───────────────────────
