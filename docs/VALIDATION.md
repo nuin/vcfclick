@@ -161,7 +161,8 @@ uv run python scripts/compare_somalier.py \
 ```
 
 The script prints both kinships and relationship calls side by side and
-exits 1 if any compared pair or sample disagrees. Expect small kinship
+exits 1 if any compared pair or sample disagrees, or if somalier finds
+relatives in a pair vcfclick did not report. Expect small kinship
 differences (somalier uses ~17k curated common sites, vcfclick every
 biallelic SNV in the ingestion, thinned to `--max-sites`); the
 relationship class and sex should match on genome-wide data. The script's

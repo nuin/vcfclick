@@ -125,3 +125,23 @@ def test_insufficient_data_is_not_a_disagreement(files):
     rel[0]["pairs"][2] = _pair("HG003", "HG004", None, "insufficient-data", None, 0)
     files["rel"].write_text(json.dumps(rel))
     assert cs.main(_argv(files)) == 0
+
+
+def test_relatives_vcfclick_did_not_report_are_a_disagreement(files, capsys):
+    # vcfclick output without --all: only the related pairs are listed.
+    # somalier also sees HG003/HG004 as first-degree relatives.
+    rel = json.loads(files["rel"].read_text())
+    del rel[0]["pairs"][2]
+    files["rel"].write_text(json.dumps(rel))
+    assert cs.main(_argv(files)) == 0  # somalier: unrelated → nothing to flag
+
+    files["pairs"].write_text(
+        PAIRS_HDR
+        + "HG003\tHG002\t0.49\t0\t500\t1000\t-1\n"
+        + "HG002\tHG004\t0.51\t1\t500\t1000\t-1\n"
+        + "HG003\tHG004\t0.50\t30\t400\t1000\t-1\n"
+    )
+    assert cs.main(_argv(files)) == 1
+    assert "HG003/HG004: somalier full-siblings, not reported by vcfclick" in (
+        capsys.readouterr().err
+    )

@@ -18,7 +18,12 @@ somalier's X_het / (X_het + X_hom_alt) with `cli.db_qc._infer_sex`, so
 the two sides differ only in the markers, not the decision rules.
 
 Exit status is 1 when any pair's relationship or any sample's sex
-disagrees, so the script can gate a validation run.
+disagrees, or somalier finds relatives in a pair vcfclick did not report,
+so the script can gate a validation run.
+
+The somalier column names used here (`sample_a`, `sample_b`,
+`relatedness`, `ibs0`, `n`; `sample_id`, `X_het`, `X_hom_alt`) and the
+2 x kinship scaling were checked against somalier's relate.nim.
 
 Usage:
     uv run python scripts/compare_somalier.py \\
@@ -111,6 +116,19 @@ def compare(args: argparse.Namespace) -> list[str]:
             f"{k[0]:<16}{k[1]:<16}{vk:>8}{b['kinship']:>8.3f}  "
             f"{a['relationship']} / {b['relationship']}{flag}"
         )
+
+    # `db relatedness` without --all lists related pairs only, so a pair it
+    # omits is one it calls unrelated. somalier finding relatives there is a
+    # disagreement, not a pair to skip.
+    for k in sorted(set(so) - set(vc)):
+        if so[k]["relationship"] not in ("unrelated", "insufficient-data"):
+            problems.append(
+                f"{k[0]}/{k[1]}: somalier {so[k]['relationship']}, not reported by vcfclick"
+            )
+            print(
+                f"{k[0]:<16}{k[1]:<16}{'-':>8}{so[k]['kinship']:>8.3f}  "
+                f"(none) / {so[k]['relationship']}  <-- differs"
+            )
 
     if args.vcfclick_qc and args.somalier_samples:
         vs = vcfclick_sex(args.vcfclick_qc)
