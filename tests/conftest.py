@@ -7,6 +7,9 @@ file under tests/fixtures/ — 5 variants, 3 samples, bgzip+tabix indexed.
 
 from __future__ import annotations
 
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -27,6 +30,61 @@ def vcfclick_home(tmp_path, monkeypatch) -> Path:
     monkeypatch.setenv("VCFCLICK_HOME", str(home))
     monkeypatch.delenv("VCFCLICK_DB_NAME", raising=False)
     return home
+
+
+@pytest.fixture(autouse=True)
+def _no_chdb_session_in_pytest_process():
+    """Fail the test that opens a chDB session in the pytest process.
+
+    chDB keeps one embedded server per process, bound to the first path
+    it opened, so a session left behind here makes a later, unrelated
+    test fail with "EmbeddedServer already initialized with path ...".
+    Use the `run_python` fixture or the CLI instead.
+    """
+    yield
+    sdb = sys.modules.get("storage.db")
+    if sdb is None:
+        return
+    leaked = [k for k in sdb._sessions if k.startswith("chdb::")]
+    for k in leaked:
+        session = sdb._sessions.pop(k)
+        if hasattr(session, "close"):
+            session.close()
+    assert not leaked, (
+        f"chDB session(s) opened inside the pytest process: {leaked}. "
+        "Run that work in a subprocess (the run_python fixture or the CLI)."
+    )
+
+
+def _run_python(home: Path, code: str, *args: str, **env: str) -> str:
+    """Run `code` (argv = `args`) in a fresh interpreter against `home`;
+    return its stdout.
+
+    chDB allows one embedded server per process, bound to the first path it
+    opens. A test that opens a chDB session inside the pytest process either
+    inherits another test's server or leaves its own behind, so tests that
+    need the storage layer in-process (to monkeypatch it, say) do that work
+    in a subprocess instead.
+    """
+    full = {**os.environ, "VCFCLICK_HOME": str(home), **env}
+    r = subprocess.run(
+        [sys.executable, "-c", code, *args],
+        cwd=Path(__file__).resolve().parent.parent,
+        env=full,
+        capture_output=True,
+        text=True,
+    )
+    assert r.returncode == 0, (
+        f"python subprocess failed (rc={r.returncode}):\n"
+        f"STDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
+    )
+    return r.stdout
+
+
+@pytest.fixture
+def run_python():
+    """`run_python(home, code, *args, **env) -> stdout`, in a subprocess."""
+    return _run_python
 
 
 @pytest.fixture
