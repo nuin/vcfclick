@@ -10,6 +10,8 @@ ingests see the same truth:
   U1        unrelated founder
   U2        unrelated founder with ~3% no-calls (./.)
 
+plus three planted de novo sites in C1 (and D) at the end of chr1.
+
 related.ped declares F/M as parents of C1, C2 -- and, deliberately wrongly,
 of U1 (a pedigree error the relatedness check must flag).
 
@@ -60,6 +62,13 @@ for i in range(N_SITES):
         f"chr1\t{pos}\t.\t{ref}\t{alt}\t50\tPASS\t.\tGT\t"
         + "\t".join(gt(c) for c in calls)
     )
+
+# Three planted de novo sites: C1 (and its duplicate D) het, both parents 0/0.
+# Everything above is Mendelian, so these are the only de novo candidates.
+for k, pos in enumerate((151_000_000, 151_500_000, 152_000_000)):
+    ref, alt = ("A", "G") if k % 2 == 0 else ("C", "T")
+    calls = ["0/0", "0/0", "0/1", "0/0", "0/1", "0/0", "0/0"]
+    lines.append(f"chr1\t{pos}\t.\t{ref}\t{alt}\t50\tPASS\t.\tGT\t" + "\t".join(calls))
 
 (HERE / "related.vcf").write_text("\n".join(lines) + "\n")
 (HERE / "related.ped").write_text(

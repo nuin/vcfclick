@@ -163,7 +163,7 @@ def test_keep_reference_mode_excludes_no_calls(vcfclick_home):
     full = _pair(res, "F", "M")["n_sites"]
     with_nocalls = _pair(res, "U2", "M")["n_sites"]
     assert with_nocalls < full
-    assert full == 3000
+    assert full == 3003  # 3000 Mendelian sites + 3 planted de novo
 
 
 def test_table_output_and_missing_db(vcfclick_home):

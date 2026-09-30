@@ -27,6 +27,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `17` naming.
 - MCP tool `variants_in_gene`: the same query for MCP clients, returning
   the SQL it ran.
+- `vcfclick db trio --format json`: every model's count, blocked status and
+  candidates (with gene, gnomAD popmax and ClinVar when loaded; comphet
+  grouped by gene) in one document; `--limit` per model.
+- `vcfclick db ped NAME --proband C --father F --mother M`: declare a trio
+  without writing a PED file.
 
 ## [0.14.1]
 
