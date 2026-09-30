@@ -32,6 +32,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   grouped by gene) in one document; `--limit` per model.
 - `vcfclick db ped NAME --proband C --father F --mother M`: declare a trio
   without writing a PED file.
+- `scripts/compare_somalier.py` and a documented procedure
+  (docs/VALIDATION.md) to cross-check `db relatedness` and the `db qc` sex
+  call against somalier, using vcfclick's own thresholds on both sides.
+  Optional; not run in CI.
 
 ### Changed
 

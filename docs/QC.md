@@ -66,6 +66,9 @@ Kinship is computed with dense matrix products, one ingestion at a time,
 and SNVs are thinned evenly to `--max-sites` (default 200,000) to bound
 memory. Cohorts above 20,000 samples are refused.
 
+To cross-check relatedness and the sex call against somalier, see
+[Validation](VALIDATION.md#relatedness-and-sex-cross-check-with-somalier-optional).
+
 ## What it does not report
 
 The genotypes table is **sparse** — only non-reference calls are stored,
