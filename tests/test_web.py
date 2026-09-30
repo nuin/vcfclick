@@ -22,7 +22,8 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from vcfclick_web.app import _is_read_only, app  # noqa: E402
+from storage.sql_guard import is_read_only  # noqa: E402
+from vcfclick_web.app import app  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
@@ -79,7 +80,7 @@ def test_query_rejects_writes():
     ],
 )
 def test_guard_blocks_writes_and_bypasses(sql):
-    assert _is_read_only(sql) is False
+    assert is_read_only(sql) is False
 
 
 @pytest.mark.parametrize(
@@ -98,7 +99,7 @@ def test_guard_blocks_writes_and_bypasses(sql):
     ],
 )
 def test_guard_allows_reads(sql):
-    assert _is_read_only(sql) is True
+    assert is_read_only(sql) is True
 
 
 def test_combine_endpoint_prioritizes_and_annotates_set():

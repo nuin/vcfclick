@@ -28,8 +28,9 @@ Stop the server with `Ctrl-C`.
 
 - **Schema sidebar** — the cohort's tables and columns (from the locked
   Arrow schemas), click to expand.
-- **SQL** — write a query, run it, see the result table. Read-only:
-  `INSERT`/`UPDATE`/`DELETE`/`DROP`/`ALTER`/`CREATE` are rejected.
+- **SQL** — write a query, run it, see the result table. Read-only: the
+  query is parsed and only a single `SELECT`/`WITH`/`SHOW`/`DESCRIBE`/
+  `EXPLAIN` statement with no write anywhere in it is run.
 - **Ask** — type a question in English; the server uses the same schema
   briefing the MCP server gives an LLM to generate SQL, shows you the
   SQL, and runs it. Bring your own API key (Gemini or Anthropic) — it
