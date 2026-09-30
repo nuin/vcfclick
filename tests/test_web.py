@@ -178,3 +178,29 @@ def test_query_runs_select(duckdb_cohort):
     assert "error" not in d, d
     assert d["columns"] == ["n"]
     assert int(d["rows"][0][0]) >= 1
+
+
+def test_unexpected_errors_are_logged_not_returned(monkeypatch, caplog):
+    """Raw exception text stays in the server log; the browser gets a
+    generic message (and the generated SQL, for /api/nl)."""
+    import vcfclick_web.app as webapp
+    import vcfclick_web.llm as llm
+
+    def boom(sql):
+        raise RuntimeError("/secret/path/internal detail")
+
+    monkeypatch.setattr(webapp, "_run_sql", boom)
+    client = TestClient(app)
+
+    out = client.post("/api/query", json={"sql": "SELECT 1"}).json()
+    assert "internal detail" not in out["error"]
+    assert "query execution failed" in out["error"]
+
+    monkeypatch.setattr(llm, "generate_sql", lambda *a, **k: "SELECT 1")
+    out = client.post(
+        "/api/nl",
+        json={"question": "how many?", "provider": "gemini", "key": "k", "model": ""},
+    ).json()
+    assert "internal detail" not in out["error"]
+    assert out["sql"] == "SELECT 1"
+    assert "internal detail" in caplog.text

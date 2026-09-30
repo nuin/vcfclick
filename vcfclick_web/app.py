@@ -13,10 +13,12 @@ local server via CSRF / DNS-rebinding).
 from __future__ import annotations
 
 import json
+import logging
 import os
 import tempfile
 from pathlib import Path
 
+import click
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -33,6 +35,10 @@ from ingest.combine import CombineError, combine_vcfs
 from storage import get_session, table_exists
 from storage.sql_guard import is_read_only
 from vcfclick_web.page import INDEX_HTML
+
+# Raw exception text is never sent to the browser (it can carry paths and
+# internals); the detail goes to the terminal running `vcfclick web`.
+_log = logging.getLogger("vcfclick.web")
 
 _TABLES = [
     ("variants", VARIANTS_ARROW_SCHEMA),
@@ -135,14 +141,16 @@ def query(body: QueryBody) -> dict:
         }
     try:
         return _run_sql(sql)
-    except Exception as _e:
-        return {"error": "query execution failed"}
+    except Exception:
+        _log.exception("query failed")
+        return {"error": "query execution failed (details in the vcfclick web log)"}
 
 
 @app.post("/api/nl")
 def nl(body: NlBody) -> dict:
     if not body.question.strip():
         return {"error": "empty question"}
+    sql = None
     try:
         from vcfclick_mcp.server import SCHEMA_DESCRIPTION
         from vcfclick_web.llm import LLMError, generate_sql
@@ -160,8 +168,12 @@ def nl(body: NlBody) -> dict:
             }
         result = _run_sql(sql)
         return result
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        _log.exception("natural-language query failed")
+        out = {"error": "the generated query failed (details in the vcfclick web log)"}
+        if sql:
+            out["sql"] = sql
+        return out
 
 
 @app.get("/api/trio")
@@ -207,8 +219,12 @@ def trio(
                 "for defensible de-novo / dominant results."
             )
         return result
-    except Exception as e:
-        return {"error": str(e)}
+    except click.ClickException as e:
+        # Written for the user (e.g. "no pedigree entry for proband ...").
+        return {"error": e.message}
+    except Exception:
+        _log.exception("trio analysis failed")
+        return {"error": "trio analysis failed (details in the vcfclick web log)"}
 
 
 @app.post("/api/combine")

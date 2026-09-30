@@ -41,6 +41,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   (DML, DDL, `COPY`, `SELECT ... INTO`, `SET`/`USE`/`ATTACH`). SQL that
   sqlglot cannot parse is refused. MCP `run_sql` now applies the same guard
   and returns an `error` instead of running a write.
+- Web UI: unexpected errors from the query, natural-language and trio
+  endpoints are logged to the `vcfclick web` terminal; the browser gets a
+  generic message (plus the generated SQL for natural-language questions)
+  instead of raw exception text.
 
 ## [0.14.1]
 
