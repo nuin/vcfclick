@@ -42,6 +42,24 @@ WRITES = [
     "show create table variants into outfile '/tmp/x' FORMAT TSV",
     "LOAD httpfs",
     "CREATE SECRET s (TYPE s3)",
+    "INSTALL httpfs",
+    "EXPORT DATABASE '/tmp/x'",
+    "CHECKPOINT",
+    "VACUUM",
+    "BEGIN",
+    "PREPARE p AS DELETE FROM variants",
+    "EXECUTE p",
+    "KILL QUERY WHERE 1",
+    "RENAME TABLE a TO b",
+    "SELECT 1 /* */ ; DROP TABLE variants",
+    "SELECT 1 UNION ALL SELECT 2 INTO OUTFILE '/tmp/x'",
+    "EXPLAIN SELECT 1 INTO OUTFILE '/tmp/x'",
+    "EXPLAIN PLAN SELECT 1 INTO OUTFILE '/tmp/x'",
+    "DESCRIBE TABLE variants INTO OUTFILE '/tmp/x'",
+    # DuckDB's EXPLAIN ANALYZE executes the statement it explains
+    "EXPLAIN ANALYZE INSERT INTO variants SELECT * FROM variants",
+    "EXPLAIN ANALYZE DELETE FROM variants",
+    "SUMMARIZE variants; DROP TABLE variants",
 ]
 
 READS = [
@@ -87,6 +105,37 @@ def test_allows_reads(sql, dialect):
     ],
 )
 def test_allows_clickhouse_reads(sql):
+    assert is_read_only(sql, "clickhouse") is True
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SUMMARIZE variants",
+        "SUMMARIZE SELECT chrom, pos FROM variants",
+        "EXPLAIN ANALYZE SELECT 1",
+        "FROM variants SELECT chrom LIMIT 3",
+        "SELECT * EXCLUDE (qual) FROM variants",
+        "SELECT count(*) FILTER (WHERE gt = 2) FROM genotypes GROUP BY ALL",
+    ],
+)
+def test_allows_duckdb_reads(sql):
+    assert is_read_only(sql, "duckdb") is True
+
+
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT count() FROM variants FINAL",
+        "SELECT quantile(0.5)(gq), countIf(gt = 1) FROM genotypes",
+        "SELECT * FROM variants PREWHERE chrom = 'chr1' LIMIT 10 BY chrom",
+        "SELECT x FROM (SELECT [1, 2] AS a) ARRAY JOIN a AS x",
+        "SELECT arrayMap(x -> x * 2, [1, 2])",
+        "EXPLAIN PIPELINE SELECT 1",
+        "DESC variants",
+    ],
+)
+def test_allows_more_clickhouse_reads(sql):
     assert is_read_only(sql, "clickhouse") is True
 
 

@@ -11,7 +11,8 @@ DuckDB) and the syntax tree is inspected:
 
   * exactly one statement;
   * the root must be a query (SELECT / WITH ... SELECT / UNION ...),
-    DESCRIBE, SHOW, or EXPLAIN of a statement that itself passes;
+    DESCRIBE, SHOW, SUMMARIZE, or EXPLAIN of a statement that itself
+    passes;
   * no write node anywhere in the tree (INSERT/UPDATE/DELETE/MERGE,
     DDL, COPY, SELECT ... INTO, SET/USE/PRAGMA, ATTACH/DETACH, or any
     unparsed ``Command``).
@@ -41,6 +42,7 @@ _READ_ROOTS: tuple[type[exp.Expression], ...] = tuple(
         exp.Query,
         getattr(exp, "Describe", None),
         getattr(exp, "Show", None),
+        getattr(exp, "Summarize", None),  # DuckDB: SUMMARIZE <table | query>
     )
     if t is not None
 )

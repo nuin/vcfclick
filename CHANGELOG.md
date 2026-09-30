@@ -37,7 +37,7 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 - The web UI's read-only SQL guard is now an AST check (sqlglot, in the
   active backend's dialect) instead of a keyword regex: exactly one
-  SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement with no write node anywhere
+  SELECT/WITH/SHOW/DESCRIBE/SUMMARIZE/EXPLAIN statement with no write node anywhere
   (DML, DDL, `COPY`, `SELECT ... INTO`, `SET`/`USE`/`ATTACH`). SQL that
   sqlglot cannot parse is refused. MCP `run_sql` now applies the same guard
   and returns an `error` instead of running a write.
