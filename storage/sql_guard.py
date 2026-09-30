@@ -29,7 +29,9 @@ import re
 
 import sqlglot
 from sqlglot import exp
+from sqlglot.dialects.dialect import Dialect
 from sqlglot.errors import SqlglotError
+from sqlglot.tokens import TokenType
 
 # Statement roots that only read. exp.Query covers Select and the set
 # operations (Union / Intersect / Except), including WITH-prefixed ones.
@@ -106,12 +108,31 @@ def _parse_one(sql: str, dialect: str) -> exp.Expression | None:
     return stmts[0] if len(stmts) == 1 else None
 
 
+_FILE_WORDS = {"INTO", "OUTFILE", "DUMPFILE"}
+
+
+def _writes_to_file(text: str, dialect: str) -> bool:
+    """True if an unparsed statement tail has an INTO clause (e.g.
+    ClickHouse `SHOW TABLES INTO OUTFILE '...'`). Unlexable → True."""
+    try:
+        tokens = Dialect.get_or_raise(dialect).tokenize(text)
+    except (SqlglotError, RecursionError):
+        return True
+    return any(
+        t.token_type == TokenType.INTO
+        or (t.token_type != TokenType.STRING and t.text.upper() in _FILE_WORDS)
+        for t in tokens
+    )
+
+
 def _check(node: exp.Expression, dialect: str, depth: int = 0) -> bool:
     if isinstance(node, exp.Command):
         verb = str(node.this or "").upper()
-        rest = node.expression.name if node.expression is not None else ""
+        # The tail is a Literal in some dialects and a plain str in others.
+        tail = node.expression
+        rest = tail.name if isinstance(tail, exp.Expression) else str(tail or "")
         if verb == "SHOW":
-            return True
+            return not _writes_to_file(rest, dialect)
         if verb == "EXPLAIN" and depth == 0:
             inner = _parse_one(_EXPLAIN_KIND_RE.sub("", rest, count=1), dialect)
             return inner is not None and _check(inner, dialect, depth + 1)

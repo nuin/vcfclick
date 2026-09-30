@@ -37,6 +37,11 @@ WRITES = [
     "EXPLAIN DELETE FROM variants",
     "EXPLAIN EXPLAIN SELECT 1",
     "SELECT FROM WHERE",  # unparseable → fail closed
+    # ClickHouse SHOW accepts INTO OUTFILE, which writes a file
+    "SHOW TABLES INTO OUTFILE '/tmp/x'",
+    "show create table variants into outfile '/tmp/x' FORMAT TSV",
+    "LOAD httpfs",
+    "CREATE SECRET s (TYPE s3)",
 ]
 
 READS = [
@@ -45,6 +50,7 @@ READS = [
     "WITH c AS (SELECT 1 AS n) SELECT n FROM c",
     "SELECT 1 UNION ALL SELECT 2",
     "SHOW TABLES",
+    "SHOW CREATE TABLE variants",
     "DESCRIBE variants",
     "EXPLAIN SELECT 1",
     "SELECT count(*) FROM genotypes  -- trailing comment\n",
@@ -77,6 +83,7 @@ def test_allows_reads(sql, dialect):
         "SELECT 1 SETTINGS max_threads = 2",
         "SELECT arrayJoin([1, 2]) AS x",
         "EXPLAIN SYNTAX SELECT 1",
+        "SHOW TABLES LIKE '%into outfile%'",
     ],
 )
 def test_allows_clickhouse_reads(sql):
