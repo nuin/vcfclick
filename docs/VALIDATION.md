@@ -129,6 +129,44 @@ The full validation lives in `tests/test_trio.py`
 NIST/GIAB v4.2.1 benchmark; see
 <https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/release/AshkenazimTrio/>.
 
+# Relatedness and sex cross-check with somalier (optional)
+
+`vcfclick db relatedness` (KING-robust kinship) and the `db qc` chrX sex
+call can be cross-checked against [somalier](https://github.com/brentp/somalier),
+the standard sample-swap / relatedness QC tool. This is a documented,
+optional procedure, not a CI test: somalier ships a Linux binary and needs
+its sites file and the reference FASTA. No results are recorded here yet.
+
+somalier reports *relatedness* (about 2 x kinship: 0.5 for first degree)
+and IBS0 as a count over `n` sites. `scripts/compare_somalier.py` rescales
+both to vcfclick's kinship and IBS0 fraction, then classifies each pair
+with the **same thresholds** vcfclick uses (`cli.db_relatedness.classify`),
+and infers somalier's sex from `X_het / (X_het + X_hom_alt)` with the
+same rule as `db qc`. So the two sides differ only in their markers, not
+in the decision rules. Pairs or samples either side cannot call
+(`insufficient-data`, `unknown`) are shown but not compared.
+
+```bash
+# somalier (Linux), on the same joint-called VCF that was ingested
+somalier extract -d extracted/ --sites sites.hg38.vcf.gz -f GRCh38.fa cohort.vcf.gz
+somalier relate --ped cohort.ped extracted/*.somalier    # → somalier.pairs.tsv, somalier.samples.tsv
+
+# vcfclick, one ingestion (sample IDs are matched across the two tools)
+vcfclick db relatedness my-cohort --all --format json > rel.json
+vcfclick db qc my-cohort --format json > qc.json
+
+uv run python scripts/compare_somalier.py \
+    --vcfclick-relatedness rel.json --somalier-pairs somalier.pairs.tsv \
+    --vcfclick-qc qc.json --somalier-samples somalier.samples.tsv
+```
+
+The script prints both kinships and relationship calls side by side and
+exits 1 if any compared pair or sample disagrees. Expect small kinship
+differences (somalier uses ~17k curated common sites, vcfclick every
+biallelic SNV in the ingestion, thinned to `--max-sites`); the
+relationship class and sex should match on genome-wide data. The script's
+parsing and rescaling are tested in `tests/test_compare_somalier.py`.
+
 # Benchmarking (`vcfclick benchmark`)
 
 `vcfclick benchmark` compares a query VCF against a truth VCF over a
