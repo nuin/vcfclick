@@ -2,7 +2,7 @@
 """Cross-check `vcfclick db relatedness` / `db qc` sex against somalier.
 
 Optional validation helper (not run in CI; somalier ships a Linux binary).
-See docs/VALIDATION.md, section 4, for the full procedure.
+See "Relatedness and sex cross-check with somalier" in docs/VALIDATION.md.
 
 Inputs:
   --vcfclick-relatedness  JSON from `vcfclick db relatedness NAME --all --format json`
