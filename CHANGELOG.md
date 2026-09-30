@@ -33,6 +33,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - `vcfclick db ped NAME --proband C --father F --mother M`: declare a trio
   without writing a PED file.
 
+### Changed
+
+- The web UI's read-only SQL guard is now an AST check (sqlglot, in the
+  active backend's dialect) instead of a keyword regex: exactly one
+  SELECT/WITH/SHOW/DESCRIBE/SUMMARIZE/EXPLAIN statement with no write node anywhere
+  (DML, DDL, `COPY`, `SELECT ... INTO`, `SET`/`USE`/`ATTACH`). SQL that
+  sqlglot cannot parse is refused. MCP `run_sql` now applies the same guard
+  and returns an `error` instead of running a write.
+- Web UI: unexpected errors from the query, natural-language and trio
+  endpoints are logged to the `vcfclick web` terminal; the browser gets a
+  generic message (plus the generated SQL for natural-language questions)
+  instead of raw exception text.
+
 ## [0.14.1]
 
 ### Fixed

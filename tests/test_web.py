@@ -22,7 +22,8 @@ pytest.importorskip("httpx")
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from vcfclick_web.app import _is_read_only, app  # noqa: E402
+from storage.sql_guard import is_read_only  # noqa: E402
+from vcfclick_web.app import app  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
@@ -79,7 +80,7 @@ def test_query_rejects_writes():
     ],
 )
 def test_guard_blocks_writes_and_bypasses(sql):
-    assert _is_read_only(sql) is False
+    assert is_read_only(sql) is False
 
 
 @pytest.mark.parametrize(
@@ -98,7 +99,7 @@ def test_guard_blocks_writes_and_bypasses(sql):
     ],
 )
 def test_guard_allows_reads(sql):
-    assert _is_read_only(sql) is True
+    assert is_read_only(sql) is True
 
 
 def test_combine_endpoint_prioritizes_and_annotates_set():
@@ -177,3 +178,29 @@ def test_query_runs_select(duckdb_cohort):
     assert "error" not in d, d
     assert d["columns"] == ["n"]
     assert int(d["rows"][0][0]) >= 1
+
+
+def test_unexpected_errors_are_logged_not_returned(monkeypatch, caplog):
+    """Raw exception text stays in the server log; the browser gets a
+    generic message (and the generated SQL, for /api/nl)."""
+    import vcfclick_web.app as webapp
+    import vcfclick_web.llm as llm
+
+    def boom(sql):
+        raise RuntimeError("/secret/path/internal detail")
+
+    monkeypatch.setattr(webapp, "_run_sql", boom)
+    client = TestClient(app)
+
+    out = client.post("/api/query", json={"sql": "SELECT 1"}).json()
+    assert "internal detail" not in out["error"]
+    assert "query execution failed" in out["error"]
+
+    monkeypatch.setattr(llm, "generate_sql", lambda *a, **k: "SELECT 1")
+    out = client.post(
+        "/api/nl",
+        json={"question": "how many?", "provider": "gemini", "key": "k", "model": ""},
+    ).json()
+    assert "internal detail" not in out["error"]
+    assert out["sql"] == "SELECT 1"
+    assert "internal detail" in caplog.text

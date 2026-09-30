@@ -22,6 +22,7 @@ from annotations import gene_at as _gene_at
 from annotations import gnomad_af as _gnomad_af
 from annotations import position_for_gene as _position_for_gene
 from storage import get_session
+from storage.sql_guard import is_read_only
 
 mcp = FastMCP("vcfclick")
 
@@ -203,7 +204,17 @@ def get_schema() -> str:
 
 @mcp.tool()
 def run_sql(query: str) -> dict:
-    """Execute a chDB SQL query and return rows + the SQL that ran."""
+    """Execute a read-only SQL query and return rows + the SQL that ran.
+
+    Only a single SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is run;
+    anything that could write is refused without touching the database.
+    """
+    if not is_read_only(query):
+        return {
+            "sql": query,
+            "error": "run_sql is read-only — only a single "
+            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is allowed",
+        }
     sess = get_session()
     raw = sess.query(query, "JSONCompact").bytes().decode()
     parsed = json.loads(raw)

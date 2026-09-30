@@ -20,7 +20,7 @@ The server exposes:
 | Tool | Purpose |
 |---|---|
 | `get_schema` | Return the schema and query rules given to the client. |
-| `run_sql` | Execute SQL against the active vcfclick database. |
+| `run_sql` | Execute read-only SQL (one `SELECT`/`WITH`/`SHOW`/`DESCRIBE`/`EXPLAIN` statement) against the active vcfclick database. |
 | `position_for_gene` | Resolve an HGNC gene symbol to GRCh38 coordinates. |
 | `variants_in_gene` | Every variant in a gene (± flank) with carrier and hom-alt counts, plus the SQL that ran. |
 | `gene_at` | Return genes overlapping one position. |

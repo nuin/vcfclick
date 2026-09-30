@@ -5,17 +5,20 @@ logic. Endpoints reuse storage.get_session (the same path as `db query`
 and the MCP run_sql tool), cli.db_trio's SQL builders, and
 ingest.combine. Served on localhost only; arbitrary SELECTs are allowed
 because the caller already owns the database (same trust level as the
-CLI), but write statements are rejected as a guardrail.
+CLI), but write statements are rejected as a guardrail
+(storage.sql_guard: an AST check, since a malicious page can POST to a
+local server via CSRF / DNS-rebinding).
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
-import re
 import tempfile
 from pathlib import Path
 
+import click
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -30,7 +33,12 @@ from ingest._arrow import (
 )
 from ingest.combine import CombineError, combine_vcfs
 from storage import get_session, table_exists
+from storage.sql_guard import is_read_only
 from vcfclick_web.page import INDEX_HTML
+
+# Raw exception text is never sent to the browser (it can carry paths and
+# internals); the detail goes to the terminal running `vcfclick web`.
+_log = logging.getLogger("vcfclick.web")
 
 _TABLES = [
     ("variants", VARIANTS_ARROW_SCHEMA),
@@ -39,25 +47,6 @@ _TABLES = [
     ("ingestions", INGESTIONS_ARROW_SCHEMA),
     ("pedigree", PEDIGREE_ARROW_SCHEMA),
 ]
-
-# Read-only guardrail. The server is localhost-only and the caller owns
-# the database, but a malicious page (CSRF / DNS-rebinding) can POST to a
-# local server, so writes must be genuinely blocked — not just for queries
-# that *start* with a write verb. We allowlist read statements, forbid
-# multiple statements, and reject any write construct anywhere (so a
-# CTE-prefixed DML or a SELECT ... INTO OUTFILE / COPY ... TO cannot slip
-# through). Comments are stripped first so they can neither hide a verb nor
-# false-trip the blocklist.
-_ALLOWED_START = {"select", "with", "show", "describe", "desc", "explain"}
-# Verbs forbidden ANYWHERE (catches CTE-prefixed DML like
-# `WITH c AS (...) DELETE ...` and file writes). Deliberately excludes
-# truncate/replace/merge — those are also SQL *functions*; as statements
-# they only appear leading, where the allowlist already rejects them.
-_BLOCK_RE = re.compile(
-    r"\b(insert|update|delete|drop|alter|create|attach|detach|copy|grant|"
-    r"revoke|rename|into\s+outfile|into\s+dumpfile)\b",
-    re.IGNORECASE,
-)
 
 
 def _db_name() -> str | None:
@@ -75,49 +64,6 @@ def _run_sql(sql: str) -> dict:
         "rows": parsed.get("data", []),
         "row_count": len(parsed.get("data", [])),
     }
-
-
-def _strip_comments(sql: str) -> str:
-    """Blank out block (/* */) and line (--) comments in one linear pass.
-
-    The previous lazy-quantifier regex was O(n^2) on hostile input:
-    re.sub retries at every "/*", each scanning to end-of-string on an
-    unterminated comment. This single pass is linear and ReDoS-safe.
-    """
-    out: list[str] = []
-    i, n = 0, len(sql)
-    while i < n:
-        pair = sql[i : i + 2]
-        if pair == "/*":
-            end = sql.find("*/", i + 2)
-            if end == -1:
-                out.append(sql[i:])
-                break
-            out.append(" ")
-            i = end + 2
-        elif pair == "--":
-            nl = sql.find("\n", i + 2)
-            if nl == -1:
-                out.append(" ")
-                break
-            out.append(" ")
-            i = nl
-        else:
-            out.append(sql[i])
-            i += 1
-    return "".join(out)
-
-
-def _is_read_only(sql: str) -> bool:
-    """True only for a single read statement with no write construct."""
-    bare = _strip_comments(sql).strip()
-    body = bare.rstrip(";").strip()
-    if not body or ";" in body:  # empty, or more than one statement
-        return False
-    first = re.match(r"[a-zA-Z]+", body)
-    if not first or first.group(0).lower() not in _ALLOWED_START:
-        return False
-    return _BLOCK_RE.search(body) is None
 
 
 def _scalar_list(sql: str) -> list[str]:
@@ -188,21 +134,23 @@ def query(body: QueryBody) -> dict:
     sql = body.sql.strip()
     if not sql:
         return {"error": "empty query"}
-    if not _is_read_only(sql):
+    if not is_read_only(sql):
         return {
             "error": "the web UI is read-only — only a single "
             "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is allowed"
         }
     try:
         return _run_sql(sql)
-    except Exception as _e:
-        return {"error": "query execution failed"}
+    except Exception:
+        _log.exception("query failed")
+        return {"error": "query execution failed (details in the vcfclick web log)"}
 
 
 @app.post("/api/nl")
 def nl(body: NlBody) -> dict:
     if not body.question.strip():
         return {"error": "empty question"}
+    sql = None
     try:
         from vcfclick_mcp.server import SCHEMA_DESCRIPTION
         from vcfclick_web.llm import LLMError, generate_sql
@@ -213,15 +161,19 @@ def nl(body: NlBody) -> dict:
             )
         except LLMError as e:
             return {"error": str(e)}
-        if not _is_read_only(sql):
+        if not is_read_only(sql):
             return {
                 "sql": sql,
                 "error": "the model produced a non-read-only statement; not running it",
             }
         result = _run_sql(sql)
         return result
-    except Exception as e:
-        return {"error": str(e)}
+    except Exception:
+        _log.exception("natural-language query failed")
+        out = {"error": "the generated query failed (details in the vcfclick web log)"}
+        if sql:
+            out["sql"] = sql
+        return out
 
 
 @app.get("/api/trio")
@@ -267,8 +219,12 @@ def trio(
                 "for defensible de-novo / dominant results."
             )
         return result
-    except Exception as e:
-        return {"error": str(e)}
+    except click.ClickException as e:
+        # Written for the user (e.g. "no pedigree entry for proband ...").
+        return {"error": e.message}
+    except Exception:
+        _log.exception("trio analysis failed")
+        return {"error": "trio analysis failed (details in the vcfclick web log)"}
 
 
 @app.post("/api/combine")
