@@ -3,13 +3,26 @@
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
 import click
 
 from cli.main import _set_db, db
+from cli.options import command_options
 
 DEFAULT_WORKERS = 4
+
+
+@dataclass(frozen=True)
+class IngestOptions:
+    name: str
+    vcf_path: str
+    cohort: str
+    ingest_id: str | None
+    workers: int
+    serial: bool
+    keep_reference: bool
 
 
 @db.command(name="create")
@@ -116,38 +129,36 @@ def db_info(name: str) -> None:
     "trios/families from a joint-called VCF, not large cohorts. No-calls "
     "(./.) are still dropped.",
 )
-def db_ingest(
-    name: str,
-    vcf_path: str,
-    cohort: str,
-    ingest_id: str | None,
-    workers: int,
-    serial: bool,
-    keep_reference: bool,
-) -> None:
+@command_options(IngestOptions)
+def db_ingest(options: IngestOptions) -> None:
     """Ingest a (normalised) VCF into a named database."""
     from storage import db_path
 
-    if not db_path(name).exists():
+    if not db_path(options.name).exists():
         raise click.ClickException(
-            f"db {name!r} does not exist. Run `vcfclick db create {name}` first."
+            f"db {options.name!r} does not exist. Run `vcfclick db create {options.name}` first."
         )
 
-    _set_db(name)
+    _set_db(options.name)
 
-    if serial:
+    if options.serial:
         from ingest.vcf_load import ingest as ingest_serial
 
-        ingest_serial(vcf_path, cohort, ingest_id, keep_reference=keep_reference)
+        ingest_serial(
+            options.vcf_path,
+            options.cohort,
+            options.ingest_id,
+            keep_reference=options.keep_reference,
+        )
     else:
         from ingest.parallel import ingest_parallel
 
         ingest_parallel(
-            vcf_path,
-            cohort,
-            ingest_id=ingest_id,
-            workers=workers,
-            keep_reference=keep_reference,
+            options.vcf_path,
+            options.cohort,
+            ingest_id=options.ingest_id,
+            workers=options.workers,
+            keep_reference=options.keep_reference,
         )
 
 

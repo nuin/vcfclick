@@ -2,9 +2,28 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import click
 
 from cli.main import _set_db, db
+from cli.options import command_options
+
+
+@dataclass(frozen=True)
+class ExportOptions:
+    name: str
+    out: str
+    ingest_id: str | None
+    samples: str | None
+    regions: tuple[str, ...]
+    regions_bed: str | None
+    gene: str | None
+    flank: int
+    where: str | None
+    pass_only: bool
+    sites_only: bool
+    absent_as: str
 
 
 @db.command(name="export")
@@ -66,66 +85,58 @@ from cli.main import _set_db, db
     help="How to write samples with no stored genotype (ignored for --keep-reference ingestions, "
     "where absent always means no-call).",
 )
-def db_export(
-    name: str,
-    out: str,
-    ingest_id: str | None,
-    samples: str | None,
-    regions: tuple[str, ...],
-    regions_bed: str | None,
-    gene: str | None,
-    flank: int,
-    where: str | None,
-    pass_only: bool,
-    sites_only: bool,
-    absent_as: str,
-) -> None:
+@command_options(ExportOptions)
+def db_export(options: ExportOptions) -> None:
     """Export an ingestion to VCF, optionally sliced by region, gene, samples or SQL."""
     from importlib.metadata import PackageNotFoundError, version
 
     from export.vcf import ExportError, export_vcf, parse_region, read_bed
     from storage import db_path, get_session
 
-    if not db_path(name).exists():
-        raise click.ClickException(f"db {name!r} does not exist.")
+    if not db_path(options.name).exists():
+        raise click.ClickException(f"db {options.name!r} does not exist.")
     try:
-        region_list = [parse_region(r) for r in regions]
-        if regions_bed:
-            region_list += read_bed(regions_bed)
-        if gene:
+        region_list = [parse_region(r) for r in options.regions]
+        if options.regions_bed:
+            region_list += read_bed(options.regions_bed)
+        if options.gene:
             from annotations.db import position_for_gene
 
-            g = position_for_gene(gene)
+            g = position_for_gene(options.gene)
             if g is None:
                 raise ExportError(
-                    f"gene {gene.upper()!r} not found; load gene coordinates with `vcfclick annotations load`"
+                    f"gene {options.gene.upper()!r} not found; load gene coordinates with `vcfclick annotations load`"
                 )
             region_list.append(
-                (g.chrom, max(1, int(g.start_pos) - flank), int(g.end_pos) + flank)
+                (
+                    g.chrom,
+                    max(1, int(g.start_pos) - options.flank),
+                    int(g.end_pos) + options.flank,
+                )
             )
         try:
             ver = version("vcfclick")
         except PackageNotFoundError:
             ver = ""
-        _set_db(name)
+        _set_db(options.name)
         summary = export_vcf(
-            get_session(name),
-            name,
-            out,
-            ingest_id=ingest_id,
-            samples=[s.strip() for s in samples.split(",") if s.strip()]
-            if samples
+            get_session(options.name),
+            options.name,
+            options.out,
+            ingest_id=options.ingest_id,
+            samples=[s.strip() for s in options.samples.split(",") if s.strip()]
+            if options.samples
             else None,
             regions=region_list or None,
-            where=where,
-            pass_only=pass_only,
-            sites_only=sites_only,
-            absent_as=absent_as,
+            where=options.where,
+            pass_only=options.pass_only,
+            sites_only=options.sites_only,
+            absent_as=options.absent_as,
             version=ver,
         )
     except ExportError as e:
         raise click.ClickException(str(e)) from None
-    dest = "stdout" if out == "-" else out
+    dest = "stdout" if options.out == "-" else options.out
     click.echo(
         f"exported {summary['variants']:,} variants x {summary['samples']:,} samples "
         f"from {summary['ingest_id']} to {dest}",

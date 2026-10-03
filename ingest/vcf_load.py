@@ -25,6 +25,7 @@ import logging
 import tempfile
 import time
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from cyvcf2 import VCF
@@ -172,16 +173,16 @@ def _write_stage_batch(
     genotypes_batch.clear()
 
 
-def _stage_vcf(
-    vcf,
-    vcf_path: str,
-    samples: list[str],
-    extra_format_fields: list[str],
-    ingest_id: str,
-    staging_path: Path,
-    started: float,
-    keep_reference: bool = False,
-) -> int:
+@dataclass(frozen=True)
+class StageOptions:
+    vcf_path: str
+    samples: list[str]
+    extra_format_fields: list[str]
+    ingest_id: str
+    keep_reference: bool = False
+
+
+def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -> int:
     variants_batch: list[list] = []
     genotypes_batch: list[list] = []
     n_variants = 0
@@ -191,12 +192,16 @@ def _stage_vcf(
             raise ValueError(
                 f"Multi-allelic site at {variant.CHROM}:{variant.POS} "
                 f"({len(variant.ALT)} ALTs). Re-normalise with: "
-                f"bcftools norm -m - {vcf_path} | bgzip > out.vcf.gz"
+                f"bcftools norm -m - {options.vcf_path} | bgzip > out.vcf.gz"
             )
-        variants_batch.append(build_variant_row(variant, ingest_id))
+        variants_batch.append(build_variant_row(variant, options.ingest_id))
         genotypes_batch.extend(
             build_genotype_rows(
-                variant, samples, extra_format_fields, ingest_id, keep_reference
+                variant,
+                options.samples,
+                options.extra_format_fields,
+                options.ingest_id,
+                options.keep_reference,
             )
         )
         n_variants += 1
@@ -289,13 +294,15 @@ def _ingest_locked(
             staging_path = Path(staging)
             n_variants = _stage_vcf(
                 vcf,
-                vcf_path,
-                samples,
-                classification["extra_format"],
-                ingest_id,
+                StageOptions(
+                    vcf_path,
+                    samples,
+                    classification["extra_format"],
+                    ingest_id,
+                    keep_reference,
+                ),
                 staging_path,
                 started,
-                keep_reference,
             )
             commit_started = True
             _commit_staged_ingest(
