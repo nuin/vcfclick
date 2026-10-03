@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.2]
+
 ### Added
 
 - `vcfclick db export`: write an ingestion back to VCF, whole or sliced by
