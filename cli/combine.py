@@ -18,9 +18,25 @@ least N inputs (consensus calling).
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import click
 
 from cli.main import cli
+from cli.options import command_options
+
+
+@dataclass(frozen=True)
+class CombineOptions:
+    vcfs: tuple[str, ...]
+    output: str
+    names: tuple[str, ...]
+    min_callsets: int
+    pass_only: bool
+    count_by: str
+    reference: str | None
+    atomize: bool
+    carry_info: bool
 
 
 @cli.command(name="combine")
@@ -84,17 +100,8 @@ from cli.main import cli
     help="Carry QUAL, FILTER, and INFO (plus their header lines) from the "
     "highest-priority input that called each allele.",
 )
-def combine(
-    vcfs: tuple[str, ...],
-    output: str,
-    names: tuple[str, ...],
-    min_callsets: int,
-    pass_only: bool,
-    count_by: str,
-    reference: str | None,
-    atomize: bool,
-    carry_info: bool,
-) -> None:
+@command_options(CombineOptions)
+def combine(options: CombineOptions) -> None:
     """Combine two or more VCF call sets into one, with set= provenance.
 
     Inputs are unionized by (chrom, pos, ref, alt); a sample shared across
@@ -108,19 +115,19 @@ def combine(
     """
     from ingest.combine import CombineError, combine_vcfs
 
-    if len(vcfs) < 2:
+    if len(options.vcfs) < 2:
         raise click.ClickException("combine needs at least two input VCFs.")
     try:
         out = combine_vcfs(
-            list(vcfs),
-            output,
-            names=list(names) or None,
-            min_callsets=min_callsets,
-            pass_only=pass_only,
-            count_by=count_by,
-            reference=reference,
-            atomize=atomize,
-            carry_info=carry_info,
+            list(options.vcfs),
+            options.output,
+            names=list(options.names) or None,
+            min_callsets=options.min_callsets,
+            pass_only=options.pass_only,
+            count_by=options.count_by,
+            reference=options.reference,
+            atomize=options.atomize,
+            carry_info=options.carry_info,
         )
     except CombineError as e:
         raise click.ClickException(str(e)) from e

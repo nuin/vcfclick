@@ -10,11 +10,47 @@ surface BenchmarkError/UnsupportedFeatureError as clean ClickExceptions.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import click
 
 from cli.main import cli
+from cli.options import command_options
 
 _ALL_FORMATS = ("csv", "json", "parquet", "html")
+
+
+@dataclass(frozen=True)
+class BenchmarkOptions:
+    truth: str
+    query: str
+    ref: str
+    regions: str | None
+    output: str
+    engine: str
+    report_formats: str
+    on_ref_mismatch: str
+    conf_containment: str
+    decompose_mnp: bool
+    strict: bool
+    pass_only: bool | None
+    stratify: str | None
+    roc: bool
+    strat_region: tuple[str, ...]
+    audit: bool
+
+
+@dataclass(frozen=True)
+class CohortOptions:
+    truth: str
+    ref: str
+    regions: str | None
+    callers: tuple[str, ...]
+    output: str
+    engine: str
+    on_ref_mismatch: str
+    history: str | None
+    label: str
 
 
 @cli.command(name="benchmark")
@@ -123,30 +159,18 @@ _ALL_FORMATS = ("csv", "json", "parquet", "html")
     help="Write fn_annotated.csv / fp_annotated.csv — each FN/FP joined to its "
     "gene, ClinVar significance, and gnomAD AF.",
 )
-def benchmark(
-    truth: str,
-    query: str,
-    ref: str,
-    regions: str | None,
-    output: str,
-    engine: str,
-    report_formats: str,
-    on_ref_mismatch: str,
-    conf_containment: str,
-    decompose_mnp: bool,
-    strict: bool,
-    pass_only: bool | None,
-    stratify: str | None,
-    roc: bool,
-    strat_region: tuple[str, ...],
-    audit: bool,
-) -> None:
+@command_options(BenchmarkOptions)
+def benchmark(options: BenchmarkOptions) -> None:
     """Benchmark a query VCF against a truth VCF (normalized genotype concordance)."""
     from benchmark.pipeline import run_benchmark
     from benchmark.reconcile import UnsupportedFeatureError
     from benchmark.reference import BenchmarkError
 
-    strat = [a.strip() for a in stratify.split(",") if a.strip()] if stratify else None
+    strat = (
+        [a.strip() for a in options.stratify.split(",") if a.strip()]
+        if options.stratify
+        else None
+    )
     if strat:
         from benchmark.stratify_db import AXES
 
@@ -157,7 +181,7 @@ def benchmark(
                 f"(choose from {', '.join(sorted(AXES))})"
             )
     strat_reg: dict[str, str] = {}
-    for spec in strat_region:
+    for spec in options.strat_region:
         if "=" not in spec:
             raise click.ClickException(
                 f"--strat-region must be NAME=path, got {spec!r}"
@@ -165,10 +189,10 @@ def benchmark(
         name, path = spec.split("=", 1)
         strat_reg[name.strip()] = path.strip()
 
-    if report_formats.strip().lower() == "all":
+    if options.report_formats.strip().lower() == "all":
         formats = list(_ALL_FORMATS)
     else:
-        formats = [f.strip() for f in report_formats.split(",") if f.strip()]
+        formats = [f.strip() for f in options.report_formats.split(",") if f.strip()]
         unknown = [f for f in formats if f not in _ALL_FORMATS]
         if unknown:
             raise click.ClickException(
@@ -177,29 +201,29 @@ def benchmark(
 
     try:
         res = run_benchmark(
-            truth,
-            query,
-            ref,
-            output,
-            regions=regions,
-            engine=engine,
+            options.truth,
+            options.query,
+            options.ref,
+            options.output,
+            regions=options.regions,
+            engine=options.engine,
             report_formats=formats,
-            on_ref_mismatch=on_ref_mismatch,
-            conf_containment=conf_containment,
-            decompose_mnp=decompose_mnp,
-            strict=strict,
+            on_ref_mismatch=options.on_ref_mismatch,
+            conf_containment=options.conf_containment,
+            decompose_mnp=options.decompose_mnp,
+            strict=options.strict,
             stratify=strat,
-            roc=roc,
+            roc=options.roc,
             strat_regions=strat_reg or None,
-            audit=audit,
+            audit=options.audit,
         )
     except (BenchmarkError, UnsupportedFeatureError) as e:
         raise click.ClickException(str(e)) from e
 
     rows = res["summary"]
-    if pass_only is True:
+    if options.pass_only is True:
         rows = [r for r in rows if r["Filter"] == "PASS"]
-    elif pass_only is False:
+    elif options.pass_only is False:
         rows = [r for r in rows if r["Filter"] == "ALL"]
     for row in rows:
         click.echo(
@@ -207,7 +231,7 @@ def benchmark(
             f"recall={row['recall']:.4f} precision={row['precision']:.4f} "
             f"f1={row['f1']:.4f}"
         )
-    click.echo(f"reports → {output}")
+    click.echo(f"reports → {options.output}")
 
 
 @cli.command(name="benchmark-cohort")
@@ -251,17 +275,8 @@ def benchmark(
     show_default=True,
     help="Label for the history row (e.g. a pipeline version).",
 )
-def benchmark_cohort(
-    truth: str,
-    ref: str,
-    regions: str | None,
-    callers: tuple[str, ...],
-    output: str,
-    engine: str,
-    on_ref_mismatch: str,
-    history: str | None,
-    label: str,
-) -> None:
+@command_options(CohortOptions)
+def benchmark_cohort(options: CohortOptions) -> None:
     """Benchmark several callers against one truth; report per-caller concordance
     and each caller's relative blind spots (variants others catch)."""
     import csv
@@ -276,27 +291,29 @@ def benchmark_cohort(
     from benchmark.reference import BenchmarkError
 
     caller_map: dict[str, str] = {}
-    for spec in callers:
+    for spec in options.callers:
         if "=" not in spec:
             raise click.ClickException(f"--caller must be NAME=path, got {spec!r}")
         name, path = spec.split("=", 1)
         caller_map[name.strip()] = path.strip()
 
-    os.makedirs(output, exist_ok=True)
+    os.makedirs(options.output, exist_ok=True)
     try:
         frame = benchmark_callers(
-            truth,
-            ref,
+            options.truth,
+            options.ref,
             caller_map,
-            regions=regions,
-            engine=engine,
-            on_ref_mismatch=on_ref_mismatch,
+            regions=options.regions,
+            engine=options.engine,
+            on_ref_mismatch=options.on_ref_mismatch,
         )
     except BenchmarkError as e:
         raise click.ClickException(str(e)) from e
 
     metrics = per_caller_metrics(frame)
-    with open(os.path.join(output, "per_caller_metrics.csv"), "w", newline="") as fh:
+    with open(
+        os.path.join(options.output, "per_caller_metrics.csv"), "w", newline=""
+    ) as fh:
         w = csv.DictWriter(
             fh,
             fieldnames=list(metrics[0].keys())
@@ -325,7 +342,7 @@ def benchmark_cohort(
         if missed:
             click.echo(f"{name}: misses {len(missed)} variant(s) other callers catch")
 
-    if history:
-        append_run(history, label, metrics)
-        click.echo(f"history → {history} (label={label})")
-    click.echo(f"reports → {output}")
+    if options.history:
+        append_run(options.history, options.label, metrics)
+        click.echo(f"history → {options.history} (label={options.label})")
+    click.echo(f"reports → {options.output}")
