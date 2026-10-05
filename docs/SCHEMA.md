@@ -441,7 +441,11 @@ under the same `ingest_id`.
 `ingest_id, sample_id, family_id, father_id, mother_id, sex,
 affected`.
 
-`populations` (`vcfclick db panel`, see [POPGEN.md](POPGEN.md)):
+`populations` (`vcfclick db panel`, see [POPGEN.md](POPGEN.md)). A
+panel load replaces the labelling of each ingestion it applies to;
+re-ingesting an `ingest_id` removes the labels of samples that are no
+longer in it. Join to `samples` when counting group sizes by hand, so a
+label row for a sample that is not ingested is never counted:
 
 | Column | Type | Meaning |
 |---|---|---|

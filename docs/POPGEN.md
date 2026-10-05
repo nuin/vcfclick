@@ -55,8 +55,14 @@ vcfclick db panel NAME FILE [--ingest-id ID] [--sample-col C] [--pop-col C]
 - `gender`/`sex` is normalised to `male`/`female`/NULL (`male`, `m`, `1`;
   `female`, `f`, `2`; anything else NULL).
 - Without `--ingest-id` the panel applies to every ingestion that
-  contains the sample. Re-loading replaces the labels of the samples it
-  lists (idempotent). Re-ingesting a VCF does not touch the panel.
+  contains at least one of its samples.
+- **A panel replaces the whole labelling of each ingestion it applies
+  to.** Re-loading the same file is idempotent; loading a file that lists
+  fewer samples leaves the samples it omits unlabelled (no stale labels).
+- Re-ingesting a VCF under the same `ingest_id` keeps the labels of the
+  samples that are still in it and **removes the labels of samples that
+  are not** (a warning lists them). Statistics only ever count samples
+  currently in the ingestion, whatever the `populations` table holds.
 - The command reports panel samples that are not in the database and
   database samples that are missing from the panel. Unlabelled samples
   are excluded from per-population statistics (and counted in the
@@ -72,21 +78,31 @@ Every subcommand analyses **one ingestion**: sample identity is
 |---|---|---|
 | `--region chr:start-end` | whole ingestion | repeatable; `chr1` and `1` both match |
 | `--gene SYMBOL` | — | gene span from the annotation store (`vcfclick annotations load`) |
-| `--by` | `population` | `super_population`, or `all` for one cohort-wide group; falls back to `all` when no panel is loaded |
+| `--by` | `population` | `super_population`, or `all` for one cohort-wide group; falls back to `all` (with a warning) when no panel is loaded |
 | `--include-indels` | off | biallelic SNVs only by default |
 | `--pass-only / --all-filters` | pass-only | FILTER is `PASS` or missing |
 | `--min-call-rate` | 0.9 | a site must reach it in **every** group |
 | `--maf` | 0 | cohort-wide minor-allele frequency (all samples of the ingestion) |
-| `--ancestral` | `aa` if any site has INFO/AA, else `none` | see below |
+| `--ancestral` | `aa` if any autosomal site in scope has INFO/AA, else `none` | see below |
+| `--allow-untracked` | off | compute on an ingestion without missing-call tracking (see [older databases](#older-databases)) |
 
 Filters are applied in this order, and the number of sites each one
 drops is reported (`sites.dropped` in JSON):
 
-1. `non_autosomal` — **autosomes only.** Chromosomes named X, Y, XY, W,
-   Z, M or MT (with or without `chr`) are excluded. `--include-sex-chroms`
+1. `non_autosomal` — **autosomes only.** A chromosome is classified by
+   the part of its name before the first `_` (so GRCh38 `chrX_..._alt`
+   follows X and `chr1_..._random` follows 1), with or without `chr`,
+   case-insensitively. Excluded: X, Y, XY, W, Z, M, MT, PAR1/PAR2,
+   unplaced and decoy sequence (`chrUn_*`, `chrEBV`, `hs37d5`, `HLA-*`,
+   GRCh37 `GL0*`, RefSeq `NT_`/`NW_` scaffolds) and the human RefSeq
+   accessions NC_000023 (X), NC_000024 (Y) and NC_012920 (MT);
+   NC_000001–NC_000022 are autosomes. **Any other naming is the user's
+   responsibility**: an unrecognised name counts as an autosome, so
+   restrict with `--region` when a reference uses other names for sex
+   chromosomes (e.g. a non-human RefSeq assembly). `--include-sex-chroms`
    is refused in this version: hemizygous calls need per-sample ploidy,
-   which is not modelled yet. A `--region` on such a chromosome is an
-   error rather than an empty result.
+   which is not modelled yet. A `--region` on an excluded chromosome is
+   an error rather than an empty result.
 2. `not_biallelic` — any position with more than one record (a
    multi-allelic site split by `bcftools norm -m -`).
 3. `variant_type` — not a SNV (or, with `--include-indels`, not a plain
@@ -130,18 +146,20 @@ counts — at the price of dropping those (rare) sites.
 ### Older databases
 
 Databases ingested before this feature have NULL `n_called` / `an_called`
-/ `ac_called` (or lack the columns) and no `missing_genotypes` rows. Every
-subcommand still runs, but warns once that missing calls are treated as
-`0/0`, skips the exactness check, and reports `"missing_data_tracked":
-false` in JSON. Re-ingest the VCF to get exact counts. Ingesting into an
-older database adds the new columns and tables in place
-(`[storage] upgraded schema: ...`); older dumps and bundles still load
-(the counts are NULL).
+/ `ac_called` (or lack the columns) and no `missing_genotypes` rows. On
+such an ingestion every subcommand **refuses** with an explanation,
+unless `--allow-untracked` is given: then it warns once that missing
+calls are treated as `0/0`, skips the exactness check, and reports
+`"missing_data_tracked": false` in JSON. Re-ingest the VCF to get exact
+counts. Ingesting into an older database adds the new columns and tables
+in place (`[storage] upgraded schema: ...`, under a per-database lock and
+idempotent, so concurrent ingests are safe); older dumps and bundles still
+load (the counts are NULL).
 
 An ingestion loaded with `--no-record-missing` has exact per-site counts
-but no per-sample missing rows; sites with missing calls then fail the
-exactness check and are dropped, with a warning and
-`missing_data_tracked: false`.
+but no per-sample missing rows. It also needs `--allow-untracked`; sites
+with missing calls then fail the exactness check and are dropped, with a
+warning and `missing_data_tracked: false`.
 
 ## Ancestral alleles and polarisation
 
@@ -185,7 +203,12 @@ Per group:
   (π is the probability two distinct haplotypes differ, which subsampling
   preserves), so θ_π in D equals the reported π over the sites used.
   With no missing data the projection is the identity and D uses exactly
-  the reported π and θ_W. D is undefined (`null`/`NA`) for S = 0 or
+  the reported π and θ_W.
+  The projected S, θ_π, θ_L and θ_H are computed in closed form from the
+  hypergeometric moments (S = Σ 1 − P(J=0) − P(J=m), Σ_{j<m} j·P(J=j) =
+  mk/n − m·P(J=m), and the second moment for θ_H), which equals building
+  the projected spectrum but costs O(1) per site instead of O(m); `sfs`
+  builds the full spectrum. D is undefined (`null`/`NA`) for S = 0 or
   n < 4.
 - **Fay & Wu's H**, normalised (Zeng, Fu, Shi & Wu 2006, eq. 11), on the
   polarised sites only:
@@ -205,7 +228,9 @@ distribution: a site with k of n contributes C(k,j)·C(n−k,m−j)/C(n,m) to
 class j (Marth et al. 2004; Gutenkunst et al. 2009 — the dadi
 projection). `--project N` sets m; the default is the smallest number of
 called haplotypes at any retained site in that group, so no site is
-lost. Sites with fewer than m called haplotypes are dropped and counted
+lost. If that minimum is below 4 (for example a nearly
+uncalled site kept by `--min-call-rate 0`), a warning says which group
+and why D, H (n < 4) or the spectrum (n < 2) cannot be computed. Sites with fewer than m called haplotypes are dropped and counted
 (`sites_dropped`). Spectra include the monomorphic classes (j = 0 and,
 unfolded, j = m) and are expected counts, so they can be fractional.
 
@@ -241,6 +266,25 @@ is callable and monomorphic. Neither is a per-callable-base estimate:
 for that, use an all-sites VCF (with invariant records) or a
 callability mask, as in pixy (Korunes & Samuk 2021). The totals (θ_W,
 π) and the ratio statistics (D, H, F_ST) do not depend on this.
+
+## Output conventions
+
+Chromosome names in every output are the names **as stored** in the
+database (`--region chr1:...` on a database that stores `1` reports `1`).
+JSON carries every warning; table/TSV print them on stderr.
+
+## Implementation and scale
+
+Per chromosome, one SQL statement each reads the sites (`variants`), the
+ALT dosage and heterozygote counts (`genotypes`, scanned once, grouped by
+site and panel label with a LEFT JOIN so unlabelled samples form one
+extra bucket; cohort totals are the sum over buckets) and the missing
+calls (`missing_genotypes`). Results come back as Arrow. Each chromosome
+is filtered before the next is read, and only retained sites are kept,
+as 16-bit counts per group (32-bit for groups of more than 32,767
+samples), so memory is one chromosome's raw counts
+plus about 6 bytes × retained sites × groups. Windows are binary searches
+in each chromosome's position-sorted slice.
 
 ## Choices made (and why)
 

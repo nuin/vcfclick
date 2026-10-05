@@ -19,8 +19,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - `vcfclick db panel NAME FILE`: load sample -> population labels into a
   new `populations` table, from the 1000 Genomes panel format or any
   TSV/CSV (`--sample-col`, `--pop-col`, `--super-pop-col`, `--sex-col`).
-  Reports panel samples not in the database and vice versa; re-loading
-  replaces.
+  Reports panel samples not in the database and vice versa. A panel
+  replaces the whole labelling of each ingestion it applies to, and
+  re-ingesting an ingest_id removes the labels of samples no longer in it.
 - `vcfclick db popgen summary|sfs|fst|windows`: per-population S, θ_W, π,
   Tajima's D, normalised Fay & Wu's H, Ho/He/F; folded and unfolded SFS
   with hypergeometric projection for missing data; pairwise Hudson F_ST
@@ -28,15 +29,17 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   alleles from `INFO/AA` (`--ancestral aa|aa-high|ref|none`). Autosomes
   of one ingestion; biallelic SNVs, PASS, call-rate and MAF filters, all
   reported. Identical results on chDB and DuckDB; estimators validated
-  against hand-computed values, scikit-allel and dadi. See
-  docs/POPGEN.md.
+  against hand-computed values, scikit-allel and dadi. Ingestions without
+  missing-call tracking need `--allow-untracked`. Counts are read per
+  chromosome as Arrow, with one scan of `genotypes`, so memory stays
+  bounded on 1000 Genomes-sized cohorts. See docs/POPGEN.md.
 - MCP `SCHEMA_DESCRIPTION` and the web UI's table list cover the new
   columns and tables.
 
 ### Changed
 
 - Opening an older database for ingest (or `db panel`) adds the new
-  columns and tables in place; older rows read as NULL ("not
+  columns and tables in place (idempotent, under a per-database lock); older rows read as NULL ("not
   recorded"). `db dump` skips tables an older database does not have,
   and `db ingest-parquet` / `db pull` accept older dumps and bundles.
 - `db info` also reports `missing_genotypes` and `populations` counts.

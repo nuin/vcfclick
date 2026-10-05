@@ -378,8 +378,9 @@ Usage: vcfclick db panel [OPTIONS] NAME PANEL_PATH
 
   Reads the 1000 Genomes panel format (sample, pop, super_pop, gender; tab-
   separated with a header) as is, or any TSV/CSV with a header — columns are
-  matched by name, or named with the --*-col options. Re-loading replaces the
-  labels of the samples it lists.
+  matched by name, or named with the --*-col options. A panel replaces the
+  whole labelling of each ingestion it applies to, so samples it does not list
+  end up unlabelled.
 
 Options:
   --ingest-id TEXT      Apply the panel to this ingestion only (default: every
@@ -461,6 +462,11 @@ Options:
                                   INFO/AA, else none.
   --include-sex-chroms            Not supported yet: X/Y need per-sample
                                   ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
   --format [table|tsv|json]       [default: table]
   --help                          Show this message and exit.
 ```
@@ -512,6 +518,11 @@ Options:
                                   INFO/AA, else none.
   --include-sex-chroms            Not supported yet: X/Y need per-sample
                                   ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
   --format [table|tsv|json]       [default: table]
   --help                          Show this message and exit.
 ```
@@ -560,6 +571,11 @@ Options:
                                   INFO/AA, else none.
   --include-sex-chroms            Not supported yet: X/Y need per-sample
                                   ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
   --format [table|tsv|json]       [default: table]
   --window INTEGER RANGE          Window size (bp).  [x>=1]
   --step INTEGER RANGE            Window step (bp; default = window).  [x>=1]
@@ -613,6 +629,11 @@ Options:
                                   INFO/AA, else none.
   --include-sex-chroms            Not supported yet: X/Y need per-sample
                                   ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
   --format [table|tsv|json]       [default: tsv]
   --window INTEGER RANGE          Window size (bp).  [x>=1; required]
   --step INTEGER RANGE            Window step (bp; default = window).  [x>=1]
