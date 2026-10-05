@@ -1,6 +1,6 @@
 # Schema reference
 
-Every vcfclick cohort database uses the same four logical tables. This
+Every vcfclick cohort database uses the same core logical tables. This
 page lists every column and the query conventions users need to keep in
 mind. The authoritative sources are the SQL files in
 [`schema/`](../schema/); this doc flattens them for SQL writers.
@@ -11,8 +11,11 @@ mind. The authoritative sources are the SQL files in
   | [`genotypes`](#genotypes) | sparse — only non-reference calls | `(ingest_id, chrom, pos, ref, alt, sample_id)` |
   | [`samples`](#samples) | one row per `(ingest_id, sample_id)` | `(ingest_id, sample_id)` |
   | [`ingestions`](#ingestions) | one row per VCF upload | `ingest_id` |
+  | [`missing_genotypes`](#missing_genotypes) | one row per fully missing (`./.`) call | `(ingest_id, chrom, pos, ref, alt, sample_id)` |
+  | [`pedigree`](#pedigree-and-populations) | one row per `(ingest_id, sample_id)`, loaded by `db ped` | `(ingest_id, sample_id)` |
+  | [`populations`](#pedigree-and-populations) | one row per `(ingest_id, sample_id)`, loaded by `db panel` | `(ingest_id, sample_id)` |
 
-On chDB, all four tables use `ReplacingMergeTree` keyed by
+On chDB, all tables use `ReplacingMergeTree` keyed by
 `ingested_at`. Re-ingesting under the same `ingest_id` is idempotent:
 chDB dedupes on merge. Use `SELECT ... FROM <table> FINAL` to force
 dedup at query time if you need an immediately consistent count.
@@ -29,7 +32,13 @@ tables.
    `0/0` by convention. **Never write `LEFT JOIN … WHERE g.gt IS NULL`**
    to find hom-ref samples — they're just not there. Derive hom-ref
    counts by subtraction:
-   `hom_ref = total_samples_in_cohort − count(genotypes)`.
+   `hom_ref = total_samples_in_cohort − count(genotypes) − count(missing_genotypes)`.
+   No-calls are not in `genotypes` either; since the population-genetics
+   release each fully missing call has a row in
+   [`missing_genotypes`](#missing_genotypes), and `variants.n_called` /
+   `an_called` / `ac_called` give exact per-site called counts. Older
+   ingestions have neither (NULL counts): there, absent means "0/0 or
+   no-call".
 
 2. **Rows are NOT merged across ingestions.** The same
    `(chrom, pos, ref, alt)` ingested from two different VCFs is
@@ -258,6 +267,32 @@ Flags are `UInt8 DEFAULT 0`. Present → `1`, absent → `0`. Never `NULL`.
 | `info_DragenSnvHardQUAL` | `Nullable(Float32)` | `INFO/DragenSnvHardQUAL` |
 | `info_DragenIndelHardQUAL` | `Nullable(Float32)` | `INFO/DragenIndelHardQUAL` |
 
+### Called-genotype counts
+
+Computed at ingest from cyvcf2's per-sample allele arrays (not
+`gt_types`), so ploidy and partial missingness are exact. NULL means
+"not recorded" (an ingestion or dump from before these columns
+existed).
+
+| Column | Type | Meaning |
+|---|---|---|
+| `n_called` | `Nullable(UInt32)` | samples whose GT is fully called |
+| `an_called` | `Nullable(UInt32)` | called alleles: a haploid call counts 1, a diploid 2, a partial `./1` counts its one called allele |
+| `ac_called` | `Nullable(UInt32)` | ALT alleles among the called ones (a haploid `1` counts 1) |
+
+`ac_called / an_called` is the cohort allele frequency with missing
+calls excluded — unlike `info_AF`, it is always computed from the GTs
+actually loaded:
+
+```sql
+WITH n AS (SELECT count(*) AS n_samples FROM samples WHERE ingest_id = 'phase3')
+SELECT chrom, pos, ref, alt,
+       ac_called / an_called AS af,
+       n_called / n.n_samples AS call_rate
+FROM variants CROSS JOIN n
+WHERE ingest_id = 'phase3' AND an_called > 0;
+```
+
 ### Overflow
 
 | Column | Type | Meaning |
@@ -367,6 +402,58 @@ user-defined alias table; vcfclick does not auto-merge.
 
 ---
 
+## `missing_genotypes`
+
+One row per sample whose GT is **fully** missing (`./.`, `.`) at a
+site. Written at ingest by default; `db ingest --no-record-missing`
+skips it. Partially missing calls (`./1`, `0/.`) are not rows here —
+`genotypes` stores what cyvcf2's `gt_types` reports for them (`./1` as
+a het, `0/.` as hom-ref, i.e. absent), and the per-site
+`variants.an_called` / `ac_called` remain exact.
+
+| Column | Type | Meaning |
+|---|---|---|
+| `ingest_id` | `LowCardinality(String)` | |
+| `chrom`, `pos`, `ref`, `alt` | as `genotypes` | the site |
+| `sample_id` | `LowCardinality(String)` | the sample with no call |
+| `ingested_at` | `DateTime` | |
+
+With it, called counts per group follow without storing every 0/0:
+
+```sql
+-- called alleles per population at diploid sites
+SELECT m.chrom, m.pos, p.population, count(*) AS missing
+FROM missing_genotypes m
+JOIN populations p ON p.ingest_id = m.ingest_id AND p.sample_id = m.sample_id
+WHERE m.ingest_id = 'phase3'
+GROUP BY m.chrom, m.pos, p.population;
+-- called = 2 * (population size - missing)
+```
+
+---
+
+## `pedigree` and `populations`
+
+Both are loaded separately from VCF ingest and survive a re-ingest
+under the same `ingest_id`.
+
+`pedigree` (`vcfclick db ped`, see [TRIO.md](TRIO.md)):
+`ingest_id, sample_id, family_id, father_id, mother_id, sex,
+affected`.
+
+`populations` (`vcfclick db panel`, see [POPGEN.md](POPGEN.md)):
+
+| Column | Type | Meaning |
+|---|---|---|
+| `ingest_id` | `LowCardinality(String)` | |
+| `sample_id` | `LowCardinality(String)` | |
+| `population` | `LowCardinality(String)` | e.g. `YRI` |
+| `super_population` | `LowCardinality(Nullable(String))` | e.g. `AFR` |
+| `sex` | `LowCardinality(Nullable(String))` | `male` / `female` / NULL |
+| `ingested_at` | `DateTime` | |
+
+---
+
 ## `ingestions`
 
 One row per VCF upload. Useful for management queries ("what's
@@ -437,7 +524,7 @@ DuckDB, polars, Spark — without going through cyvcf2.
 The symmetric pair of commands:
 
 ```bash
-# Out: three Parquet files in dump_dir/
+# Out: one Parquet file per table in dump_dir/
 vcfclick db dump cohort_a --out dump_dir/
 
 # In: same files, new (cohort, ingest_id) label
@@ -448,7 +535,9 @@ vcfclick db ingest-parquet cohort_b dump_dir/ \
 
 ### What gets written by `db dump`
 
-Three files in the output directory:
+One file per table present in the database (`missing_genotypes` and
+`populations` are skipped on a database too old to have them). The
+core three:
 
 - `variants.parquet` — every variant row, including the
   `ingested_at` server-default column from the table DDL.
@@ -457,7 +546,8 @@ Three files in the output directory:
 - `samples.parquet` — `(ingest_id, sample_id, cohort, sex,
   ingested_at)`.
 
-The ingestions-catalog table is *also* exported as
+Plus `missing_genotypes.parquet`, `populations.parquet` and
+`pedigree.parquet`. The ingestions-catalog table is *also* exported as
 `ingestions.parquet` for inspection but not consumed by
 `ingest-parquet` — provenance for the imported data is
 re-created against the new ingest_id at import time.
@@ -465,8 +555,14 @@ re-created against the new ingest_id at import time.
 ### What `db ingest-parquet` accepts
 
 The same directory layout `db dump` produces, with the same column
-schemas. The required file is `variants.parquet`. `genotypes.parquet`
-and `samples.parquet` are optional.
+schemas. The required file is `variants.parquet`. `genotypes.parquet`,
+`samples.parquet`, `missing_genotypes.parquet` and
+`populations.parquet` are optional (the last two get their `ingest_id`
+rewritten like the others; the panel rows for that `ingest_id` are
+replaced). A `variants.parquet` without the `n_called` / `an_called` /
+`ac_called` columns — a dump from an older vcfclick — is accepted and
+loads them as NULL. `db pull` likewise imports whatever columns and
+tables an older bundle has.
 
 Sample handling, in order of precedence:
 

@@ -15,6 +15,11 @@ labs and bioinformatics teams.
   compound-het) over a loaded pedigree, with gnomAD population-AF rarity
   filtering — validated against the GIAB benchmark trio.
 - Check per-sample quality with `db qc` (het/hom, Ti/Tv, chrX sex check).
+- Compute population-genetics statistics per population with
+  `db popgen` — θ_W, π, Tajima's D, Fay & Wu's H, heterozygosity, the
+  site-frequency spectrum (projected for missing data) and Hudson F_ST,
+  genome-wide or in sliding windows — after loading a population panel
+  (1000 Genomes format) with `db panel`.
 - Combine multiple callers' call sets with `set=` provenance — the
   GATK3 `CombineVariants` that GATK4 removed.
 - Explore cohorts in an optional terminal UI, or a local browser UI
@@ -145,6 +150,9 @@ Start here:
   multi-caller cohorts.
 - [Sample QC](docs/QC.md) - `db qc` per-sample het/hom, Ti/Tv, and a
   chrX-heterozygosity sex check flagged against the pedigree.
+- [Population genetics](docs/POPGEN.md) - load a population panel and
+  compute θ, π, Tajima's D, Fay & Wu's H, SFS and Hudson F_ST per
+  population; how missing data and ancestral alleles are handled.
 - [Schema reference](docs/SCHEMA.md) - table definitions, query
   conventions, sparse genotype rules, and common SQL patterns.
 - [FAQ](docs/FAQ.md) - common install, memory, query, backend, and data
@@ -171,9 +179,9 @@ The CLI manages named databases under:
 
 Set `VCFCLICK_HOME=/path/to/home` if you want databases somewhere else.
 
-### Four Cohort Tables
+### Cohort Tables
 
-Every database has the same logical tables:
+Every database has the same core logical tables:
 
 | Table | Meaning |
 |---|---|
@@ -181,9 +189,13 @@ Every database has the same logical tables:
 | `genotypes` | sparse non-reference sample calls only |
 | `samples` | one row per `(ingest_id, sample_id)` |
 | `ingestions` | one row per uploaded VCF or imported dump |
+| `missing_genotypes` | one row per fully missing (`./.`) sample call |
+| `pedigree`, `populations` | sample relationships and population labels, loaded separately |
 
 The most important rule: **`genotypes` is sparse**. Homozygous-reference
-calls (`0/0`) are not stored. See [schema query patterns](docs/SCHEMA.md#common-query-patterns)
+calls (`0/0`) are not stored; no-calls are recorded in `missing_genotypes`,
+and `variants.n_called` / `an_called` / `ac_called` hold exact per-site
+called counts. See [schema query patterns](docs/SCHEMA.md#common-query-patterns)
 before writing allele-frequency or hom-ref queries by hand.
 
 ### Backend Choice
@@ -240,6 +252,8 @@ the MCP tools.
   PED/FAM); vcfclick does not infer relationships from the VCF.
 - Trio analysis is candidate FILTERING, not variant calling; defensible
   de-novo needs `db ingest --keep-reference`. See [Trio](docs/TRIO.md).
+- `db popgen` analyses autosomes of one ingestion at a time; sex
+  chromosomes (which need per-sample ploidy) are not supported yet.
 - DuckDB backend support is useful but not identical to chDB support;
   some operations may be chDB-first.
 - The natural-language layer is meant to produce visible SQL, not to
