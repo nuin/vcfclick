@@ -234,7 +234,7 @@ def _log_factorial_table(n_max: int) -> np.ndarray:
 
 
 def project_sfs(
-    k: np.ndarray, n: np.ndarray, m: int, chunk: int = 4096
+    k: np.ndarray, n: np.ndarray, m: int, chunk: int | None = None
 ) -> tuple[np.ndarray, int]:
     """Hypergeometric projection of per-site counts down to m haplotypes.
 
@@ -253,6 +253,12 @@ def project_sfs(
     out = np.zeros(m + 1)
     if not keep.any():
         return out, 0
+    if (n[keep] == m).all():  # nothing to project: plain counts, exact
+        return sfs_counts(k[keep], m), int(keep.sum())
+    if chunk is None:
+        # Each chunk materialises chunk × (m+1) float arrays; keep that
+        # near 2M cells (~16 MB each) whatever the projection size.
+        chunk = max(1, 2_000_000 // (m + 1))
     pairs, weight = np.unique(
         np.stack([n[keep], k[keep]], axis=1), axis=0, return_counts=True
     )
@@ -276,6 +282,58 @@ def project_sfs(
         p = np.where(valid, np.exp(log_p), 0.0)
         out += (p * weight[start : start + chunk, None]).sum(axis=0)
     return out, int(keep.sum())
+
+
+def projected_thetas(
+    k: np.ndarray, n: np.ndarray, m: int
+) -> tuple[SfsThetas | None, int]:
+    """θ estimators of the SFS projected to m haplotypes, in closed form.
+
+    Equal to `thetas_from_sfs(project_sfs(k, n, m)[0])` but O(1) per
+    site instead of O(m): with J ~ Hypergeometric(n, k, m) at a site,
+
+        S   = Σ_sites 1 − P(J=0) − P(J=m)
+        θ_π = Σ_sites 2k(n−k)/(n(n−1))           (unchanged by projection)
+        θ_L = Σ_sites (E[J] − m·P(J=m)) / (m−1)
+        θ_H = Σ_sites 2(E[J²] − m²·P(J=m)) / (m(m−1))
+
+    using E[J] = mk/n and Var(J) = m(k/n)(1−k/n)(n−m)/(n−1). Sites with
+    n < m are dropped. Returns (thetas or None if no site, sites used).
+    """
+    if m < 2:
+        raise ValueError(f"projection size must be >= 2, got {m}")
+    k = np.asarray(k, dtype=np.int64)
+    n = np.asarray(n, dtype=np.int64)
+    keep = n >= m
+    if not keep.any():
+        return None, 0
+    k, n = k[keep], n[keep]
+    lf = _log_factorial_table(int(n.max()))
+
+    def log_comb(a: np.ndarray, b: int) -> np.ndarray:
+        ok = a >= b
+        safe = np.where(ok, a, b)
+        return np.where(ok, lf[safe] - lf[b] - lf[safe - b], -np.inf)
+
+    log_total = log_comb(n, m)
+    p0 = np.exp(log_comb(n - k, m) - log_total)
+    pm = np.exp(log_comb(k, m) - log_total)
+    nf, kf = n.astype(float), k.astype(float)
+    mean = m * kf / nf
+    var = np.divide(
+        m * (kf / nf) * (1 - kf / nf) * (nf - m),
+        nf - 1,
+        out=np.zeros_like(nf),
+        where=nf > 1,
+    )
+    s = float((1 - p0 - pm).sum())
+    pi = float(pi_per_site(k, n).sum())
+    theta_l = float((mean - m * pm).sum() / (m - 1))
+    theta_h = float((2 * (var + mean**2 - m * m * pm)).sum() / (m * (m - 1)))
+    thetas = SfsThetas(
+        n=m, s=s, pi=pi, theta_w=s / a1(m), theta_l=theta_l, theta_h=theta_h
+    )
+    return thetas, int(keep.sum())
 
 
 def sfs_counts(k: np.ndarray, n: int) -> np.ndarray:

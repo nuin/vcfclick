@@ -5,12 +5,17 @@ of retained sites with per-group (n, k, het, called) arrays and a report
 of what was dropped and why. `summary`, `sfs`, `fst` and `windows` work
 only on that prepared data, so every subcommand sees the same sites.
 
+Chromosomes are fetched and filtered one at a time; only retained sites
+are kept, in compact integer types, so peak memory is one chromosome's
+raw counts plus the retained arrays.
+
 Choices (documented in docs/POPGEN.md):
 
   * one ingestion at a time (sample identity is (ingest_id, sample_id),
     and two ingestions do not share a site list);
-  * autosomes only (sex chromosomes and MT are excluded; including them
-    needs per-sample ploidy and is refused in this version);
+  * autosomes only (sex chromosomes, MT and unplaced/decoy contigs are
+    excluded; including sex chromosomes needs per-sample ploidy and is
+    refused in this version);
   * the retained site set is shared by all groups: a site failing the
     call-rate threshold in any group is dropped for all, so per-group
     statistics and F_ST are computed over the same sites;
@@ -23,28 +28,57 @@ Choices (documented in docs/POPGEN.md):
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from popgen import estimators as est
-from popgen.ancestral import ANCESTRAL_IS_ALT, ANCESTRAL_IS_REF, polarise
+from popgen.ancestral import (
+    ANCESTRAL_IS_ALT,
+    ANCESTRAL_IS_REF,
+    aa_code,
+    orientation_from_codes,
+)
 from popgen.counts import (
     ALL_GROUP,
+    UNLABELLED,
+    ChromCounts,
     Region,
-    SiteCounts,
-    fetch_counts,
+    fetch_chrom,
     schema_features,
 )
 
-# Chromosomes excluded by "autosomes only": sex chromosomes of XY and ZW
-# systems, the PAR pseudo-contig and mitochondria (with or without a
-# `chr` prefix, any case).
-NON_AUTOSOMAL = frozenset({"X", "Y", "XY", "W", "Z", "M", "MT"})
+# Chromosomes excluded by "autosomes only", compared on the part of the
+# name before the first "_" (so hg38 alt/random/decoy contigs such as
+# chrX_KI270880v1_alt follow their chromosome) without a `chr` prefix,
+# case-insensitively: sex chromosomes of XY and ZW systems and their
+# pseudo-autosomal pseudo-contigs, mitochondria, and unplaced or decoy
+# sequence (chrUn_*, EBV, hs37d5, RefSeq NT_/NW_ scaffolds, GRCh37
+# GL/NC unplaced contigs).
+NON_AUTOSOMAL = frozenset(
+    {"X", "Y", "XY", "W", "Z", "M", "MT", "PAR1", "PAR2", "UN", "EBV", "NT", "NW"}
+)
+_NON_AUTOSOMAL_PREFIXES = ("HLA", "HS37D5", "HS38D1", "GL0", "KI2")
+# Human RefSeq chromosome accessions: NC_000001..NC_000022 are autosomes,
+# NC_000023/24 are X/Y and NC_012920 is the mitochondrion. Other naming
+# schemes are the user's responsibility (restrict with --region).
+_REFSEQ_HUMAN = re.compile(r"^NC_0000(\d\d)(\.\d+)?$", re.IGNORECASE)
+_REFSEQ_NON_AUTOSOMAL = ("NC_012920", "NC_007605")  # MT, EBV
 
 _BASES = frozenset("ACGT")
 _SEQUENCE = frozenset("ACGTN")
 _PASS = (None, "PASS", ".")
+
+DROP_REASONS = (
+    "non_autosomal",
+    "not_biallelic",
+    "variant_type",
+    "filter",
+    "inexact_group_counts",
+    "call_rate",
+    "maf",
+)
 
 
 class PopgenError(ValueError):
@@ -56,7 +90,17 @@ def bare_chrom(chrom: str) -> str:
 
 
 def is_autosome(chrom: str) -> bool:
-    return bare_chrom(chrom).upper() not in NON_AUTOSOMAL
+    """True for an autosome name (human-style conventions; see
+    NON_AUTOSOMAL). Anything unrecognised is treated as an autosome."""
+    m = _REFSEQ_HUMAN.match(chrom)
+    if m:
+        return 1 <= int(m.group(1)) <= 22
+    if chrom.upper().startswith(_REFSEQ_NON_AUTOSOMAL):
+        return False
+    base = bare_chrom(chrom.split("_", 1)[0]).upper()
+    if base in NON_AUTOSOMAL:
+        return False
+    return not bare_chrom(chrom).upper().startswith(_NON_AUTOSOMAL_PREFIXES)
 
 
 def chrom_order(chrom: str) -> tuple:
@@ -76,13 +120,22 @@ class SiteFilters:
 
 @dataclass
 class GroupData:
-    """Per-site arrays of one group over the retained sites."""
+    """Per-site arrays of one group over the retained sites, stored in a
+    compact unsigned type (uint16 when every count fits)."""
 
     size: int
-    n: np.ndarray  # called haplotypes
+    called: np.ndarray  # called individuals
     k: np.ndarray  # ALT alleles
     het: np.ndarray  # heterozygous individuals
-    called: np.ndarray  # called individuals
+
+    @property
+    def n(self) -> np.ndarray:
+        """Called haplotypes (diploid): 2 × called individuals."""
+        return 2 * self.called.astype(np.int64)
+
+    def at(self, sel) -> tuple[np.ndarray, np.ndarray]:
+        """(k, n) as int64 for the sites selected by `sel` (slice or mask)."""
+        return self.k[sel].astype(np.int64), 2 * self.called[sel].astype(np.int64)
 
 
 @dataclass
@@ -92,7 +145,8 @@ class Prepared:
     ancestral: str  # aa | aa-high | ref | none
     missing_data_tracked: bool
     regions: list[Region]
-    chrom: list[str]
+    stored_chroms: list[str]  # every in-scope chromosome, as stored
+    chrom_slices: list[tuple[str, int, int]]  # (stored name, start, stop)
     pos: np.ndarray
     orientation: np.ndarray  # -1 unpolarised, else ANCESTRAL_IS_REF/ALT
     groups: dict[str, GroupData]
@@ -101,14 +155,13 @@ class Prepared:
 
     @property
     def n_sites(self) -> int:
-        return len(self.chrom)
+        return len(self.pos)
 
-    def derived(self, group: str) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """(mask of polarised sites, derived count, n) for `group`."""
-        g = self.groups[group]
-        mask = self.orientation >= 0
-        d = np.where(self.orientation == ANCESTRAL_IS_ALT, g.n - g.k, g.k)
-        return mask, d, g.n
+    def derived(self, group: str, sel=slice(None)):
+        """(polarised mask, derived count, n) over `sel` for `group`."""
+        k, n = self.groups[group].at(sel)
+        o = self.orientation[sel]
+        return o >= 0, np.where(o == ANCESTRAL_IS_ALT, n - k, k), n
 
 
 def _variant_type_ok(ref: str, alt: str, include_indels: bool) -> bool:
@@ -121,9 +174,129 @@ def _variant_type_ok(ref: str, alt: str, include_indels: bool) -> bool:
 
 
 def _sequential_drop(keep: np.ndarray, test: np.ndarray, dropped: dict, why: str):
-    newly = keep & ~test
-    dropped[why] = int(newly.sum())
+    dropped[why] += int((keep & ~test).sum())
     return keep & test
+
+
+@dataclass(frozen=True)
+class _Groups:
+    """Group layout shared by every chromosome of one run."""
+
+    names: list[str]  # sorted group labels (["all"] when ungrouped)
+    sizes: np.ndarray  # samples per group
+    n_samples: int
+    grouped: bool  # False → the single group "all" = every sample
+
+
+def _resolve_groups(sess, ingest_id: str, by: str, features, warnings) -> tuple:
+    from popgen import counts as cq
+
+    sample_ids = cq.samples(sess, ingest_id)
+    if not sample_ids:
+        raise PopgenError(f"ingestion {ingest_id!r} has no samples")
+    group_labels: dict[str, str] = {}
+    if by != "all" and features.populations_table:
+        group_labels = cq.labels(sess, ingest_id, by)
+    if by != "all" and not group_labels:
+        if by == "super_population":
+            raise PopgenError(
+                f"no super_population labels for ingestion {ingest_id!r}; load "
+                "a panel with a super-population column (`vcfclick db panel`)"
+            )
+        warnings.append(
+            f"no population panel is loaded for ingestion {ingest_id!r}: "
+            "computing for the whole cohort as one group 'all' (load one "
+            "with `vcfclick db panel`, or pass --by all to silence this)"
+        )
+    stray = set(group_labels) - set(sample_ids)
+    if stray:  # labels() joins to samples, so this is a programming error
+        raise PopgenError(f"panel labels for samples not in {ingest_id!r}: {stray}")
+    if not group_labels:
+        return _Groups(
+            [ALL_GROUP], np.array([len(sample_ids)]), len(sample_ids), False
+        ), 0
+    names = sorted(set(group_labels.values()))
+    sizes = np.array([sum(1 for v in group_labels.values() if v == g) for g in names])
+    unlabelled = len(sample_ids) - int(sizes.sum())
+    if unlabelled < 0 or int(sizes.sum()) + unlabelled != len(sample_ids):
+        raise PopgenError(
+            f"inconsistent panel for {ingest_id!r}: {int(sizes.sum())} labelled "
+            f"of {len(sample_ids)} samples"
+        )
+    return _Groups(names, sizes, len(sample_ids), True), unlabelled
+
+
+def _filter_chunk(c: ChromCounts, groups: _Groups, filters: SiteFilters, features):
+    """keep mask, per-reason drops and tracked mask for one chromosome."""
+    n = len(c)
+    dropped = dict.fromkeys(DROP_REASONS, 0)
+    keep = np.ones(n, dtype=bool)
+
+    # Sites are ordered by (pos, ref, alt): records sharing a position are
+    # adjacent, so "more than one record here" is a neighbour comparison.
+    same_prev = np.zeros(n, dtype=bool)
+    same_prev[1:] = c.pos[1:] == c.pos[:-1]
+    shared = same_prev.copy()
+    shared[:-1] |= same_prev[1:]
+    keep = _sequential_drop(keep, ~shared, dropped, "not_biallelic")
+
+    vtype = np.array(
+        [
+            _variant_type_ok(r, a, filters.include_indels)
+            for r, a in zip(c.ref, c.alt, strict=True)
+        ],
+        dtype=bool,
+    )
+    keep = _sequential_drop(keep, vtype, dropped, "variant_type")
+
+    passing = np.array(
+        [(not filters.pass_only) or f in _PASS for f in c.filter], dtype=bool
+    )
+    keep = _sequential_drop(keep, passing, dropped, "filter")
+
+    missing_total = c.missing_total
+    alt_total = c.alt_total
+    tracked = (c.an_called >= 0) & features.called_columns
+    derived_an = 2 * (groups.n_samples - missing_total)
+    exact = ~tracked | ((derived_an == c.an_called) & (alt_total == c.ac_called))
+    keep = _sequential_drop(keep, exact, dropped, "inexact_group_counts")
+
+    call_ok = np.ones(n, dtype=bool)
+    if groups.grouped:
+        for gi, size in enumerate(groups.sizes):
+            rate = (size - c.missing_by_bucket[:, gi]) / size
+            call_ok &= rate >= filters.min_call_rate - 1e-12
+    else:
+        rate = (groups.n_samples - missing_total) / groups.n_samples
+        call_ok &= rate >= filters.min_call_rate - 1e-12
+    keep = _sequential_drop(keep, call_ok, dropped, "call_rate")
+
+    if filters.maf > 0:
+        p = np.divide(alt_total, derived_an, out=np.zeros(n), where=derived_an > 0)
+        maf = np.minimum(p, 1 - p)
+        keep = _sequential_drop(keep, maf >= filters.maf - 1e-12, dropped, "maf")
+
+    evidence = (
+        tracked
+        & (c.n_called < groups.n_samples)
+        & (c.an_called == 2 * c.n_called)
+        & (missing_total == 0)
+    )
+    return keep, dropped, tracked, bool(evidence.any())
+
+
+def _aa_codes(c: ChromCounts, idx: np.ndarray) -> np.ndarray:
+    """`aa_code` of the sites `idx`, memoised on (REF, ALT, AA): the same
+    few combinations repeat across a chromosome."""
+    memo: dict[tuple, int] = {}
+    out = np.empty(len(idx), dtype=np.int8)
+    for j, i in enumerate(idx.tolist()):
+        key = (c.ref[i], c.alt[i], c.aa[i])
+        code = memo.get(key)
+        if code is None:
+            code = memo[key] = aa_code(*key)
+        out[j] = code
+    return out
 
 
 def prepare(
@@ -133,46 +306,81 @@ def prepare(
     by: str,
     filters: SiteFilters,
     ancestral: str | None,
+    allow_untracked: bool = False,
 ) -> Prepared:
     """Fetch, filter and polarise the sites of one ingestion."""
     from popgen import counts as cq
 
     features = schema_features()
     warnings: list[str] = []
+    groups, unlabelled = _resolve_groups(sess, ingest_id, by, features, warnings)
+    grouping = by if groups.grouped else "all"
+    buckets = (groups.names if groups.grouped else []) + [UNLABELLED]
+    dtype = np.uint16 if 2 * int(groups.sizes.max()) < 2**16 else np.uint32
 
-    group_labels: dict[str, str] = {}
-    grouping = "all"
-    if by != "all" and features.populations_table:
-        group_labels = cq.labels(sess, ingest_id, by)
-        if group_labels:
-            grouping = by
-    if by == "super_population" and grouping == "all":
-        raise PopgenError(
-            f"no super_population labels for ingestion {ingest_id!r}; load a "
-            "panel with a super-population column (`vcfclick db panel`)"
-        )
-
-    counts = fetch_counts(
-        sess,
-        ingest_id,
-        regions,
-        None if grouping == "all" else grouping,
-        features,
-        group_labels,
+    dropped = dict.fromkeys(DROP_REASONS, 0)
+    chrom_list = sorted(
+        cq.chromosomes(sess, ingest_id, regions), key=lambda c: chrom_order(c[0])
     )
-    if counts.n_samples == 0:
-        raise PopgenError(f"ingestion {ingest_id!r} has no samples")
-    unlabelled = counts.n_samples - len(group_labels) if group_labels else 0
+    in_scope = sum(n for _, n in chrom_list)
+    pieces: dict[str, list] = {"pos": [], "aa": [], "called": [], "k": [], "het": []}
+    slices: list[tuple[str, int, int]] = []
+    tracked_all, missing_unrecorded, any_aa = True, False, False
+    offset = 0
+    for chrom, count in chrom_list:
+        if not is_autosome(chrom):
+            dropped["non_autosomal"] += count
+            continue
+        c = cq.fetch_chrom(
+            sess,
+            ingest_id,
+            chrom,
+            regions,
+            grouping if groups.grouped else None,
+            buckets,
+            features,
+        )
+        keep, d, tracked, unrecorded = _filter_chunk(c, groups, filters, features)
+        for reason, value in d.items():
+            dropped[reason] += value
+        tracked_all &= bool(tracked.all())
+        missing_unrecorded |= unrecorded
+        any_aa |= any(a is not None for a in c.aa)
+        idx = np.flatnonzero(keep)
+        if not len(idx):
+            continue
+        pieces["aa"].append(_aa_codes(c, idx))
+        pieces["pos"].append(c.pos[idx])
+        if groups.grouped:
+            called = groups.sizes[None, :] - c.missing_by_bucket[idx, :-1]
+            k, het = c.alt_by_bucket[idx, :-1], c.het_by_bucket[idx, :-1]
+        else:
+            called = (groups.n_samples - c.missing_total[idx])[:, None]
+            k, het = c.alt_total[idx][:, None], c.het_total[idx][:, None]
+        pieces["called"].append(called.astype(dtype))
+        pieces["k"].append(k.astype(dtype))
+        pieces["het"].append(het.astype(dtype))
+        slices.append((chrom, offset, offset + len(idx)))
+        offset += len(idx)
 
-    keep, dropped, tracked = _filter_sites(counts, filters, features, warnings)
-    tracked_all = bool(tracked.all()) if len(counts) else features.called_columns
-    missing_unrecorded = _missing_unrecorded(counts, tracked)
     missing_data_tracked = (
         features.called_columns
         and features.missing_table
         and tracked_all
         and not missing_unrecorded
     )
+    if not missing_data_tracked and not allow_untracked:
+        why = (
+            "was loaded with --no-record-missing (per-sample missing calls "
+            "unknown; sites with missing calls would be dropped)"
+            if features.called_columns and features.missing_table and tracked_all
+            else "predates called-genotype tracking (missing calls cannot be "
+            "told from 0/0 and would be counted as 0/0)"
+        )
+        raise PopgenError(
+            f"ingestion {ingest_id!r} {why}. Re-ingest the VCF for exact "
+            "results, or pass --allow-untracked to compute anyway."
+        )
     if not tracked_all:
         warnings.append(
             "this database (or ingestion) predates called-genotype tracking: "
@@ -185,47 +393,54 @@ def prepare(
             "called counts are unknown, so sites with missing calls are "
             "dropped (missing_data_tracked: false)"
         )
-
-    if ancestral is None:
-        ancestral = "aa" if any(a is not None for a in counts.aa) else "none"
-    idx = np.flatnonzero(keep)
-    orientation = np.array(
-        [
-            -1
-            if (o := polarise(counts.ref[i], counts.alt[i], counts.aa[i], ancestral))
-            is None
-            else o
-            for i in idx
-        ],
-        dtype=np.int64,
-    )
-
-    groups = {}
-    for name in sorted(counts.group_size):
-        size = counts.group_size[name]
-        missing = counts.group_missing[name][idx]
-        called = size - missing
-        groups[name] = GroupData(
-            size=size,
-            n=2 * called,
-            k=counts.group_alt[name][idx],
-            het=counts.group_het[name][idx],
-            called=called,
+    if dropped["inexact_group_counts"]:
+        warnings.append(
+            f"{dropped['inexact_group_counts']} site(s) dropped: per-group "
+            "called counts cannot be derived exactly there (partially missing "
+            "./1, haploid or polyploid calls, or missing calls not recorded)"
         )
 
+    def cat(name: str, width: int, kind) -> np.ndarray:
+        if pieces[name]:
+            return np.concatenate(pieces[name])
+        return np.zeros((0, width) if width else 0, dtype=kind)
+
+    ncols = len(groups.names)
+    columns: dict[str, list[np.ndarray]] = {}
+    for x in ("called", "k", "het"):
+        # One count type at a time, freeing its pieces first, so the
+        # retained data is never held twice over.
+        mat = cat(x, ncols, dtype)
+        pieces[x].clear()
+        columns[x] = [np.ascontiguousarray(mat[:, gi]) for gi in range(ncols)]
+        del mat
+    pos = cat("pos", 0, np.int64)
+    if ancestral is None:
+        ancestral = "aa" if any_aa else "none"
+    orientation = orientation_from_codes(cat("aa", 0, np.int8), ancestral)
+
+    group_data = {
+        name: GroupData(
+            size=int(groups.sizes[gi]),
+            called=columns["called"][gi],
+            k=columns["k"][gi],
+            het=columns["het"][gi],
+        )
+        for gi, name in enumerate(groups.names)
+    }
+
+    n_retained = len(pos)
     n_polarised = int((orientation >= 0).sum())
     report = {
-        "in_scope": len(counts),
-        "retained": int(len(idx)),
+        "in_scope": in_scope,
+        "retained": n_retained,
         "dropped": dropped,
         "polarised": n_polarised if ancestral != "none" else 0,
-        "unpolarised": int(len(idx)) - n_polarised
-        if ancestral != "none"
-        else int(len(idx)),
-        "samples": counts.n_samples,
+        "unpolarised": n_retained - n_polarised if ancestral != "none" else n_retained,
+        "samples": groups.n_samples,
         "unlabelled_samples": unlabelled,
     }
-    if ancestral in ("aa", "aa-high") and len(idx) and n_polarised == 0:
+    if ancestral in ("aa", "aa-high") and n_retained and n_polarised == 0:
         warnings.append(
             f"--ancestral {ancestral}: no retained site could be polarised "
             "(INFO/AA missing or matching neither REF nor ALT)"
@@ -236,97 +451,14 @@ def prepare(
         ancestral=ancestral,
         missing_data_tracked=bool(missing_data_tracked),
         regions=regions,
-        chrom=[counts.chrom[i] for i in idx],
-        pos=counts.pos[idx],
+        stored_chroms=[c for c, _ in chrom_list],
+        chrom_slices=slices,
+        pos=pos,
         orientation=orientation,
-        groups=groups,
+        groups=group_data,
         report=report,
         warnings=warnings,
     )
-
-
-def _filter_sites(
-    counts: SiteCounts, filters: SiteFilters, features, warnings: list[str]
-):
-    n = len(counts)
-    keep = np.ones(n, dtype=bool)
-    dropped: dict[str, int] = {}
-
-    keep = _sequential_drop(
-        keep,
-        np.array([is_autosome(c) for c in counts.chrom], dtype=bool),
-        dropped,
-        "non_autosomal",
-    )
-
-    per_position: dict[tuple[str, int], int] = {}
-    for c, p in zip(counts.chrom, counts.pos.tolist(), strict=True):
-        per_position[(c, p)] = per_position.get((c, p), 0) + 1
-    biallelic = np.array(
-        [
-            per_position[(c, p)] == 1
-            for c, p in zip(counts.chrom, counts.pos.tolist(), strict=True)
-        ],
-        dtype=bool,
-    )
-    keep = _sequential_drop(keep, biallelic, dropped, "not_biallelic")
-
-    vtype = np.array(
-        [
-            _variant_type_ok(r, a, filters.include_indels)
-            for r, a in zip(counts.ref, counts.alt, strict=True)
-        ],
-        dtype=bool,
-    )
-    keep = _sequential_drop(keep, vtype, dropped, "variant_type")
-
-    passing = np.array(
-        [(not filters.pass_only) or f in _PASS for f in counts.filter], dtype=bool
-    )
-    keep = _sequential_drop(keep, passing, dropped, "filter")
-
-    tracked = (counts.an_called >= 0) & features.called_columns
-    derived_an = 2 * (counts.n_samples - counts.missing_total)
-    exact = ~tracked | (
-        (derived_an == counts.an_called) & (counts.alt_total == counts.ac_called)
-    )
-    keep = _sequential_drop(keep, exact, dropped, "inexact_group_counts")
-    if dropped["inexact_group_counts"]:
-        warnings.append(
-            f"{dropped['inexact_group_counts']} site(s) dropped: per-group "
-            "called counts cannot be derived exactly there (partially missing "
-            "./1, haploid or polyploid calls, or missing calls not recorded)"
-        )
-
-    call_ok = np.ones(n, dtype=bool)
-    for name, size in counts.group_size.items():
-        rate = (size - counts.group_missing[name]) / size
-        call_ok &= rate >= filters.min_call_rate - 1e-12
-    keep = _sequential_drop(keep, call_ok, dropped, "call_rate")
-
-    if filters.maf > 0:
-        an = 2 * (counts.n_samples - counts.missing_total)
-        p = np.divide(counts.alt_total, an, out=np.zeros(n), where=an > 0)
-        maf = np.minimum(p, 1 - p)
-        keep = _sequential_drop(keep, maf >= filters.maf - 1e-12, dropped, "maf")
-    else:
-        dropped["maf"] = 0
-    return keep, dropped, tracked
-
-
-def _missing_unrecorded(counts: SiteCounts, tracked: np.ndarray) -> bool:
-    """True when the ingestion evidently skipped `missing_genotypes`: a
-    site has fully missing diploid calls (n_called < N with exactly two
-    called alleles per called sample) but no missing rows."""
-    if not len(counts):
-        return False
-    evidence = (
-        tracked
-        & (counts.n_called < counts.n_samples)
-        & (counts.an_called == 2 * counts.n_called)
-        & (counts.missing_total == 0)
-    )
-    return bool(evidence.any())
 
 
 # ───────────────────────────── statistics ───────────────────────────────
@@ -337,30 +469,55 @@ def projection_size(prep: Prepared, group: str, project: int | None) -> int | No
     number of called haplotypes at any retained site in the group."""
     if project is not None:
         return project
-    n = prep.groups[group].n
-    return int(n.min()) if len(n) else None
+    called = prep.groups[group].called
+    return 2 * int(called.min()) if len(called) else None
+
+
+def projection_warnings(prep: Prepared, project: int | None) -> list[str]:
+    """Explain a projection size too small for the statistics that use it
+    (typically a site with almost no calls kept by --min-call-rate 0)."""
+    out = []
+    for name in prep.groups:
+        m = projection_size(prep, name, project)
+        if m is None or m >= 4:
+            continue
+        what = "the SFS" if m < 2 else "Tajima's D and Fay & Wu's H"
+        source = (
+            "--project"
+            if project is not None
+            else "the smallest number of called haplotypes at a retained site"
+        )
+        out.append(
+            f"group {name}: projection size is {m} ({source}), so {what} "
+            f"cannot be computed (needs at least {2 if m < 2 else 4}); raise "
+            "--min-call-rate or pass a larger --project"
+        )
+    return out
 
 
 def _projected(k: np.ndarray, n: np.ndarray, m: int | None):
+    """θ estimators of the projected SFS (closed form; see
+    estimators.projected_thetas), or (None, 0) when m is unusable."""
     if m is None or m < 2:
         return None, 0
-    return est.project_sfs(k, n, m)
+    return est.projected_thetas(k, n, m)
 
 
-def _diversity(prep: Prepared, group: str, mask: np.ndarray, m: int | None) -> dict:
-    """S, θ_W, π and Tajima's D for `group` over the sites in `mask`."""
-    g = prep.groups[group]
-    k, n = g.k[mask], g.n[mask]
-    n_sites = int(mask.sum())
+def _n_selected(prep: Prepared, sel) -> int:
+    if isinstance(sel, slice):
+        return len(range(*sel.indices(prep.n_sites)))
+    return int(np.count_nonzero(sel))
+
+
+def _diversity(prep: Prepared, group: str, sel, m: int | None) -> dict:
+    """S, θ_W, π and Tajima's D for `group` over the sites in `sel`."""
+    k, n = prep.groups[group].at(sel)
     theta_w = float(est.watterson_per_site(k, n).sum())
     pi = float(est.pi_per_site(k, n).sum())
-    xi, used = _projected(k, n, m)
-    d = None
-    if xi is not None and used:
-        t = est.thetas_from_sfs(xi)
-        d = est.tajima_d(t.pi, t.s, m)
+    t, used = _projected(k, n, m)
+    d = est.tajima_d(t.pi, t.s, m) if t is not None and used else None
     return {
-        "sites": n_sites,
+        "sites": len(k),
         "segregating_sites": int(est.segregating(k, n).sum()),
         "theta_w": theta_w,
         "pi": pi,
@@ -368,28 +525,27 @@ def _diversity(prep: Prepared, group: str, mask: np.ndarray, m: int | None) -> d
     }
 
 
-def _fay_wu(prep: Prepared, group: str, mask: np.ndarray, m: int | None) -> dict:
+def _fay_wu(prep: Prepared, group: str, sel, m: int | None) -> dict:
     if prep.ancestral == "none":
         return {"fay_wu_h": None, "fay_wu_h_raw": None, "polarised_sites": 0}
-    pol, d, n = prep.derived(group)
-    sel = pol & mask
-    xi, used = _projected(d[sel], n[sel], m)
+    pol, d, n = prep.derived(group, sel)
+    t, used = _projected(d[pol], n[pol], m)
     h = h_raw = None
-    if xi is not None and used:
-        t = est.thetas_from_sfs(xi)
+    if t is not None and used:
         h = est.fay_wu_h_normalised(t.pi, t.theta_l, t.s, m)
         h_raw = t.pi - t.theta_h if t.s > 0 else None
-    return {"fay_wu_h": h, "fay_wu_h_raw": h_raw, "polarised_sites": int(sel.sum())}
+    return {"fay_wu_h": h, "fay_wu_h_raw": h_raw, "polarised_sites": int(pol.sum())}
 
 
 def summary(prep: Prepared, project: int | None = None) -> list[dict]:
     """Per-group diversity summary."""
     out = []
-    every = np.ones(prep.n_sites, dtype=bool)
+    every = slice(None)
     for name, g in prep.groups.items():
         m = projection_size(prep, name, project)
         div = _diversity(prep, name, every, m)
-        het = est.heterozygosity(g.het, g.called, g.k, g.n)
+        k, n = g.at(every)
+        het = est.heterozygosity(g.het, g.called, k, n)
         n_sites = div["sites"]
         out.append(
             {
@@ -428,7 +584,8 @@ def sfs(prep: Prepared, project: int | None = None) -> list[dict]:
             )
             out.append(entry)
             continue
-        xi, used = est.project_sfs(g.k, g.n, m)
+        k, n = g.at(slice(None))
+        xi, used = est.project_sfs(k, n, m)
         entry["sites_used"] = used
         entry["sites_dropped"] = prep.n_sites - used
         entry["folded"] = est.fold(xi).tolist()
@@ -449,19 +606,20 @@ def group_pairs(prep: Prepared) -> list[tuple[str, str]]:
     return [(a, b) for i, a in enumerate(names) for b in names[i + 1 :]]
 
 
-def _fst_pair(prep: Prepared, a: str, b: str, mask: np.ndarray) -> dict:
-    ga, gb = prep.groups[a], prep.groups[b]
-    sel = mask & (ga.n >= 2) & (gb.n >= 2)
+def _fst_pair(prep: Prepared, a: str, b: str, sel) -> dict:
+    k1, n1 = prep.groups[a].at(sel)
+    k2, n2 = prep.groups[b].at(sel)
+    ok = (n1 >= 2) & (n2 >= 2)
     return {
-        "fst": est.hudson_fst(ga.k[sel], ga.n[sel], gb.k[sel], gb.n[sel]),
-        "sites": int(sel.sum()),
+        "fst": est.hudson_fst(k1[ok], n1[ok], k2[ok], n2[ok]),
+        "sites": int(ok.sum()),
     }
 
 
 def fst(prep: Prepared, window: int | None = None, step: int | None = None) -> dict:
     """Pairwise Hudson F_ST (ratio of averages), overall and per window."""
     pairs = group_pairs(prep)
-    every = np.ones(prep.n_sites, dtype=bool)
+    every = slice(None)
     result: dict = {
         "pairs": [
             {"group1": a, "group2": b, **_fst_pair(prep, a, b, every)} for a, b in pairs
@@ -469,54 +627,72 @@ def fst(prep: Prepared, window: int | None = None, step: int | None = None) -> d
     }
     if window:
         rows = []
-        for chrom, start, end, mask in iter_windows(prep, window, step or window):
-            row = {"chrom": chrom, "start": start, "end": end, "sites": int(mask.sum())}
+        for chrom, start, end, sel in iter_windows(prep, window, step or window):
+            row = {
+                "chrom": chrom,
+                "start": start,
+                "end": end,
+                "sites": _n_selected(prep, sel),
+            }
             for a, b in pairs:
-                row[f"fst_{a}_{b}"] = _fst_pair(prep, a, b, mask)["fst"]
+                row[f"fst_{a}_{b}"] = _fst_pair(prep, a, b, sel)["fst"]
             rows.append(row)
         result["windows"] = rows
     return result
 
 
-def _window_bounds(prep: Prepared) -> list[tuple[str, int, int]]:
-    """(chrom, start, end) spans to tile: the requested regions, or each
-    chromosome with retained sites from 1 to its last retained site."""
+def _stored_name(prep: Prepared, chrom: str) -> str:
+    """The stored spelling of `chrom` (chr1 vs 1), when it is in scope."""
+    if chrom in prep.stored_chroms:
+        return chrom
+    for stored in prep.stored_chroms:
+        if bare_chrom(stored) == bare_chrom(chrom):
+            return stored
+    return chrom
+
+
+def _window_spans(prep: Prepared) -> list[tuple[str, int, int, int, int]]:
+    """(stored chrom, start bp, end bp, first site, stop site) spans to
+    tile: the requested regions, or each chromosome with retained sites
+    from 1 to its last retained site."""
+    by_name = {c: (a, b) for c, a, b in prep.chrom_slices}
     spans = []
     if prep.regions:
-        last: dict[str, int] = {}
-        for c, p in zip(prep.chrom, prep.pos.tolist(), strict=True):
-            last[bare_chrom(c)] = max(last.get(bare_chrom(c), 0), p)
         for r in prep.regions:
+            name = _stored_name(prep, r.chrom)
+            a, b = by_name.get(name, (0, 0))
             if r.start is None:
-                end = last.get(bare_chrom(r.chrom))
-                if end:
-                    spans.append((r.chrom, 1, end))
+                if b > a:
+                    spans.append((name, 1, int(prep.pos[b - 1]), a, b))
             else:
-                spans.append((r.chrom, r.start, r.end if r.end else r.start))
+                spans.append((name, r.start, r.end if r.end else r.start, a, b))
         return spans
-    by_chrom: dict[str, int] = {}
-    for c, p in zip(prep.chrom, prep.pos.tolist(), strict=True):
-        by_chrom[c] = max(by_chrom.get(c, 0), p)
-    for c in sorted(by_chrom, key=chrom_order):
-        spans.append((c, 1, by_chrom[c]))
+    for name, a, b in prep.chrom_slices:
+        spans.append((name, 1, int(prep.pos[b - 1]), a, b))
     return spans
 
 
 def iter_windows(prep: Prepared, window: int, step: int):
-    """Yield (chrom, start, end, site mask) for sliding windows."""
+    """Yield (stored chrom, start, end, site slice) for sliding windows.
+
+    Each chromosome's retained sites are a contiguous, position-sorted
+    slice, so a window is two binary searches and a slice — no full-length
+    masks. Tiling stops at the first window that reaches the span's end.
+    """
     if window < 1 or step < 1:
         raise PopgenError("--window and --step must be positive")
-    chroms = np.array([bare_chrom(c) for c in prep.chrom], dtype=object)
-    for chrom, lo, hi in _window_bounds(prep):
-        on_chrom = chroms == bare_chrom(chrom)
-        start = lo
-        while start <= hi:
-            end = min(start + window - 1, hi)
-            mask = on_chrom & (prep.pos >= start) & (prep.pos <= end)
-            yield chrom, start, end, mask
-            if end >= hi:
-                break
-            start += step
+    for chrom, lo, hi, a, b in _window_spans(prep):
+        starts = np.arange(lo, hi + 1, step, dtype=np.int64)
+        ends = np.minimum(starts + window - 1, hi)
+        last = int(np.argmax(ends >= hi)) if len(ends) else -1
+        starts, ends = starts[: last + 1], ends[: last + 1]
+        pos = prep.pos[a:b]
+        firsts = a + np.searchsorted(pos, starts, side="left")
+        stops = a + np.searchsorted(pos, ends, side="right")
+        for s, e, f, t in zip(
+            starts.tolist(), ends.tolist(), firsts.tolist(), stops.tolist(), strict=True
+        ):
+            yield chrom, s, e, slice(f, t)
 
 
 def windows(
@@ -534,16 +710,16 @@ def windows(
     sizes = {name: projection_size(prep, name, project) for name in prep.groups}
     pairs = group_pairs(prep) if with_fst else []
     rows = []
-    for chrom, start, end, mask in iter_windows(prep, window, step or window):
+    for chrom, start, end, sel in iter_windows(prep, window, step or window):
         length = end - start + 1
         row: dict = {
             "chrom": chrom,
             "start": start,
             "end": end,
-            "sites": int(mask.sum()),
+            "sites": _n_selected(prep, sel),
         }
         for name in prep.groups:
-            div = _diversity(prep, name, mask, sizes[name])
+            div = _diversity(prep, name, sel, sizes[name])
             row[f"{name}_S"] = div["segregating_sites"]
             row[f"{name}_theta_w"] = div["theta_w"]
             row[f"{name}_pi"] = div["pi"]
@@ -551,7 +727,7 @@ def windows(
             row[f"{name}_pi_per_bp"] = div["pi"] / length
             row[f"{name}_tajima_d"] = div["tajima_d"]
         for a, b in pairs:
-            row[f"fst_{a}_{b}"] = _fst_pair(prep, a, b, mask)["fst"]
+            row[f"fst_{a}_{b}"] = _fst_pair(prep, a, b, sel)["fst"]
         rows.append(row)
     return rows
 
@@ -562,8 +738,10 @@ __all__ = [
     "PopgenError",
     "Prepared",
     "SiteFilters",
+    "fetch_chrom",
     "fst",
     "prepare",
+    "projection_warnings",
     "sfs",
     "summary",
     "windows",

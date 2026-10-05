@@ -74,3 +74,44 @@ def polarise(ref: str, alt: str, aa: str | None, mode: str) -> int | None:
     if norm.allele == alt.upper():
         return ANCESTRAL_IS_ALT
     return None
+
+
+# Mode-independent per-site AA codes, so a site's polarisation can be
+# decided once at fetch time and the --ancestral mode applied later as an
+# array operation (and without keeping REF/ALT/AA strings in memory).
+AA_UNKNOWN = 0
+AA_HIGH_REF = 1
+AA_HIGH_ALT = 2
+AA_LOW_REF = 3
+AA_LOW_ALT = 4
+
+
+def aa_code(ref: str, alt: str, aa: str | None) -> int:
+    """Classify INFO/AA against REF/ALT (see `polarise` for the rules)."""
+    norm = normalise_aa(aa)
+    if norm is None:
+        return AA_UNKNOWN
+    if norm.allele == ref.upper():
+        return AA_HIGH_REF if norm.high_confidence else AA_LOW_REF
+    if norm.allele == alt.upper():
+        return AA_HIGH_ALT if norm.high_confidence else AA_LOW_ALT
+    return AA_UNKNOWN
+
+
+def orientation_from_codes(codes, mode: str):
+    """Vectorised `polarise`: per-site ANCESTRAL_IS_REF / ANCESTRAL_IS_ALT,
+    or -1 where unpolarised, for an int array of `aa_code` values."""
+    import numpy as np
+
+    if mode not in ANCESTRAL_MODES:
+        raise ValueError(f"unknown ancestral mode {mode!r}")
+    codes = np.asarray(codes)
+    out = np.full(codes.shape, -1, dtype=np.int8)
+    if mode == "ref":
+        out[:] = ANCESTRAL_IS_REF
+    elif mode != "none":
+        ref_codes = [AA_HIGH_REF] + ([AA_LOW_REF] if mode == "aa" else [])
+        alt_codes = [AA_HIGH_ALT] + ([AA_LOW_ALT] if mode == "aa" else [])
+        out[np.isin(codes, ref_codes)] = ANCESTRAL_IS_REF
+        out[np.isin(codes, alt_codes)] = ANCESTRAL_IS_ALT
+    return out

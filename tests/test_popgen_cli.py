@@ -450,7 +450,22 @@ def test_older_database_warns_and_treats_missing_as_reference(
         "DROP TABLE populations",
     ):
         _vc(home, backend, "db", "query", "pg", sql)
-    r = _vc(home, backend, "db", "popgen", "summary", "pg", "--format", "json")
+    refused = _vc(home, backend, "db", "popgen", "summary", "pg", ok=False)
+    assert "predates called-genotype tracking" in refused.stderr
+    assert "--allow-untracked" in refused.stderr
+    r = _vc(
+        home,
+        backend,
+        "db",
+        "popgen",
+        "summary",
+        "pg",
+        "--allow-untracked",
+        "--by",
+        "all",
+        "--format",
+        "json",
+    )
     doc = json.loads(r.stdout)
     assert doc["missing_data_tracked"] is False
     assert r.stderr.count("predates called-genotype tracking") == 1  # warned once
@@ -476,10 +491,109 @@ def test_no_record_missing_drops_sites_with_missing_calls(vcfclick_home, popgen_
         "--serial",
         "--no-record-missing",
     )
-    r = _vc(home, b, "db", "popgen", "summary", "pg", "--format", "json")
+    refused = _vc(home, b, "db", "popgen", "summary", "pg", ok=False)
+    assert "--no-record-missing" in refused.stderr
+    r = _vc(
+        home,
+        b,
+        "db",
+        "popgen",
+        "summary",
+        "pg",
+        "--allow-untracked",
+        "--format",
+        "json",
+    )
     doc = json.loads(r.stdout)
     assert doc["missing_data_tracked"] is False
     assert "--no-record-missing" in r.stderr
     # 1:400, 1:1100 and 1:1300 have ./. calls → counts not exact → dropped
     assert doc["sites"]["dropped"]["inexact_group_counts"] == 5
     assert doc["sites"]["retained"] == 6
+
+
+# ─────────────────────── review follow-ups (regressions) ─────────────────
+
+
+def test_stale_panel_labels_do_not_change_group_sizes(
+    vcfclick_home, popgen_vcf, tmp_path
+):
+    """Repro: panel loaded, then the ingest_id re-ingested from a VCF
+    without A1 and A2. YRI must have 2 samples (not 4) and the unlabelled
+    count must stay 1 (U1), never negative — whether the stale rows were
+    pruned at ingest or are still in `populations`."""
+    import shutil
+    import subprocess
+
+    if not shutil.which("bcftools"):
+        pytest.skip("bcftools not on PATH")
+    fewer = tmp_path / "fewer.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", "-s", "^A1,A2", "-Oz", "-o", str(fewer), str(popgen_vcf)],
+        check=True,
+    )
+    subprocess.run(["tabix", "-p", "vcf", str(fewer)], check=True)
+    for b in BACKENDS:
+        home = vcfclick_home / b
+        _vc(home, b, "db", "create", "pg")
+        _vc(
+            home,
+            b,
+            "db",
+            "ingest",
+            "pg",
+            str(popgen_vcf),
+            "--ingest-id",
+            "i1",
+            "--serial",
+        )
+        _vc(home, b, "db", "panel", "pg", str(FIXTURES / "popgen.panel"))
+        _vc(home, b, "db", "ingest", "pg", str(fewer), "--ingest-id", "i1", "--serial")
+        # Re-insert stale rows behind the loader's back: the analysis must
+        # still ignore labels of samples that are not in the ingestion.
+        _vc(
+            home,
+            b,
+            "db",
+            "query",
+            "pg",
+            "INSERT INTO populations (ingest_id, sample_id, population, "
+            "super_population, sex) VALUES ('i1', 'A1', 'YRI', 'AFR', NULL), "
+            "('i1', 'GHOST', 'YRI', 'AFR', NULL)",
+        )
+        doc = json.loads(
+            _vc(home, b, "db", "popgen", "summary", "pg", "--format", "json").stdout
+        )
+        sizes = {r["group"]: r["n_samples"] for r in doc["results"]}
+        assert sizes == {"CEU": 4, "CHB": 2, "YRI": 2}
+        assert doc["sites"]["samples"] == 9
+        assert doc["sites"]["unlabelled_samples"] == 1
+        assert by_group(doc)["YRI"]["projection_n"] == 4
+
+
+def test_no_panel_fallback_warns(vcfclick_home, popgen_vcf):
+    home, b = vcfclick_home, "duckdb"
+    _vc(home, b, "db", "create", "pg")
+    _vc(home, b, "db", "ingest", "pg", str(popgen_vcf), "--ingest-id", "kg", "--serial")
+    r = _vc(home, b, "db", "popgen", "summary", "pg", "--format", "json")
+    assert "no population panel is loaded" in r.stderr
+    assert json.loads(r.stdout)["grouping"] == "all"
+    quiet = _vc(home, b, "db", "popgen", "summary", "pg", "--by", "all")
+    assert "no population panel" not in quiet.stderr
+
+
+def test_projection_too_small_warns(homes):
+    # --min-call-rate 0 keeps 1:1100, where only one CEU sample is called:
+    # the default CEU projection is 2 haplotypes, too few for D and H.
+    doc = popgen(homes, "summary", "pg", "--min-call-rate", "0")
+    assert by_group(doc)["CEU"]["projection_n"] == 2
+    assert by_group(doc)["CEU"]["tajima_d"] is None
+    assert any("group CEU: projection size is 2" in w for w in doc["warnings"])
+
+
+def test_output_uses_stored_chromosome_names(homes):
+    """The fixture stores `1`; asking for chr1 still reports `1`."""
+    doc = popgen(homes, "windows", "pg", "--region", "chr1:1-1400", "--window", "700")
+    assert {r["chrom"] for r in doc["results"]} == {"1"}
+    doc = popgen(homes, "fst", "pg", "--region", "chr1", "--window", "700")
+    assert {r["chrom"] for r in doc["windows"]} == {"1"}

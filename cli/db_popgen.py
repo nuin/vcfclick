@@ -37,6 +37,7 @@ class CommonOptions:
     maf: float
     ancestral: str | None
     include_sex_chroms: bool
+    allow_untracked: bool
     out_format: str
 
 
@@ -109,6 +110,14 @@ def _common_options(default_format: str = "table"):
                 "--include-sex-chroms",
                 is_flag=True,
                 help="Not supported yet: X/Y need per-sample ploidy.",
+            ),
+            click.option(
+                "--allow-untracked",
+                is_flag=True,
+                help="Compute even when the ingestion has no missing-call "
+                "tracking (ingested before it existed, or with "
+                "--no-record-missing). Output then says "
+                "missing_data_tracked: false.",
             ),
             click.option(
                 "--format",
@@ -222,6 +231,7 @@ def _prepare(options: CommonOptions):
                 maf=options.maf,
             ),
             options.ancestral,
+            allow_untracked=options.allow_untracked,
         )
     except (PopgenError, ValueError) as e:
         raise click.ClickException(str(e)) from e
@@ -334,6 +344,12 @@ def _command(name: str, default_format: str = "table", project: bool = False):
         def run(**kwargs):
             options, rest = _split_common(kwargs)
             prep = _prepare(options)
+            if "project" in rest:
+                from popgen.analysis import projection_warnings
+
+                for w in projection_warnings(prep, rest["project"]):
+                    prep.warnings.append(w)
+                    click.echo(f"warning: {w}", err=True)
             return f(options, prep, **rest)
 
         cmd = _common_options(default_format)(run)
