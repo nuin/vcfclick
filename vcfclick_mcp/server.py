@@ -51,6 +51,11 @@ variants — one row per (ingest_id, chrom, pos, ref, alt).
   mandatory fields (vcf_id, qual, filter). Multi-allelic sites are
   pre-decomposed: per-ALT INFO fields are scalars, not arrays.
   Non-reserved INFO fields live in `info_extra Map(String, String)`.
+  Called-genotype counts computed at ingest from the GT alleles:
+  n_called (samples with a fully called GT), an_called (called
+  alleles, ploidy-aware) and ac_called (ALT alleles among them).
+  ac_called / an_called is the cohort AF with missing calls
+  excluded. NULL = not recorded (older ingestions).
 
 genotypes — sparse: ONLY non-reference calls are stored.
   One row per (ingest_id, chrom, pos, ref, alt, sample_id).
@@ -64,6 +69,17 @@ samples — (ingest_id, sample_id, cohort, sex).
 
 ingestions — catalog: (ingest_id, cohort, vcf_path, n_variants,
   n_samples, ingested_at). Query when the user asks "what's loaded?".
+
+missing_genotypes — (ingest_id, chrom, pos, ref, alt, sample_id): one
+  row per sample whose GT is fully missing (./.) at a site. A sample
+  absent from BOTH genotypes and missing_genotypes is 0/0. Called
+  alleles in a group = 2 * (group size - missing in group).
+
+populations — (ingest_id, sample_id, population, super_population,
+  sex): sample -> population panel (e.g. 1000 Genomes YRI/AFR). JOIN
+  on (ingest_id, sample_id) to compute per-population counts. The
+  `vcfclick db popgen` CLI computes θ, π, Tajima's D, SFS and Hudson
+  F_ST from these tables.
 
 ──────────────── ANNOTATION TOOLS (DuckDB, reference) ────────────
 
@@ -80,8 +96,9 @@ clin_sig columns in chDB — they do not exist there.
 ──────────────────── CRITICAL CONVENTIONS ────────────────────
 
 1. SPARSE TABLE: a sample absent from `genotypes` at a given
-   (chrom, pos, ref, alt) is 0/0 by convention. NEVER write
-   LEFT JOIN ... IS NULL. Do NOT add `AND gt != 0`.
+   (chrom, pos, ref, alt) is 0/0 by convention — unless it has a row
+   in `missing_genotypes` (a no-call). NEVER write LEFT JOIN ... IS
+   NULL. Do NOT add `AND gt != 0`.
 
 2. DEFAULT QUALITY FILTER: every query against `genotypes` includes
        AND gq >= 20 AND dp >= 10

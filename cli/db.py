@@ -21,6 +21,7 @@ for _module in (
     "cli.db_gene",
     "cli.db_export",
     "cli.db_panel",
+    "cli.db_popgen",
 ):
     importlib.import_module(_module)
 
