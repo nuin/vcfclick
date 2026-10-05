@@ -131,3 +131,46 @@ def popgen_vcf(tmp_path) -> Path:
     sample, with missing (./.), partial (./1), haploid and phased calls,
     a split multi-allelic site, an indel, a filtered site and chrX."""
     return bgzip_vcf(FIXTURES / "popgen.vcf", tmp_path / "popgen.vcf.gz")
+
+
+REPO = Path(__file__).resolve().parent.parent
+CLI_TIMEOUT_S = 120
+
+
+def run_cli(home: Path, backend: str, *args: str, ok: bool = True):
+    """Run `vcfclick *args` against `home` on `backend` in a subprocess.
+
+    A command that exceeds CLI_TIMEOUT_S is killed (subprocess.run kills
+    the child, so nothing is orphaned) and reported by name. The message
+    starts with "Timeout" so the suite's rerun policy for the known
+    intermittent chDB subprocess hang (pyproject addopts) applies.
+    """
+    import shutil
+
+    exe = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
+    env = {**os.environ, "VCFCLICK_HOME": str(home), "VCFCLICK_BACKEND": backend}
+    env.pop("VCFCLICK_DB_NAME", None)
+    try:
+        r = subprocess.run(
+            [exe, *args],
+            cwd=REPO,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=CLI_TIMEOUT_S,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(
+            f"Timeout: `vcfclick {' '.join(args)}` ({backend}) did not finish "
+            f"in {CLI_TIMEOUT_S}s and was killed"
+        )
+    if ok:
+        assert r.returncode == 0, (
+            f"`vcfclick {' '.join(args)}` ({backend}) failed (rc={r.returncode}):\n"
+            f"STDOUT:\n{r.stdout}\nSTDERR:\n{r.stderr}"
+        )
+    else:
+        assert r.returncode != 0, (
+            f"`vcfclick {' '.join(args)}` should fail:\n{r.stdout}"
+        )
+    return r

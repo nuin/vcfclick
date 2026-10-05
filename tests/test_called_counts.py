@@ -16,16 +16,15 @@ used below, 11 samples A1..A4 B1..B4 C1 C2 U1:
 from __future__ import annotations
 
 import json
-import os
-import shutil
 import subprocess
 from pathlib import Path
 
 import pyarrow.parquet as pq
 import pytest
 
+from tests.conftest import run_cli
+
 REPO = Path(__file__).resolve().parent.parent
-VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 
 EXPECTED_COUNTS = {
     400: [10, 20, 3],
@@ -45,18 +44,7 @@ EXPECTED_MISSING = [
 
 
 def _vc(home: Path, backend: str, *args: str) -> subprocess.CompletedProcess:
-    env = {**os.environ, "VCFCLICK_HOME": str(home), "VCFCLICK_BACKEND": backend}
-    env.pop("VCFCLICK_DB_NAME", None)
-    r = subprocess.run(
-        [VCFCLICK_BIN, *args],
-        cwd=REPO,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    assert r.returncode == 0, f"{args}:\n{r.stdout}\n{r.stderr}"
-    return r
+    return run_cli(home, backend, *args)
 
 
 def _rows(home: Path, backend: str, db: str, sql: str) -> list[list]:

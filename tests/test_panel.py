@@ -3,17 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
 from ingest.panel import PanelColumns, PanelError, normalise_sex, parse_panel
+from tests.conftest import run_cli
 
-REPO = Path(__file__).resolve().parent.parent
-VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 FIXTURES = Path(__file__).parent / "fixtures"
 PANEL = FIXTURES / "popgen.panel"
 
@@ -111,21 +107,7 @@ def test_parse_rejects_conflicting_duplicates(tmp_path):
 
 
 def _vc(home: Path, backend: str, *args: str, expect_failure: bool = False):
-    env = {**os.environ, "VCFCLICK_HOME": str(home), "VCFCLICK_BACKEND": backend}
-    env.pop("VCFCLICK_DB_NAME", None)
-    r = subprocess.run(
-        [VCFCLICK_BIN, *args],
-        cwd=REPO,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if expect_failure:
-        assert r.returncode != 0, r.stdout
-    else:
-        assert r.returncode == 0, f"{args}:\n{r.stdout}\n{r.stderr}"
-    return r
+    return run_cli(home, backend, *args, ok=not expect_failure)
 
 
 def _rows(home: Path, backend: str, sql: str) -> list[list]:

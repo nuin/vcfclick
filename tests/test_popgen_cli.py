@@ -20,18 +20,13 @@ in a throwaway venv outside the project; they are not dependencies.
 from __future__ import annotations
 
 import json
-import os
-import shutil
-import subprocess
 from fractions import Fraction
 from pathlib import Path
 
 import pytest
 
-from tests.conftest import FIXTURES, bgzip_vcf
+from tests.conftest import FIXTURES, bgzip_vcf, run_cli
 
-REPO = Path(__file__).resolve().parent.parent
-VCFCLICK_BIN = shutil.which("vcfclick") or str(REPO / ".venv" / "bin" / "vcfclick")
 BACKENDS = ("duckdb", "chdb")
 
 POPS = {
@@ -122,21 +117,7 @@ def reference_fst(a: list[str], b: list[str], positions: list[int]) -> float:
 
 
 def _vc(home: Path, backend: str, *args: str, ok: bool = True):
-    env = {**os.environ, "VCFCLICK_HOME": str(home), "VCFCLICK_BACKEND": backend}
-    env.pop("VCFCLICK_DB_NAME", None)
-    r = subprocess.run(
-        [VCFCLICK_BIN, *args],
-        cwd=REPO,
-        env=env,
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-    if ok:
-        assert r.returncode == 0, f"{args}:\n{r.stdout}\n{r.stderr}"
-    else:
-        assert r.returncode != 0, f"{args} should fail:\n{r.stdout}"
-    return r
+    return run_cli(home, backend, *args, ok=ok)
 
 
 @pytest.fixture(scope="module")
