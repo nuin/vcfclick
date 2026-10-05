@@ -316,6 +316,10 @@ def _commit_parallel(staging, vcf_path, cohort, ingest_id, samples, total):
         )
     import_elapsed = time.time() - started_import
 
+    from ingest.panel import prune_stale_labels
+
+    prune_stale_labels(ingest_id)
+
     insert_via_parquet(
         "ingestions",
         INGESTIONS_ARROW_SCHEMA,

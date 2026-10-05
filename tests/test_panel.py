@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -152,20 +154,26 @@ def test_db_panel_loads_reports_and_reloads(vcfclick_home, popgen_vcf, backend):
         ["two", "C1", "CHB", "EAS", "male"],
     ]
 
-    # Idempotent: a re-load replaces, a relabel takes effect.
+    # Idempotent: a re-load of the same panel changes nothing.
+    _vc(home, backend, "db", "panel", "pg", str(PANEL))
+    assert _rows(home, backend, "SELECT count(*) FROM populations") == [[20]]
+    # A panel REPLACES the labelling of each ingestion it applies to: a
+    # one-sample panel for `two` leaves exactly that label there, so no
+    # sample keeps a stale label; `one` is untouched.
     relabel = popgen_vcf.parent / "relabel.tsv"
     relabel.write_text("sample\tpop\nA1\tESN\n")
-    _vc(home, backend, "db", "panel", "pg", str(PANEL))
     _vc(home, backend, "db", "panel", "pg", str(relabel), "--ingest-id", "two")
-    assert _rows(home, backend, "SELECT count(*) FROM populations") == [[20]]
+    assert _rows(home, backend, "SELECT count(*) FROM populations") == [[11]]
     assert _rows(
         home,
         backend,
         "SELECT ingest_id, population FROM populations WHERE sample_id = 'A1' "
         "ORDER BY ingest_id",
     ) == [["one", "YRI"], ["two", "ESN"]]
+    _vc(home, backend, "db", "panel", "pg", str(PANEL))
+    assert _rows(home, backend, "SELECT count(*) FROM populations") == [[20]]
 
-    # Re-ingesting a VCF does not wipe the panel (like `pedigree`).
+    # Re-ingesting the same VCF keeps the panel (like `pedigree`).
     _vc(
         home,
         backend,
@@ -202,3 +210,51 @@ def test_db_panel_errors(vcfclick_home, popgen_vcf, tmp_path):
         expect_failure=True,
     )
     assert "no samples found" in r.stderr
+
+
+@pytest.mark.parametrize("backend", ["duckdb", "chdb"])
+def test_reingest_without_samples_prunes_their_labels(
+    vcfclick_home, popgen_vcf, tmp_path, backend
+):
+    """Re-ingesting an ingest_id from a VCF that lacks some samples removes
+    those samples' panel labels; the remaining samples keep theirs."""
+    if not shutil.which("bcftools"):
+        pytest.skip("bcftools not on PATH")
+    fewer = tmp_path / "fewer.vcf.gz"
+    subprocess.run(
+        ["bcftools", "view", "-s", "^A1,A2", "-Oz", "-o", str(fewer), str(popgen_vcf)],
+        check=True,
+    )
+    subprocess.run(["tabix", "-p", "vcf", str(fewer)], check=True)
+    home = vcfclick_home
+    _vc(home, backend, "db", "create", "pg")
+    _vc(
+        home,
+        backend,
+        "db",
+        "ingest",
+        "pg",
+        str(popgen_vcf),
+        "--ingest-id",
+        "i1",
+        "--serial",
+    )
+    _vc(home, backend, "db", "panel", "pg", str(PANEL))
+    r = _vc(
+        home,
+        backend,
+        "db",
+        "ingest",
+        "pg",
+        str(fewer),
+        "--ingest-id",
+        "i1",
+        "--workers",
+        "2",
+    )
+    assert "removed 2 population label(s)" in r.stderr
+    assert _rows(
+        home,
+        backend,
+        "SELECT sample_id FROM populations WHERE population = 'YRI' ORDER BY sample_id",
+    ) == [["A3"], ["A4"]]

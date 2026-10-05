@@ -308,6 +308,9 @@ def _ingest_parquet_locked(
             )
             _import_with_override("populations", files.populations, ingest_id)
 
+        from ingest.panel import prune_stale_labels
+
+        prune_stale_labels(ingest_id)
         n_variants = _count_under_ingest("variants", ingest_id)
         n_samples = _count_under_ingest("samples", ingest_id)
         insert_via_parquet(

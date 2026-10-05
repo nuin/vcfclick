@@ -19,7 +19,10 @@ matching the pedigree table's convention.
 A panel is keyed by sample_id only, but vcfclick identifies a sample by
 (ingest_id, sample_id). Without an explicit ingest_id the panel applies
 to every ingestion that contains the sample. Re-loading replaces the
-rows for the affected (ingest_id, sample_id) pairs, so it is idempotent.
+whole panel of each ingestion it applies to, so it is idempotent and a
+sample dropped from the file loses its label. Re-ingesting a VCF under
+the same ingest_id keeps the labels of samples that are still present
+and removes those of samples that are gone (`prune_stale_labels`).
 """
 
 from __future__ import annotations
@@ -40,7 +43,8 @@ _SEX_NAMES = ("gender", "sex")
 _MALE = {"male", "m", "1"}
 _FEMALE = {"female", "f", "2"}
 
-# Deletes are issued per chunk of sample ids so the IN list stays small.
+# Deletes of stale labels are issued per chunk of sample ids so the IN
+# list stays small.
 _DELETE_CHUNK = 500
 
 
@@ -197,8 +201,9 @@ def load_panel(rows: list[dict], ingest_id: str | None = None) -> PanelReport:
     """Write `rows` (from parse_panel) to the active DB's populations table.
 
     Applies to `ingest_id` only when given, else to every ingestion that
-    contains each sample. Replaces prior rows for the affected
-    (ingest_id, sample_id) pairs.
+    contains at least one panel sample. For each ingestion it applies to,
+    the panel REPLACES all prior labels: samples it does not list end up
+    unlabelled.
     """
     from ingest._arrow import POPULATIONS_ARROW_SCHEMA
     from storage import (
@@ -232,16 +237,11 @@ def load_panel(rows: list[dict], ingest_id: str | None = None) -> PanelReport:
     by_ingest: dict[str, list[str]] = {}
     for ing, s in matched:
         by_ingest.setdefault(ing, []).append(s)
-    for ing, samples in by_ingest.items():
-        for start in range(0, len(samples), _DELETE_CHUNK):
-            chunk = samples[start : start + _DELETE_CHUNK]
-            in_list = ", ".join(sql_quote_str(s) for s in chunk)
-            sess.query(
-                delete_where_sql(
-                    "populations",
-                    f"ingest_id = {sql_quote_str(ing)} AND sample_id IN ({in_list})",
-                )
-            )
+    # A panel is the whole labelling of each ingestion it applies to:
+    # replace every prior row of those ingestions, so a sample the new
+    # panel no longer lists does not keep a stale label.
+    for ing in by_ingest:
+        sess.query(delete_where_sql("populations", f"ingest_id = {sql_quote_str(ing)}"))
     insert_via_parquet(
         "populations",
         POPULATIONS_ARROW_SCHEMA,
@@ -251,3 +251,48 @@ def load_panel(rows: list[dict], ingest_id: str | None = None) -> PanelReport:
     report.by_ingest = {ing: len(s) for ing, s in by_ingest.items()}
     log.info("[panel] loaded %d sample labels", report.loaded)
     return report
+
+
+def prune_stale_labels(ingest_id: str) -> int:
+    """Drop `populations` rows of `ingest_id` whose sample is no longer in
+    `samples` for that ingestion (it was re-ingested from a VCF without
+    them). Called by every ingest path after the new samples are written;
+    labels of samples that are still present are kept. Returns how many
+    rows were removed."""
+    from storage import delete_where_sql, get_session, sql_quote_str, table_exists
+
+    if not table_exists("populations"):
+        return 0
+    sess = get_session()
+    iid = sql_quote_str(ingest_id)
+
+    def ids(table: str) -> set[str]:
+        raw = (
+            sess.query(
+                f"SELECT DISTINCT sample_id FROM {table} WHERE ingest_id = {iid}",
+                "TSV",
+            )
+            .bytes()
+            .decode()
+        )
+        return {line for line in raw.splitlines() if line}
+
+    stale = sorted(ids("populations") - ids("samples"))
+    for start in range(0, len(stale), _DELETE_CHUNK):
+        in_list = ", ".join(
+            sql_quote_str(s) for s in stale[start : start + _DELETE_CHUNK]
+        )
+        sess.query(
+            delete_where_sql(
+                "populations", f"ingest_id = {iid} AND sample_id IN ({in_list})"
+            )
+        )
+    if stale:
+        log.warning(
+            "[panel] removed %d population label(s) of ingest_id=%s for samples "
+            "no longer in it: %s",
+            len(stale),
+            ingest_id,
+            ", ".join(stale[:10]) + (" ..." if len(stale) > 10 else ""),
+        )
+    return len(stale)

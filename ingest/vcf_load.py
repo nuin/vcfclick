@@ -273,6 +273,9 @@ def _commit_staged_ingest(
         if m_path.exists() and m_path.stat().st_size > 0:
             _import_parquet("missing_genotypes", m_path)
 
+    from ingest.panel import prune_stale_labels
+
+    prune_stale_labels(ingest_id)
     insert_via_parquet(
         "ingestions",
         INGESTIONS_ARROW_SCHEMA,

@@ -59,7 +59,8 @@ def db_panel(options: PanelOptions) -> None:
     Reads the 1000 Genomes panel format (sample, pop, super_pop, gender;
     tab-separated with a header) as is, or any TSV/CSV with a header —
     columns are matched by name, or named with the --*-col options.
-    Re-loading replaces the labels of the samples it lists.
+    A panel replaces the whole labelling of each ingestion it applies to,
+    so samples it does not list end up unlabelled.
     """
     from ingest.panel import PanelColumns, PanelError, load_panel, parse_panel
     from storage import db_path
