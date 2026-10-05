@@ -17,7 +17,8 @@ CREATE TABLE genotypes (
     --   1  = heterozygous (0/1, 1/0)
     --   2  = homozygous alt (1/1)
     --   -1 = hemizygous or mixed-missing
-    -- 0/0 and ./. are NOT stored — absence is the signal.
+    -- 0/0 and ./. are NOT stored — absence is the signal (a no-call
+    -- has a row in missing_genotypes instead).
     gt           TINYINT NOT NULL,
     phased       UTINYINT DEFAULT 0,
 

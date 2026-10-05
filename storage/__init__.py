@@ -26,8 +26,10 @@ from storage.db import (
     rollback_ingest,
     schema_dir_for_backend,
     sql_quote_str,
+    table_columns,
     table_exists,
     typed_columns_sql,
+    upgrade_schema,
     validate_ingest_id,
 )
 
@@ -62,6 +64,8 @@ __all__ = [
     "populated_expr",
     "map_keys_from",
     "table_exists",
+    "table_columns",
+    "upgrade_schema",
     "DB_ROOT",
     "VCFCLICK_HOME",
 ]

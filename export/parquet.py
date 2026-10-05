@@ -25,7 +25,15 @@ from storage import get_session
 log = logging.getLogger(__name__)
 
 
-TABLES = ["variants", "genotypes", "samples", "ingestions", "pedigree"]
+TABLES = [
+    "variants",
+    "genotypes",
+    "samples",
+    "ingestions",
+    "pedigree",
+    "missing_genotypes",
+    "populations",
+]
 
 
 def export_table(table: str, out_path: Path, where: str | None = None) -> None:
@@ -75,11 +83,22 @@ def export_table(table: str, out_path: Path, where: str | None = None) -> None:
     log.info("[export] %s → %s (%s bytes)", table, out_path, f"{size:,}")
 
 
-def export_all(out_dir: Path) -> None:
+def export_all(out_dir: Path) -> list[str]:
+    """Export every table the database has. Tables newer than the
+    database (an older DB opened by a newer vcfclick) are skipped rather
+    than failing the dump. Returns the tables written."""
+    from storage import table_exists
+
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    written = []
     for t in TABLES:
+        if not table_exists(t):
+            log.info("[export] %s: not in this database, skipped", t)
+            continue
         export_table(t, out_dir / f"{t}.parquet")
+        written.append(t)
+    return written
 
 
 # Library module — invoke via `vcfclick db dump <name>`.

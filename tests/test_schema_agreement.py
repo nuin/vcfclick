@@ -70,6 +70,12 @@ def _columns_from_sql(sql_path: Path) -> list[str]:
         ("variants", "01_variants.sql", "VARIANTS_ARROW_SCHEMA"),
         ("genotypes", "02_genotypes.sql", "GENOTYPES_ARROW_SCHEMA"),
         ("pedigree", "04_pedigree.sql", "PEDIGREE_ARROW_SCHEMA"),
+        (
+            "missing_genotypes",
+            "05_missing_genotypes.sql",
+            "MISSING_GENOTYPES_ARROW_SCHEMA",
+        ),
+        ("populations", "06_populations.sql", "POPULATIONS_ARROW_SCHEMA"),
     ],
 )
 def test_arrow_and_sql_columns_agree_in_order(table, sql_file, arrow_attr):
@@ -119,4 +125,40 @@ def test_samples_arrow_matches_sql():
     assert sql_columns == arrow_columns, (
         f"samples Arrow diverges from SQL DDL.\n"
         f"  SQL:   {sql_columns}\n  Arrow: {arrow_columns}"
+    )
+
+
+def _columns_from_duckdb_sql(sql_path: Path) -> list[str]:
+    """Column names of the single CREATE TABLE in a schema/duckdb file
+    (no ENGINE clause there, so the body ends at the closing `);`)."""
+    text = sql_path.read_text()
+    m = re.search(r"CREATE\s+TABLE\s+\w+\s*\((.*?)\n\);", text, re.DOTALL)
+    if not m:
+        raise AssertionError(f"no CREATE TABLE found in {sql_path}")
+    cols = []
+    for raw in m.group(1).splitlines():
+        line = raw.split("--", 1)[0].strip()
+        if not line:
+            continue
+        first = line.split()[0].rstrip(",")
+        if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", first) and first != "ingested_at":
+            cols.append(first)
+    return cols
+
+
+@pytest.mark.parametrize(
+    "sql_file",
+    [
+        "01_variants.sql",
+        "02_genotypes.sql",
+        "04_pedigree.sql",
+        "05_missing_genotypes.sql",
+        "06_populations.sql",
+    ],
+)
+def test_duckdb_ddl_matches_chdb_ddl_order(sql_file):
+    """The DuckDB DDL must declare the same columns in the same order as
+    the chDB DDL (and therefore the Arrow schema)."""
+    assert _columns_from_duckdb_sql(SCHEMA_DIR / "duckdb" / sql_file) == (
+        _columns_from_sql(SCHEMA_DIR / sql_file)
     )

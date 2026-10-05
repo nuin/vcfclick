@@ -83,5 +83,10 @@ CREATE TABLE variants (
     -- Overflow for non-reserved INFO fields.
     info_extra   MAP(VARCHAR, VARCHAR),
 
+    -- Called-genotype accounting (see schema/01_variants.sql).
+    n_called     UINTEGER,
+    an_called    UINTEGER,
+    ac_called    UINTEGER,
+
     ingested_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

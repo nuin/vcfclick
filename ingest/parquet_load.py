@@ -31,6 +31,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 import pyarrow.parquet as pq
@@ -38,13 +39,17 @@ import pyarrow.parquet as pq
 from ingest._arrow import (
     GENOTYPES_ARROW_SCHEMA,
     INGESTIONS_ARROW_SCHEMA,
+    MISSING_GENOTYPES_ARROW_SCHEMA,
+    POPULATIONS_ARROW_SCHEMA,
     SAMPLES_ARROW_SCHEMA,
     TABLE_COLUMNS,
     VARIANTS_ARROW_SCHEMA,
+    VARIANTS_CALLED_COLUMNS,
     column_list_sql,
 )
 from storage import (
     count_expr,
+    delete_where_sql,
     get_session,
     ingest_id_lock,
     insert_via_parquet,
@@ -61,7 +66,14 @@ _EXPECTED_SCHEMAS = {
     "variants": VARIANTS_ARROW_SCHEMA,
     "genotypes": GENOTYPES_ARROW_SCHEMA,
     "samples": SAMPLES_ARROW_SCHEMA,
+    "missing_genotypes": MISSING_GENOTYPES_ARROW_SCHEMA,
+    "populations": POPULATIONS_ARROW_SCHEMA,
 }
+
+# Columns a conforming file may omit: they were added to the schema after
+# dumps were already in circulation. An omitted one loads as NULL ("not
+# recorded"), so an older dump still ingests.
+_OPTIONAL_COLUMNS = {"variants": frozenset(VARIANTS_CALLED_COLUMNS)}
 
 # Server-side default column present on every ReplacingMergeTree table
 # (the version column, `DEFAULT now()` in the SQL DDL). `db dump`
@@ -82,7 +94,7 @@ def _validate_parquet_schema(path: Path, table: str) -> None:
     """
     expected = {f.name for f in _EXPECTED_SCHEMAS[table]}
     found = set(pq.read_schema(path).names)
-    missing = expected - found
+    missing = expected - found - _OPTIONAL_COLUMNS.get(table, frozenset())
     extra = found - expected - _SERVER_DEFAULT_COLUMNS
     problems = []
     if missing:
@@ -106,12 +118,16 @@ def _import_with_override(
     SELECT list. chDB reads the file in place — no restaging needed.
     """
     cols = TABLE_COLUMNS[table]
+    present = set(pq.read_schema(src).names)
     select_exprs = []
     for c in cols:
         if c == "ingest_id":
             select_exprs.append(f"{sql_quote_str(ingest_id)} AS ingest_id")
         elif c == "cohort" and cohort is not None:
             select_exprs.append(f"{sql_quote_str(cohort)} AS cohort")
+        elif c not in present:
+            # Optional column absent from an older dump: not recorded.
+            select_exprs.append(f'NULL AS "{c}"')
         else:
             select_exprs.append(f'"{c}"')
     sess = get_session()
@@ -181,6 +197,8 @@ def ingest_from_parquet(
     variants_pq = dump / "variants.parquet"
     genotypes_pq = dump / "genotypes.parquet"
     samples_pq = dump / "samples.parquet"
+    missing_pq = dump / "missing_genotypes.parquet"
+    populations_pq = dump / "populations.parquet"
 
     if not variants_pq.exists():
         raise FileNotFoundError(
@@ -196,26 +214,53 @@ def ingest_from_parquet(
         _validate_parquet_schema(genotypes_pq, "genotypes")
     if samples_pq.exists():
         _validate_parquet_schema(samples_pq, "samples")
+    for optional, table in (
+        (missing_pq, "missing_genotypes"),
+        (populations_pq, "populations"),
+    ):
+        if optional.exists():
+            _validate_parquet_schema(optional, table)
+
+    def _if_exists(path: Path) -> Path | None:
+        return path if path.exists() else None
 
     with ingest_id_lock(ingest_id):
         return _ingest_parquet_locked(
-            variants_pq,
-            genotypes_pq if genotypes_pq.exists() else None,
-            samples_pq if samples_pq.exists() else None,
+            DumpFiles(
+                variants=variants_pq,
+                genotypes=_if_exists(genotypes_pq),
+                samples=_if_exists(samples_pq),
+                missing=_if_exists(missing_pq),
+                populations=_if_exists(populations_pq),
+            ),
             cohort,
             ingest_id,
             dump,
         )
 
 
+@dataclass(frozen=True)
+class DumpFiles:
+    """The Parquet files of one dump directory (None = absent)."""
+
+    variants: Path
+    genotypes: Path | None = None
+    samples: Path | None = None
+    missing: Path | None = None
+    populations: Path | None = None
+
+
 def _ingest_parquet_locked(
-    variants_pq: Path,
-    genotypes_pq: Path | None,
-    samples_pq: Path | None,
+    files: DumpFiles,
     cohort: str,
     ingest_id: str,
     dump: Path,
 ) -> str:
+    variants_pq, genotypes_pq, samples_pq = (
+        files.variants,
+        files.genotypes,
+        files.samples,
+    )
     # Local import to avoid pulling the cyvcf2-heavy vcf_load module
     # at import time of this lighter Parquet path.
     from ingest.vcf_load import _ensure_schema
@@ -251,6 +296,17 @@ def _ingest_parquet_locked(
         _import_with_override("variants", variants_pq, ingest_id)
         if genotypes_pq is not None:
             _import_with_override("genotypes", genotypes_pq, ingest_id)
+        if files.missing is not None:
+            _import_with_override("missing_genotypes", files.missing, ingest_id)
+        if files.populations is not None:
+            # The panel is not ingestion-scoped (rollback leaves it), so
+            # replace this ingest_id's rows explicitly for idempotency.
+            get_session().query(
+                delete_where_sql(
+                    "populations", f"ingest_id = {sql_quote_str(ingest_id)}"
+                )
+            )
+            _import_with_override("populations", files.populations, ingest_id)
 
         n_variants = _count_under_ingest("variants", ingest_id)
         n_samples = _count_under_ingest("samples", ingest_id)

@@ -69,6 +69,7 @@ from storage import (
     insert_via_parquet,
     parquet_file_expr,
     rollback_ingest,
+    upgrade_schema,
     validate_ingest_id,
 )
 
@@ -80,6 +81,8 @@ def _ensure_schema() -> None:
 
     if not table_exists("variants"):
         apply_schema()
+    else:
+        upgrade_schema()
 
 
 def ingest_parallel(
@@ -92,6 +95,7 @@ def ingest_parallel(
     bucket_size: int = DEFAULT_BUCKET_SIZE,
     batch_size: int = BATCH_SIZE,
     keep_reference: bool = False,
+    record_missing: bool = True,
 ) -> str:
     if ingest_id is None:
         ingest_id = str(uuid.uuid4())
@@ -113,6 +117,7 @@ def ingest_parallel(
                 bucket_size=bucket_size,
                 batch_size=batch_size,
                 keep_reference=keep_reference,
+                record_missing=record_missing,
             ),
         )
 
@@ -126,6 +131,7 @@ class ParallelOptions:
     bucket_size: int
     batch_size: int
     keep_reference: bool = False
+    record_missing: bool = True
 
 
 def _ingest_parallel_locked(
@@ -246,6 +252,7 @@ def _stage_regions(
             extra_format_fields,
             options.batch_size,
             options.keep_reference,
+            options.record_missing,
         )
         for r in regions
     ]
@@ -286,20 +293,27 @@ def _commit_parallel(staging, vcf_path, cohort, ingest_id, samples, total):
     # Parquet imports from name-based to positional mapping.
     from ingest._arrow import (
         GENOTYPES_COLUMNS,
+        MISSING_GENOTYPES_COLUMNS,
         VARIANTS_COLUMNS,
         column_list_sql,
     )
 
     v_cols = column_list_sql(VARIANTS_COLUMNS)
     g_cols = column_list_sql(GENOTYPES_COLUMNS)
+    m_cols = column_list_sql(MISSING_GENOTYPES_COLUMNS)
     # SQL-quote the glob paths — `staging_dir` can come from user
     # input (the ingest_parallel public API exposes it), so a
     # single quote in the path would otherwise close the file()
     # literal and let an attacker inject arbitrary SQL.
     v_expr = parquet_file_expr(f"{staging}/variants_*.parquet")
     g_expr = parquet_file_expr(f"{staging}/genotypes_*.parquet")
+    m_expr = parquet_file_expr(f"{staging}/missing_*.parquet")
     sess.query(f"INSERT INTO variants ({v_cols}) SELECT {v_cols} FROM {v_expr}")
     sess.query(f"INSERT INTO genotypes ({g_cols}) SELECT {g_cols} FROM {g_expr}")
+    if any(staging.glob("missing_*.parquet")):
+        sess.query(
+            f"INSERT INTO missing_genotypes ({m_cols}) SELECT {m_cols} FROM {m_expr}"
+        )
     import_elapsed = time.time() - started_import
 
     insert_via_parquet(

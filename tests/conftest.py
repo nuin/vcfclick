@@ -110,3 +110,24 @@ def isolated_annotation_db(tmp_path, monkeypatch) -> Path:
     path = tmp_path / "test_annotations.duckdb"
     monkeypatch.setattr(adb, "DUCKDB_PATH", path)
     return path
+
+
+def bgzip_vcf(src: Path, out: Path) -> Path:
+    """bgzip + tabix a plain-text VCF fixture to `out` (skip without htslib)."""
+    import shutil
+
+    if not (shutil.which("bgzip") and shutil.which("tabix")):
+        pytest.skip("bgzip/tabix not on PATH")
+    with open(out, "wb") as fh:
+        subprocess.run(["bgzip", "-c", str(src)], stdout=fh, check=True)
+    subprocess.run(["tabix", "-f", "-p", "vcf", str(out)], check=True)
+    return out
+
+
+@pytest.fixture
+def popgen_vcf(tmp_path) -> Path:
+    """The population-genetics fixture (tests/fixtures/popgen.vcf), bgzipped
+    and indexed: 11 samples in three panel populations plus one unlabelled
+    sample, with missing (./.), partial (./1), haploid and phased calls,
+    a split multi-allelic site, an indel, a filtered site and chrX."""
+    return bgzip_vcf(FIXTURES / "popgen.vcf", tmp_path / "popgen.vcf.gz")

@@ -116,11 +116,19 @@ def _parse_manifest(path: Path, default_cohort: str) -> list[_BatchEntry]:
     help="Default cohort label. Required with --from-dir; used as the "
     "fallback for manifest rows that don't carry their own `cohort`.",
 )
+@click.option(
+    "--record-missing/--no-record-missing",
+    default=True,
+    show_default=True,
+    help="Record fully missing calls (./.) in missing_genotypes "
+    "(see `db ingest --help`).",
+)
 def db_ingest_batch(
     name: str,
     from_dir: Path | None,
     manifest: Path | None,
     cohort: str | None,
+    record_missing: bool,
 ) -> None:
     """Ingest many per-sample VCFs into NAME as one cohort."""
     from storage import db_path
@@ -164,6 +172,7 @@ def db_ingest_batch(
                 str(entry.vcf_path),
                 cohort=entry.cohort,
                 ingest_id=entry.ingest_id,
+                record_missing=record_missing,
             )
             successes.append(entry)
         except Exception as e:

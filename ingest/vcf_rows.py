@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
+import numpy as np
+
 from ingest._arrow import GENOTYPES_COLUMNS, VARIANTS_COLUMNS
 from ingest.routing import FORMAT_PAIR, FORMAT_SCALAR, FORMAT_TRIPLE
 from ingest.routing import INFO_FLAG, INFO_PAIR, INFO_SCALAR
@@ -87,7 +91,70 @@ def _triple_float(arr, i):
     )
 
 
-def build_variant_row(variant, ingest_id: str) -> list:
+@dataclass(frozen=True)
+class CalledCounts:
+    """Per-site called-genotype accounting for one decomposed record.
+
+    `n_called`  samples whose GT is fully called (no missing allele),
+    `an_called` called alleles (a haploid call counts 1, a diploid 2, a
+                partially missing ./1 counts its one called allele),
+    `ac_called` ALT alleles among the called ones (haploid `1` counts 1),
+    `missing`   indices of samples whose GT is fully missing (./. or .).
+
+    The three counts are None when the record carries no GT to count
+    (sites-only VCF, or GT absent from FORMAT): "not recorded", not 0.
+    """
+
+    n_called: int | None
+    an_called: int | None
+    ac_called: int | None
+    missing: tuple[int, ...] = ()
+
+
+NOT_RECORDED = CalledCounts(None, None, None, ())
+
+
+def called_counts(variant, n_samples: int) -> CalledCounts:
+    """Count called samples/alleles from cyvcf2's per-sample allele array.
+
+    Reads `variant.genotype.array()` (one row per sample: allele indices,
+    then the phase flag; -1 = missing allele, -2 = padding for a lower
+    ploidy) rather than `gt_types`, which collapses ploidy and partial
+    missingness. Single-ALT records only, so any allele index > 0 is ALT.
+    """
+    if n_samples == 0:
+        return NOT_RECORDED
+    try:
+        genotype = variant.genotype
+    except Exception:  # cyvcf2 raises when GT is absent from the record
+        return NOT_RECORDED
+    if genotype is None:
+        return NOT_RECORDED
+    alleles = genotype.array()[:, :-1]
+    called = alleles >= 0
+    any_called = called.any(axis=1)
+    any_missing = (alleles == -1).any(axis=1)
+    return CalledCounts(
+        n_called=int(np.count_nonzero(any_called & ~any_missing)),
+        an_called=int(np.count_nonzero(called)),
+        ac_called=int(np.count_nonzero(alleles > 0)),
+        missing=tuple(int(i) for i in np.flatnonzero(~any_called)),
+    )
+
+
+def build_missing_rows(
+    variant, samples: list[str], counts: CalledCounts, ingest_id: str
+) -> list[list]:
+    """`missing_genotypes` rows: one per sample whose GT is fully missing."""
+    return [
+        [ingest_id, variant.CHROM, variant.POS, variant.REF, variant.ALT[0], samples[i]]
+        for i in counts.missing
+    ]
+
+
+def build_variant_row(
+    variant, ingest_id: str, counts: CalledCounts = NOT_RECORDED
+) -> list:
     """One row for the variants table. Caller has verified len(ALT) == 1."""
     info = dict(variant.INFO)
 
@@ -121,6 +188,9 @@ def build_variant_row(variant, ingest_id: str) -> list:
             row[flag_col] = 0
 
     row["info_extra"] = extra
+    row["n_called"] = counts.n_called
+    row["an_called"] = counts.an_called
+    row["ac_called"] = counts.ac_called
     return [row[c] for c in VARIANTS_COLUMNS]
 
 
@@ -209,3 +279,27 @@ def build_genotype_rows(
         rows.append([row[c] for c in GENOTYPES_COLUMNS])
 
     return rows
+
+
+def build_record_rows(
+    variant,
+    samples: list[str],
+    extra_format_fields: list[str],
+    ingest_id: str,
+    keep_reference: bool = False,
+    record_missing: bool = True,
+) -> tuple[list, list[list], list[list]]:
+    """All rows one decomposed record contributes: (variant row,
+    genotype rows, missing-genotype rows). Shared by the serial and
+    parallel loaders so both stay byte-identical."""
+    counts = called_counts(variant, len(samples))
+    variant_row = build_variant_row(variant, ingest_id, counts)
+    genotype_rows = build_genotype_rows(
+        variant, samples, extra_format_fields, ingest_id, keep_reference
+    )
+    missing_rows = (
+        build_missing_rows(variant, samples, counts, ingest_id)
+        if record_missing
+        else []
+    )
+    return variant_row, genotype_rows, missing_rows

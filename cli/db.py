@@ -20,6 +20,7 @@ for _module in (
     "cli.db_relatedness",
     "cli.db_gene",
     "cli.db_export",
+    "cli.db_panel",
 ):
     importlib.import_module(_module)
 

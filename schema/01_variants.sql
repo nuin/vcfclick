@@ -71,6 +71,13 @@ CREATE TABLE variants (
     -- Overflow for non-reserved INFO fields.
     info_extra   Map(String, String),
 
+    -- Called-genotype accounting, computed at ingest from the per-sample
+    -- GT allele arrays (ploidy-aware; partial calls like ./1 count their
+    -- called allele). NULL = not recorded (ingested before these existed).
+    n_called     Nullable(UInt32),   -- samples with a fully called GT
+    an_called    Nullable(UInt32),   -- called alleles (haploid 1, diploid 2)
+    ac_called    Nullable(UInt32),   -- ALT alleles among the called ones
+
     ingested_at  DateTime DEFAULT now()
 )
 ENGINE = ReplacingMergeTree(ingested_at)
