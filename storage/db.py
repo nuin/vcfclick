@@ -431,6 +431,25 @@ _ADDED_TABLE_FILES = {
 }
 
 
+@contextlib.contextmanager
+def _schema_lock():
+    """Exclusive per-database lock around schema upgrades, so two ingests
+    starting together cannot race on ALTER/CREATE. `@` cannot occur in an
+    ingest_id, so the lockfile never collides with `ingest_id_lock`."""
+    lock_dir = db_path() / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_dir / "@schema.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl = _fcntl_module()
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
 def upgrade_schema() -> list[str]:
     """Bring an older database up to the current schema, in place.
 
@@ -438,26 +457,59 @@ def upgrade_schema() -> list[str]:
     meaning "not recorded") and creates any table that is newer than the
     database. Never rewrites or drops existing data. Returns what was
     added, e.g. ``["variants.n_called", "populations"]``.
+
+    Safe under concurrent ingests: it holds a per-database lock, the
+    column additions are `ADD COLUMN IF NOT EXISTS`, and a table that
+    another process created first is accepted rather than an error.
     """
     added: list[str] = []
-    sess = get_session()
-    existing = set(table_columns("variants"))
-    previous = "info_extra"
-    for col in _ADDED_VARIANT_COLUMNS:
-        if existing and col not in existing:
-            if backend() == "duckdb":
-                sess.query(f"ALTER TABLE variants ADD COLUMN {col} UINTEGER")
-            else:
-                sess.query(
-                    f"ALTER TABLE variants ADD COLUMN {col} Nullable(UInt32) "
-                    f"AFTER {previous}"
-                )
-            added.append(f"variants.{col}")
-        previous = col
-    for table, filename in _ADDED_TABLE_FILES.items():
-        if not table_exists(table):
-            _apply_schema_file(schema_dir_for_backend() / filename)
+    with _schema_lock():
+        sess = get_session()
+        existing = set(table_columns("variants"))
+        previous = "info_extra"
+        for col in _ADDED_VARIANT_COLUMNS:
+            if existing and col not in existing:
+                if backend() == "duckdb":
+                    # Appended after ingested_at, which is also where the
+                    # fresh DuckDB DDL declares them, so fresh and upgraded
+                    # databases agree on column order.
+                    sess.query(
+                        f"ALTER TABLE variants ADD COLUMN IF NOT EXISTS {col} UINTEGER"
+                    )
+                else:
+                    sess.query(
+                        f"ALTER TABLE variants ADD COLUMN IF NOT EXISTS {col} "
+                        f"Nullable(UInt32) AFTER {previous}"
+                    )
+                added.append(f"variants.{col}")
+            previous = col
+        for table, filename in _ADDED_TABLE_FILES.items():
+            if table_exists(table):
+                continue
+            try:
+                _apply_schema_file(schema_dir_for_backend() / filename)
+            except Exception:
+                if not table_exists(table):  # not a lost race: a real error
+                    raise
+                continue
             added.append(table)
     if added:
         log.info("[storage] upgraded schema: added %s", ", ".join(added))
     return added
+
+
+def query_arrow(sql: str) -> pa.Table:
+    """Run a SELECT and return the result as a pyarrow Table.
+
+    DuckDB hands Arrow over natively; chDB returns an Arrow IPC stream
+    (`ArrowStream`), which carries the schema even for an empty result.
+    Column types follow the engine, so cast aggregates explicitly in SQL
+    (e.g. `CAST(sum(x) AS BIGINT)`) where both must agree.
+    """
+    sess = get_session()
+    if backend() == "duckdb":
+        return sess.query_arrow(sql)
+    import pyarrow.ipc as ipc
+
+    payload = sess.query(sql, "ArrowStream").bytes()
+    return ipc.open_stream(pa.BufferReader(payload)).read_all()

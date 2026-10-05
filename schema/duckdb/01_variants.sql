@@ -83,10 +83,14 @@ CREATE TABLE variants (
     -- Overflow for non-reserved INFO fields.
     info_extra   MAP(VARCHAR, VARCHAR),
 
-    -- Called-genotype accounting (see schema/01_variants.sql).
+    ingested_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+
+    -- Called-genotype accounting (see schema/01_variants.sql). Declared
+    -- after ingested_at, unlike the chDB DDL, because DuckDB's ALTER
+    -- TABLE ADD COLUMN can only append: a database upgraded in place
+    -- (storage.upgrade_schema) then has the same column order as a fresh
+    -- one. Every INSERT names its columns, so the position is cosmetic.
     n_called     UINTEGER,
     an_called    UINTEGER,
-    ac_called    UINTEGER,
-
-    ingested_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ac_called    UINTEGER
 );

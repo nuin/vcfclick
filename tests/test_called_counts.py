@@ -52,6 +52,20 @@ def _rows(home: Path, backend: str, db: str, sql: str) -> list[list]:
     return json.loads(r.stdout)["data"]
 
 
+def _columns(home, backend, db: str, table: str) -> list[str]:
+    if backend == "duckdb":
+        sql = (
+            "SELECT column_name FROM information_schema.columns "
+            f"WHERE table_name = '{table}' ORDER BY ordinal_position"
+        )
+    else:
+        sql = (
+            "SELECT name FROM system.columns WHERE database = currentDatabase() "
+            f"AND table = '{table}' ORDER BY position"
+        )
+    return [r[0] for r in _rows(home, backend, db, sql)]
+
+
 def _counts(home, backend, db="pg", ingest_id="kg") -> dict[int, list]:
     rows = _rows(
         home,
@@ -262,6 +276,26 @@ def test_ingest_upgrades_an_older_database(vcfclick_home, popgen_vcf, backend):
     assert _counts(home, backend, ingest_id="new")[400] == EXPECTED_COUNTS[400]
     assert _counts(home, backend, ingest_id="old")[400] == [None, None, None]
     assert _missing(home, backend, ingest_id="new") == EXPECTED_MISSING
+    # Upgraded and fresh databases agree on column order (DuckDB can only
+    # append, so its DDL declares the new columns last too).
+    _vc(home, backend, "db", "create", "fresh")
+    for table in ("variants", "missing_genotypes", "populations"):
+        assert _columns(home, backend, "pg", table) == _columns(
+            home, backend, "fresh", table
+        ), table
+    # Upgrading is idempotent: nothing left to add on the next ingest.
+    again = _vc(
+        home,
+        backend,
+        "db",
+        "ingest",
+        "pg",
+        str(popgen_vcf),
+        "--ingest-id",
+        "new",
+        "--serial",
+    )
+    assert "upgraded schema" not in again.stderr
     # Re-ingesting the old id now records its counts too.
     _vc(
         home,
