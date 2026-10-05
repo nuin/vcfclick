@@ -101,6 +101,36 @@ def test_window_region_on_stored_name():
     ]
 
 
+def _reference_windows(lo: int, hi: int, window: int, step: int):
+    """The original loop semantics (before the vectorised tiling)."""
+    out, start = [], lo
+    while start <= hi:
+        end = min(start + window - 1, hi)
+        out.append((start, end))
+        if end >= hi:
+            break
+        start += step
+    return out
+
+
+def test_windows_with_step_larger_than_window():
+    prep = _prep({"1": [5, 300, 905, 1000]})
+    got = [(s, e) for _, s, e, _ in iter_windows(prep, 10, 100)]
+    assert got == _reference_windows(1, 1000, 10, 100)
+    assert len(got) == 10 and got[0] == (1, 10) and got[-1] == (901, 910)
+
+
+@pytest.mark.parametrize(
+    "window,step", [(10, 100), (100, 10), (100, 100), (250, 37), (1, 1000), (5000, 7)]
+)
+def test_window_tiling_matches_reference_loop(window, step):
+    rng = np.random.default_rng(window * 31 + step)
+    ps = sorted(set(rng.integers(1, 3000, 80).tolist()))
+    prep = _prep({"1": ps})
+    got = [(s, e) for _, s, e, _ in iter_windows(prep, window, step)]
+    assert got == _reference_windows(1, ps[-1], window, step)
+
+
 def test_projection_chunking_does_not_change_result():
     rng = np.random.default_rng(11)
     n = rng.integers(40, 80, 500)

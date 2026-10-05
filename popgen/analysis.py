@@ -684,7 +684,10 @@ def iter_windows(prep: Prepared, window: int, step: int):
     for chrom, lo, hi, a, b in _window_spans(prep):
         starts = np.arange(lo, hi + 1, step, dtype=np.int64)
         ends = np.minimum(starts + window - 1, hi)
-        last = int(np.argmax(ends >= hi)) if len(ends) else -1
+        # Stop at the first window that reaches the span's end; if none does
+        # (step > window leaves gaps), keep every window that starts in span.
+        reach = ends >= hi
+        last = int(np.argmax(reach)) if reach.any() else len(ends) - 1
         starts, ends = starts[: last + 1], ends[: last + 1]
         pos = prep.pos[a:b]
         firsts = a + np.searchsorted(pos, starts, side="left")

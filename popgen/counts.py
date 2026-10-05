@@ -267,7 +267,9 @@ def fetch_chrom(
             [column.get(g, nb - 1) for g in _strings(t, "grp")], dtype=np.int64
         )
         for target, name in zip(targets, ("v1", "v2"), strict=False):
-            target[idx, col] = _ints(t, name, 0)
+            # Accumulate rather than assign so two labels that ever mapped to
+            # the same bucket column could not silently overwrite each other.
+            np.add.at(target, (idx, col), _ints(t, name, 0).astype(target.dtype))
 
     scatter(
         f"{ctes} SELECT s.idx AS idx, {grp} AS grp, "
