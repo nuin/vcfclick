@@ -141,6 +141,10 @@ def test_briefing_includes_non_obvious_invariants():
     assert "pedigree" in text
     assert "de novo" in text
     assert "--keep-reference" in text
+    # Population genetics: no-calls are distinguishable from 0/0 via
+    # missing_genotypes; per-site called counts; the population panel.
+    assert "missing_genotypes" in text and "an_called" in text
+    assert "populations" in text and "super_population" in text
 
 
 # ─────────────────────── DuckDB-backed tools ───────────────────────

@@ -217,8 +217,18 @@ def validate_ingest_id(ingest_id: str) -> None:
 
 # Tables that carry per-ingestion rows — these are the ones rollback
 # has to scrub when an ingest fails mid-stream. Keep in sync with the
-# schema/*.sql files.
-_INGESTION_SCOPED_TABLES = ("variants", "genotypes", "samples", "ingestions")
+# schema/*.sql files. `missing_genotypes` is newer than the rest, so an
+# older database may not have it yet (rollback skips absent tables).
+# `pedigree` and `populations` are NOT here: they are loaded separately
+# from VCF ingest and survive a re-ingest under the same ingest_id.
+_INGESTION_SCOPED_TABLES = (
+    "variants",
+    "genotypes",
+    "missing_genotypes",
+    "samples",
+    "ingestions",
+)
+_OPTIONAL_INGESTION_TABLES = frozenset({"missing_genotypes"})
 
 
 def _fcntl_module():
@@ -282,6 +292,8 @@ def rollback_ingest(ingest_id: str) -> None:
     validate_ingest_id(ingest_id)
     sess = get_session()
     for table in _INGESTION_SCOPED_TABLES:
+        if table in _OPTIONAL_INGESTION_TABLES and not table_exists(table):
+            continue
         sess.query(delete_where_sql(table, f"ingest_id = '{ingest_id}'"))
 
 
@@ -372,11 +384,132 @@ def apply_schema(schema_dir: Path | None = None) -> None:
     if schema_dir is None:
         schema_dir = schema_dir_for_backend()
 
-    sess = get_session()
     for f in sorted(Path(schema_dir).glob("*.sql")):
-        text = f.read_text()
-        clean = "\n".join(re.sub(r"--.*$", "", ln) for ln in text.splitlines())
-        for stmt in clean.split(";"):
-            stmt = stmt.strip()
-            if stmt:
-                sess.query(stmt)
+        _apply_schema_file(f)
+
+
+def _apply_schema_file(path: Path) -> None:
+    """Run every statement in one schema .sql file."""
+    sess = get_session()
+    text = Path(path).read_text()
+    clean = "\n".join(re.sub(r"--.*$", "", ln) for ln in text.splitlines())
+    for stmt in clean.split(";"):
+        stmt = stmt.strip()
+        if stmt:
+            sess.query(stmt)
+
+
+def table_columns(table: str) -> list[str]:
+    """Column names of `table` in the active database, in storage order
+    (empty when the table does not exist)."""
+    if not _TABLE_NAME_RE.match(table):
+        raise ValueError(f"Unsafe table name: {table!r}")
+    sess = get_session()
+    if backend() == "duckdb":
+        sql = (
+            "SELECT column_name FROM information_schema.columns "
+            f"WHERE table_name = '{table}' ORDER BY ordinal_position"
+        )
+    else:
+        sql = (
+            "SELECT name FROM system.columns "
+            f"WHERE database = currentDatabase() AND table = '{table}' "
+            "ORDER BY position"
+        )
+    raw = sess.query(sql, "TSV").bytes().decode()
+    return [line.split("\t", 1)[0] for line in raw.splitlines() if line.strip()]
+
+
+# Schema additions made after databases were already in the wild. Each
+# entry is idempotent: `upgrade_schema` only adds what is missing. This
+# is deliberately not a migration framework — just the additive changes
+# a newer vcfclick needs to write into an older database.
+_ADDED_VARIANT_COLUMNS = ("n_called", "an_called", "ac_called")
+_ADDED_TABLE_FILES = {
+    "missing_genotypes": "05_missing_genotypes.sql",
+    "populations": "06_populations.sql",
+}
+
+
+@contextlib.contextmanager
+def _schema_lock():
+    """Exclusive per-database lock around schema upgrades, so two ingests
+    starting together cannot race on ALTER/CREATE. `@` cannot occur in an
+    ingest_id, so the lockfile never collides with `ingest_id_lock`."""
+    lock_dir = db_path() / "locks"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    fd = os.open(lock_dir / "@schema.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl = _fcntl_module()
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        finally:
+            os.close(fd)
+
+
+def upgrade_schema() -> list[str]:
+    """Bring an older database up to the current schema, in place.
+
+    Adds the called-count columns to `variants` (NULL for existing rows,
+    meaning "not recorded") and creates any table that is newer than the
+    database. Never rewrites or drops existing data. Returns what was
+    added, e.g. ``["variants.n_called", "populations"]``.
+
+    Safe under concurrent ingests: it holds a per-database lock, the
+    column additions are `ADD COLUMN IF NOT EXISTS`, and a table that
+    another process created first is accepted rather than an error.
+    """
+    added: list[str] = []
+    with _schema_lock():
+        sess = get_session()
+        existing = set(table_columns("variants"))
+        previous = "info_extra"
+        for col in _ADDED_VARIANT_COLUMNS:
+            if existing and col not in existing:
+                if backend() == "duckdb":
+                    # Appended after ingested_at, which is also where the
+                    # fresh DuckDB DDL declares them, so fresh and upgraded
+                    # databases agree on column order.
+                    sess.query(
+                        f"ALTER TABLE variants ADD COLUMN IF NOT EXISTS {col} UINTEGER"
+                    )
+                else:
+                    sess.query(
+                        f"ALTER TABLE variants ADD COLUMN IF NOT EXISTS {col} "
+                        f"Nullable(UInt32) AFTER {previous}"
+                    )
+                added.append(f"variants.{col}")
+            previous = col
+        for table, filename in _ADDED_TABLE_FILES.items():
+            if table_exists(table):
+                continue
+            try:
+                _apply_schema_file(schema_dir_for_backend() / filename)
+            except Exception:
+                if not table_exists(table):  # not a lost race: a real error
+                    raise
+                continue
+            added.append(table)
+    if added:
+        log.info("[storage] upgraded schema: added %s", ", ".join(added))
+    return added
+
+
+def query_arrow(sql: str) -> pa.Table:
+    """Run a SELECT and return the result as a pyarrow Table.
+
+    DuckDB hands Arrow over natively; chDB returns an Arrow IPC stream
+    (`ArrowStream`), which carries the schema even for an empty result.
+    Column types follow the engine, so cast aggregates explicitly in SQL
+    (e.g. `CAST(sum(x) AS BIGINT)`) where both must agree.
+    """
+    sess = get_session()
+    if backend() == "duckdb":
+        return sess.query_arrow(sql)
+    import pyarrow.ipc as ipc
+
+    payload = sess.query(sql, "ArrowStream").bytes()
+    return ipc.open_stream(pa.BufferReader(payload)).read_all()

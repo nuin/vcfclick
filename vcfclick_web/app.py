@@ -26,7 +26,9 @@ from pydantic import BaseModel
 from ingest._arrow import (
     GENOTYPES_ARROW_SCHEMA,
     INGESTIONS_ARROW_SCHEMA,
+    MISSING_GENOTYPES_ARROW_SCHEMA,
     PEDIGREE_ARROW_SCHEMA,
+    POPULATIONS_ARROW_SCHEMA,
     SAMPLES_ARROW_SCHEMA,
     VARIANTS_ARROW_SCHEMA,
     column_names,
@@ -46,6 +48,8 @@ _TABLES = [
     ("samples", SAMPLES_ARROW_SCHEMA),
     ("ingestions", INGESTIONS_ARROW_SCHEMA),
     ("pedigree", PEDIGREE_ARROW_SCHEMA),
+    ("missing_genotypes", MISSING_GENOTYPES_ARROW_SCHEMA),
+    ("populations", POPULATIONS_ARROW_SCHEMA),
 ]
 
 

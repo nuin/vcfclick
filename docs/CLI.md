@@ -8,6 +8,7 @@ Run `vcfclick --help` or `vcfclick <command> --help` any time for the same infor
 
 - **Databases** — [`db create`](#db-create) · [`db list`](#db-list) · [`db info`](#db-info) · [`db path`](#db-path) · [`db rm`](#db-rm) · [`db query`](#db-query) · [`db stats`](#db-stats) · [`db diff`](#db-diff) · [`db gene`](#db-gene)
 - **Ingesting variants** — [`db ingest`](#db-ingest) · [`db ingest-batch`](#db-ingest-batch) · [`merge`](#merge) · [`combine`](#combine) · [`discover`](#discover)
+- **Population genetics** — [`db panel`](#db-panel) · [`db popgen`](#db-popgen) ([`summary`](#db-popgen-summary) · [`sfs`](#db-popgen-sfs) · [`fst`](#db-popgen-fst) · [`windows`](#db-popgen-windows))
 - **Family / trio analysis** — [`db ped`](#db-ped) · [`db trio`](#db-trio) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
 - **Benchmarking** — [`benchmark`](#benchmark) · [`benchmark-cohort`](#benchmark-cohort)
 - **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad)
@@ -243,19 +244,31 @@ Usage: vcfclick db ingest [OPTIONS] NAME VCF_PATH
   Ingest a (normalised) VCF into a named database.
 
 Options:
-  --cohort TEXT      Cohort label this VCF belongs to.  [default: default]
-  --ingest-id TEXT   Stable upload identifier (UUID4 if omitted). Reuse to
-                     replace prior data.
-  --workers INTEGER  Parallel worker processes for ingestion.  [default: 4]
-  --serial           Use the single-process serial ingester instead of
-                     parallel.
-  --keep-reference   Also store confident hom-reference (0/0) genotype calls,
-                     not just non-reference. Needed for defensible trio de-
-                     novo analysis (a parent must be provably 0/0, not merely
-                     absent). Stores more rows — use for trios/families from a
-                     joint-called VCF, not large cohorts. No-calls (./.) are
-                     still dropped.
-  --help             Show this message and exit.
+  --cohort TEXT                   Cohort label this VCF belongs to.  [default:
+                                  default]
+  --ingest-id TEXT                Stable upload identifier (UUID4 if omitted).
+                                  Reuse to replace prior data.
+  --workers INTEGER               Parallel worker processes for ingestion.
+                                  [default: 4]
+  --serial                        Use the single-process serial ingester
+                                  instead of parallel.
+  --keep-reference                Also store confident hom-reference (0/0)
+                                  genotype calls, not just non-reference.
+                                  Needed for defensible trio de-novo analysis
+                                  (a parent must be provably 0/0, not merely
+                                  absent). Stores more rows — use for
+                                  trios/families from a joint-called VCF, not
+                                  large cohorts. No-calls (./.) are still not
+                                  stored as genotypes (see --record-missing).
+  --record-missing / --no-record-missing
+                                  Record each fully missing call (./.) in the
+                                  missing_genotypes table, so per-population
+                                  called counts can be derived (needed by `db
+                                  popgen` on cohorts with missing data). Per-
+                                  site called counts on `variants` (n_called,
+                                  an_called, ac_called) are always recorded.
+                                  [default: record-missing]
+  --help                          Show this message and exit.
 ```
 
 </details>
@@ -276,15 +289,19 @@ Usage: vcfclick db ingest-batch [OPTIONS] NAME
   Ingest many per-sample VCFs into NAME as one cohort.
 
 Options:
-  --from-dir DIRECTORY  Ingest every *.vcf.gz under DIR. ingest_id is the
-                        filename stem.
-  --manifest FILE       TSV with required `vcf_path` column; optional
-                        `sample_id`/`ingest_id` and `cohort` columns override
-                        the defaults.
-  --cohort TEXT         Default cohort label. Required with --from-dir; used
-                        as the fallback for manifest rows that don't carry
-                        their own `cohort`.
-  --help                Show this message and exit.
+  --from-dir DIRECTORY            Ingest every *.vcf.gz under DIR. ingest_id
+                                  is the filename stem.
+  --manifest FILE                 TSV with required `vcf_path` column;
+                                  optional `sample_id`/`ingest_id` and
+                                  `cohort` columns override the defaults.
+  --cohort TEXT                   Default cohort label. Required with --from-
+                                  dir; used as the fallback for manifest rows
+                                  that don't carry their own `cohort`.
+  --record-missing / --no-record-missing
+                                  Record fully missing calls (./.) in
+                                  missing_genotypes (see `db ingest --help`).
+                                  [default: record-missing]
+  --help                          Show this message and exit.
 ```
 
 </details>
@@ -339,6 +356,292 @@ Report which VCF fields land in typed columns vs the overflow map.
 ```bash
 vcfclick discover calls.vcf.gz
 ```
+
+## Population genetics
+
+Per-population diversity, neutrality tests, site-frequency spectra and F_ST, computed from a database. See [POPGEN.md](POPGEN.md) for definitions, filters and the choices made.
+
+### db panel
+
+Load a sample -> population panel (1000 Genomes `.panel` format, or any TSV/CSV with a header).
+
+```bash
+vcfclick db panel kg integrated_call_samples_v3.20130502.ALL.panel
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db panel [OPTIONS] NAME PANEL_PATH
+
+  Load a sample -> population panel into NAME.
+
+  Reads the 1000 Genomes panel format (sample, pop, super_pop, gender; tab-
+  separated with a header) as is, or any TSV/CSV with a header — columns are
+  matched by name, or named with the --*-col options. A panel replaces the
+  whole labelling of each ingestion it applies to, so samples it does not list
+  end up unlabelled.
+
+Options:
+  --ingest-id TEXT      Apply the panel to this ingestion only (default: every
+                        ingestion that contains each sample).
+  --sample-col TEXT     Sample-id column name.
+  --pop-col TEXT        Population column name.
+  --super-pop-col TEXT  Super-population column name (optional).
+  --sex-col TEXT        Sex/gender column name (optional).
+  --help                Show this message and exit.
+```
+
+</details>
+
+### db popgen
+
+Group of population-genetics subcommands. They share the scope, site-filter, grouping, polarisation and output options; each analyses one ingestion.
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db popgen [OPTIONS] COMMAND [ARGS]...
+
+  Population-genetics statistics (θ, π, Tajima's D, SFS, F_ST).
+
+Options:
+  --help  Show this message and exit.
+
+Commands:
+  fst      Pairwise Hudson F_ST between groups (Bhatia et al.
+  sfs      Per group site-frequency spectrum, projected for missing data.
+  summary  Per group: S, θ_W, π, Tajima's D, Fay & Wu's H, Ho/He/F.
+  windows  Sliding-window S, θ_W, π, Tajima's D per group (+ F_ST).
+```
+
+</details>
+
+### db popgen summary
+
+Per group: S, θ_W, π, Tajima's D, normalised Fay & Wu's H, Ho/He/F.
+
+```bash
+vcfclick db popgen summary kg --by super_population
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db popgen summary [OPTIONS] NAME
+
+  Per group: S, θ_W, π, Tajima's D, Fay & Wu's H, Ho/He/F.
+
+Options:
+  --project INTEGER RANGE         SFS projection size in haplotypes (default:
+                                  the smallest number of called haplotypes at
+                                  any retained site, per group).  [x>=2]
+  --ingest-id TEXT                Ingestion to analyse (required when NAME has
+                                  several).
+  --region TEXT                   chr, chr:pos or chr:start-end (repeatable).
+  --gene TEXT                     Restrict to a gene (needs `vcfclick
+                                  annotations load`).
+  --by [population|super_population|all]
+                                  Grouping. Falls back to one group 'all' when
+                                  no panel is loaded for the ingestion.
+                                  [default: population]
+  --include-indels                Also use biallelic indels (default:
+                                  biallelic SNVs only).
+  --pass-only / --all-filters     Keep only sites whose FILTER is PASS or
+                                  missing.  [default: pass-only]
+  --min-call-rate FLOAT RANGE     Minimum call rate a site needs in EVERY
+                                  group.  [default: 0.9; 0<=x<=1]
+  --maf FLOAT RANGE               Minimum cohort-wide minor-allele frequency
+                                  (0 keeps monomorphic sites, which θ per site
+                                  needs).  [default: 0.0; 0<=x<=0.5]
+  --ancestral [aa|aa-high|ref|none]
+                                  Polarisation: INFO/AA at any confidence
+                                  (aa), high-confidence only (aa-high), REF as
+                                  ancestral (ref), or folded statistics only
+                                  (none). Default: aa when any site carries
+                                  INFO/AA, else none.
+  --include-sex-chroms            Not supported yet: X/Y need per-sample
+                                  ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
+  --format [table|tsv|json]       [default: table]
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### db popgen sfs
+
+Per group folded (and, when polarised, unfolded) SFS, projected to a common sample size for missing data.
+
+```bash
+vcfclick db popgen sfs kg --project 20 --format json
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db popgen sfs [OPTIONS] NAME
+
+  Per group site-frequency spectrum, projected for missing data.
+
+Options:
+  --project INTEGER RANGE         SFS projection size in haplotypes (default:
+                                  the smallest number of called haplotypes at
+                                  any retained site, per group).  [x>=2]
+  --ingest-id TEXT                Ingestion to analyse (required when NAME has
+                                  several).
+  --region TEXT                   chr, chr:pos or chr:start-end (repeatable).
+  --gene TEXT                     Restrict to a gene (needs `vcfclick
+                                  annotations load`).
+  --by [population|super_population|all]
+                                  Grouping. Falls back to one group 'all' when
+                                  no panel is loaded for the ingestion.
+                                  [default: population]
+  --include-indels                Also use biallelic indels (default:
+                                  biallelic SNVs only).
+  --pass-only / --all-filters     Keep only sites whose FILTER is PASS or
+                                  missing.  [default: pass-only]
+  --min-call-rate FLOAT RANGE     Minimum call rate a site needs in EVERY
+                                  group.  [default: 0.9; 0<=x<=1]
+  --maf FLOAT RANGE               Minimum cohort-wide minor-allele frequency
+                                  (0 keeps monomorphic sites, which θ per site
+                                  needs).  [default: 0.0; 0<=x<=0.5]
+  --ancestral [aa|aa-high|ref|none]
+                                  Polarisation: INFO/AA at any confidence
+                                  (aa), high-confidence only (aa-high), REF as
+                                  ancestral (ref), or folded statistics only
+                                  (none). Default: aa when any site carries
+                                  INFO/AA, else none.
+  --include-sex-chroms            Not supported yet: X/Y need per-sample
+                                  ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
+  --format [table|tsv|json]       [default: table]
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### db popgen fst
+
+Pairwise Hudson F_ST (ratio of averages), overall and optionally per window.
+
+```bash
+vcfclick db popgen fst kg --window 1000000
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db popgen fst [OPTIONS] NAME
+
+  Pairwise Hudson F_ST between groups (Bhatia et al. 2013).
+
+Options:
+  --ingest-id TEXT                Ingestion to analyse (required when NAME has
+                                  several).
+  --region TEXT                   chr, chr:pos or chr:start-end (repeatable).
+  --gene TEXT                     Restrict to a gene (needs `vcfclick
+                                  annotations load`).
+  --by [population|super_population|all]
+                                  Grouping. Falls back to one group 'all' when
+                                  no panel is loaded for the ingestion.
+                                  [default: population]
+  --include-indels                Also use biallelic indels (default:
+                                  biallelic SNVs only).
+  --pass-only / --all-filters     Keep only sites whose FILTER is PASS or
+                                  missing.  [default: pass-only]
+  --min-call-rate FLOAT RANGE     Minimum call rate a site needs in EVERY
+                                  group.  [default: 0.9; 0<=x<=1]
+  --maf FLOAT RANGE               Minimum cohort-wide minor-allele frequency
+                                  (0 keeps monomorphic sites, which θ per site
+                                  needs).  [default: 0.0; 0<=x<=0.5]
+  --ancestral [aa|aa-high|ref|none]
+                                  Polarisation: INFO/AA at any confidence
+                                  (aa), high-confidence only (aa-high), REF as
+                                  ancestral (ref), or folded statistics only
+                                  (none). Default: aa when any site carries
+                                  INFO/AA, else none.
+  --include-sex-chroms            Not supported yet: X/Y need per-sample
+                                  ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
+  --format [table|tsv|json]       [default: table]
+  --window INTEGER RANGE          Window size (bp).  [x>=1]
+  --step INTEGER RANGE            Window step (bp; default = window).  [x>=1]
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### db popgen windows
+
+Sliding-window S, θ_W, π, Tajima's D per group, plus pairwise F_ST with `--fst`. TSV by default, one row per window.
+
+```bash
+vcfclick db popgen windows kg --region 22:16000000-17000000 --window 100000 --fst > win.tsv
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db popgen windows [OPTIONS] NAME
+
+  Sliding-window S, θ_W, π, Tajima's D per group (+ F_ST).
+
+Options:
+  --project INTEGER RANGE         SFS projection size in haplotypes (default:
+                                  the smallest number of called haplotypes at
+                                  any retained site, per group).  [x>=2]
+  --ingest-id TEXT                Ingestion to analyse (required when NAME has
+                                  several).
+  --region TEXT                   chr, chr:pos or chr:start-end (repeatable).
+  --gene TEXT                     Restrict to a gene (needs `vcfclick
+                                  annotations load`).
+  --by [population|super_population|all]
+                                  Grouping. Falls back to one group 'all' when
+                                  no panel is loaded for the ingestion.
+                                  [default: population]
+  --include-indels                Also use biallelic indels (default:
+                                  biallelic SNVs only).
+  --pass-only / --all-filters     Keep only sites whose FILTER is PASS or
+                                  missing.  [default: pass-only]
+  --min-call-rate FLOAT RANGE     Minimum call rate a site needs in EVERY
+                                  group.  [default: 0.9; 0<=x<=1]
+  --maf FLOAT RANGE               Minimum cohort-wide minor-allele frequency
+                                  (0 keeps monomorphic sites, which θ per site
+                                  needs).  [default: 0.0; 0<=x<=0.5]
+  --ancestral [aa|aa-high|ref|none]
+                                  Polarisation: INFO/AA at any confidence
+                                  (aa), high-confidence only (aa-high), REF as
+                                  ancestral (ref), or folded statistics only
+                                  (none). Default: aa when any site carries
+                                  INFO/AA, else none.
+  --include-sex-chroms            Not supported yet: X/Y need per-sample
+                                  ploidy.
+  --allow-untracked               Compute even when the ingestion has no
+                                  missing-call tracking (ingested before it
+                                  existed, or with --no-record-missing).
+                                  Output then says missing_data_tracked:
+                                  false.
+  --format [table|tsv|json]       [default: tsv]
+  --window INTEGER RANGE          Window size (bp).  [x>=1; required]
+  --step INTEGER RANGE            Window step (bp; default = window).  [x>=1]
+  --fst                           Add pairwise Hudson F_ST columns.
+  --help                          Show this message and exit.
+```
+
+</details>
 
 ## Family / trio analysis
 

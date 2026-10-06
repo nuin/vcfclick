@@ -199,6 +199,10 @@ class DuckDBSession:
         # Default + PrettyCompact + anything unknown — Pretty render.
         return _DuckDBQueryResult(_render_pretty(columns, rows))
 
+    def query_arrow(self, sql: str):
+        """Run a SELECT and return a pyarrow Table (no text rendering)."""
+        return self._conn.execute(sql).fetch_arrow_table()
+
     def close(self) -> None:
         try:
             self._conn.close()

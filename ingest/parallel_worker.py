@@ -4,8 +4,13 @@ from pathlib import Path
 
 from cyvcf2 import VCF
 
-from ingest._arrow import GENOTYPES_ARROW_SCHEMA, VARIANTS_ARROW_SCHEMA, write_parquet
-from ingest.vcf_rows import build_genotype_rows, build_variant_row
+from ingest._arrow import (
+    GENOTYPES_ARROW_SCHEMA,
+    MISSING_GENOTYPES_ARROW_SCHEMA,
+    VARIANTS_ARROW_SCHEMA,
+    write_parquet,
+)
+from ingest.vcf_rows import build_record_rows
 
 
 def _worker(args: tuple) -> tuple[str, int, int]:
@@ -22,6 +27,7 @@ def _worker(args: tuple) -> tuple[str, int, int]:
         extra_format_fields,
         batch_size,
         keep_reference,
+        record_missing,
     ) = args
     vcf = VCF(vcf_path)
     samples = list(vcf.samples)
@@ -31,6 +37,7 @@ def _worker(args: tuple) -> tuple[str, int, int]:
 
     variants_batch: list[list] = []
     genotypes_batch: list[list] = []
+    missing_batch: list[list] = []
     total_variants = 0
     batch_idx = 0
 
@@ -40,10 +47,13 @@ def _worker(args: tuple) -> tuple[str, int, int]:
             return
         v_path = staging / f"variants_{safe_region}_{batch_idx:04d}.parquet"
         g_path = staging / f"genotypes_{safe_region}_{batch_idx:04d}.parquet"
+        m_path = staging / f"missing_{safe_region}_{batch_idx:04d}.parquet"
         write_parquet(variants_batch, VARIANTS_ARROW_SCHEMA, v_path)
         write_parquet(genotypes_batch, GENOTYPES_ARROW_SCHEMA, g_path)
+        write_parquet(missing_batch, MISSING_GENOTYPES_ARROW_SCHEMA, m_path)
         variants_batch.clear()
         genotypes_batch.clear()
+        missing_batch.clear()
         batch_idx += 1
 
     for variant in vcf(region):
@@ -52,12 +62,17 @@ def _worker(args: tuple) -> tuple[str, int, int]:
                 f"Multi-allelic at {variant.CHROM}:{variant.POS}. "
                 f"Normalise with bcftools norm -m -."
             )
-        variants_batch.append(build_variant_row(variant, ingest_id))
-        genotypes_batch.extend(
-            build_genotype_rows(
-                variant, samples, extra_format_fields, ingest_id, keep_reference
-            )
+        variant_row, genotype_rows, missing_rows = build_record_rows(
+            variant,
+            samples,
+            extra_format_fields,
+            ingest_id,
+            keep_reference,
+            record_missing,
         )
+        variants_batch.append(variant_row)
+        genotypes_batch.extend(genotype_rows)
+        missing_batch.extend(missing_rows)
         total_variants += 1
         if len(variants_batch) >= batch_size:
             flush()

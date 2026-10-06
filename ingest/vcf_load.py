@@ -33,12 +33,13 @@ from cyvcf2 import VCF
 from ingest._arrow import (
     GENOTYPES_ARROW_SCHEMA,
     INGESTIONS_ARROW_SCHEMA,
+    MISSING_GENOTYPES_ARROW_SCHEMA,
     SAMPLES_ARROW_SCHEMA,
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
 from ingest.routing import classify_header
-from ingest.vcf_rows import build_genotype_rows, build_variant_row
+from ingest.vcf_rows import build_record_rows
 from storage import (
     apply_schema,
     db_path,
@@ -46,6 +47,7 @@ from storage import (
     ingest_id_lock,
     insert_via_parquet,
     rollback_ingest,
+    upgrade_schema,
     validate_ingest_id,
 )
 
@@ -71,11 +73,14 @@ def _import_parquet(table: str, parquet_path: Path) -> None:
 
 
 def _ensure_schema() -> None:
-    """Apply the schema if the variants table isn't already there."""
+    """Apply the schema if the variants table isn't already there, and
+    bring an older database up to date (new columns / tables) if it is."""
     from storage import table_exists
 
     if not table_exists("variants"):
         apply_schema()
+    else:
+        upgrade_schema()
 
 
 BATCH_SIZE = 10_000
@@ -86,8 +91,13 @@ def ingest(
     cohort: str,
     ingest_id: str | None = None,
     keep_reference: bool = False,
+    record_missing: bool = True,
 ) -> str:
     """Load a normalised VCF into the embedded chDB store.
+
+    `record_missing` (default on) writes one `missing_genotypes` row per
+    sample whose GT is fully missing, so per-population called counts can
+    be derived later (`vcfclick db popgen`).
 
     Stage-then-commit: the variant loop only writes Parquet files to
     a temp directory. chDB writes (delete prior rows under this
@@ -120,7 +130,9 @@ def ingest(
     # ingest` calls can't race on the staging dir, rollback, or
     # bulk-import. See storage.db.ingest_id_lock docstring.
     with ingest_id_lock(ingest_id):
-        return _ingest_locked(vcf_path, cohort, ingest_id, keep_reference)
+        return _ingest_locked(
+            vcf_path, cohort, ingest_id, keep_reference, record_missing
+        )
 
 
 def _prepare_vcf(vcf_path: str):
@@ -162,15 +174,19 @@ def _write_stage_batch(
     n_variants: int,
     variants_batch: list[list],
     genotypes_batch: list[list],
+    missing_batch: list[list],
 ) -> None:
     if not variants_batch:
         return
     v_path = staging_path / f"v_{n_variants:09d}.parquet"
     g_path = staging_path / f"g_{n_variants:09d}.parquet"
+    m_path = staging_path / f"m_{n_variants:09d}.parquet"
     write_parquet(variants_batch, VARIANTS_ARROW_SCHEMA, v_path)
     write_parquet(genotypes_batch, GENOTYPES_ARROW_SCHEMA, g_path)
+    write_parquet(missing_batch, MISSING_GENOTYPES_ARROW_SCHEMA, m_path)
     variants_batch.clear()
     genotypes_batch.clear()
+    missing_batch.clear()
 
 
 @dataclass(frozen=True)
@@ -180,11 +196,13 @@ class StageOptions:
     extra_format_fields: list[str]
     ingest_id: str
     keep_reference: bool = False
+    record_missing: bool = True
 
 
 def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -> int:
     variants_batch: list[list] = []
     genotypes_batch: list[list] = []
+    missing_batch: list[list] = []
     n_variants = 0
 
     for variant in vcf:
@@ -194,21 +212,26 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
                 f"({len(variant.ALT)} ALTs). Re-normalise with: "
                 f"bcftools norm -m - {options.vcf_path} | bgzip > out.vcf.gz"
             )
-        variants_batch.append(build_variant_row(variant, options.ingest_id))
-        genotypes_batch.extend(
-            build_genotype_rows(
-                variant,
-                options.samples,
-                options.extra_format_fields,
-                options.ingest_id,
-                options.keep_reference,
-            )
+        variant_row, genotype_rows, missing_rows = build_record_rows(
+            variant,
+            options.samples,
+            options.extra_format_fields,
+            options.ingest_id,
+            options.keep_reference,
+            options.record_missing,
         )
+        variants_batch.append(variant_row)
+        genotypes_batch.extend(genotype_rows)
+        missing_batch.extend(missing_rows)
         n_variants += 1
 
         if len(variants_batch) >= BATCH_SIZE:
             _write_stage_batch(
-                staging_path, n_variants, variants_batch, genotypes_batch
+                staging_path,
+                n_variants,
+                variants_batch,
+                genotypes_batch,
+                missing_batch,
             )
             elapsed = time.time() - started
             log.info(
@@ -217,7 +240,9 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
                 f"{n_variants / elapsed:>8,.0f}",
             )
 
-    _write_stage_batch(staging_path, n_variants, variants_batch, genotypes_batch)
+    _write_stage_batch(
+        staging_path, n_variants, variants_batch, genotypes_batch, missing_batch
+    )
     return n_variants
 
 
@@ -244,7 +269,13 @@ def _commit_staged_ingest(
         g_path = staging_path / v_path.name.replace("v_", "g_", 1)
         if g_path.exists() and g_path.stat().st_size > 0:
             _import_parquet("genotypes", g_path)
+        m_path = staging_path / v_path.name.replace("v_", "m_", 1)
+        if m_path.exists() and m_path.stat().st_size > 0:
+            _import_parquet("missing_genotypes", m_path)
 
+    from ingest.panel import prune_stale_labels
+
+    prune_stale_labels(ingest_id)
     insert_via_parquet(
         "ingestions",
         INGESTIONS_ARROW_SCHEMA,
@@ -276,7 +307,11 @@ def _handle_ingest_failure(commit_started: bool, ingest_id: str) -> None:
 
 
 def _ingest_locked(
-    vcf_path: str, cohort: str, ingest_id: str, keep_reference: bool = False
+    vcf_path: str,
+    cohort: str,
+    ingest_id: str,
+    keep_reference: bool = False,
+    record_missing: bool = True,
 ) -> str:
     """Real ingest body — already holds the per-ingest_id file lock."""
     vcf, classification, samples = _prepare_vcf(vcf_path)
@@ -300,6 +335,7 @@ def _ingest_locked(
                     classification["extra_format"],
                     ingest_id,
                     keep_reference,
+                    record_missing,
                 ),
                 staging_path,
                 started,

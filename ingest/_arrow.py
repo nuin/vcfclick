@@ -80,8 +80,18 @@ VARIANTS_ARROW_SCHEMA = pa.schema(
         _f("info_DragenSnvHardQUAL", pa.float32()),
         _f("info_DragenIndelHardQUAL", pa.float32()),
         _f("info_extra", pa.map_(pa.string(), pa.string()), False),
+        # Called-genotype accounting (ploidy-aware, from the GT allele
+        # arrays). NULL = not recorded (older databases and bundles).
+        _f("n_called", pa.uint32()),
+        _f("an_called", pa.uint32()),
+        _f("ac_called", pa.uint32()),
     ]
 )
+
+# Columns added to `variants` after the first release of the schema.
+# Older databases / Parquet dumps lack them; readers treat them as NULL
+# ("not recorded") and `storage.upgrade_schema` adds them in place.
+VARIANTS_CALLED_COLUMNS = ("n_called", "an_called", "ac_called")
 
 
 # Same agreement contract as VARIANTS_ARROW_SCHEMA — column order MUST
@@ -157,11 +167,39 @@ PEDIGREE_ARROW_SCHEMA = pa.schema(
 )
 
 
+# Fully missing genotype calls (schema/05_missing_genotypes.sql). One
+# row per sample whose GT is entirely missing at a site.
+MISSING_GENOTYPES_ARROW_SCHEMA = pa.schema(
+    [
+        _f("ingest_id", pa.string(), False),
+        _f("chrom", pa.string(), False),
+        _f("pos", pa.uint32(), False),
+        _f("ref", pa.string(), False),
+        _f("alt", pa.string(), False),
+        _f("sample_id", pa.string(), False),
+    ]
+)
+
+# Sample -> population panel (schema/06_populations.sql). Loaded via
+# `db panel`, not VCF ingest.
+POPULATIONS_ARROW_SCHEMA = pa.schema(
+    [
+        _f("ingest_id", pa.string(), False),
+        _f("sample_id", pa.string(), False),
+        _f("population", pa.string(), False),
+        _f("super_population", pa.string()),
+        _f("sex", pa.string()),
+    ]
+)
+
+
 VARIANTS_COLUMNS = column_names(VARIANTS_ARROW_SCHEMA)
 GENOTYPES_COLUMNS = column_names(GENOTYPES_ARROW_SCHEMA)
 SAMPLES_COLUMNS = column_names(SAMPLES_ARROW_SCHEMA)
 INGESTIONS_COLUMNS = column_names(INGESTIONS_ARROW_SCHEMA)
 PEDIGREE_COLUMNS = column_names(PEDIGREE_ARROW_SCHEMA)
+MISSING_GENOTYPES_COLUMNS = column_names(MISSING_GENOTYPES_ARROW_SCHEMA)
+POPULATIONS_COLUMNS = column_names(POPULATIONS_ARROW_SCHEMA)
 
 
 # Used by every INSERT site to render an explicit (col1, col2, ...)
@@ -185,6 +223,8 @@ TABLE_COLUMNS: dict[str, list[str]] = {
     "samples": SAMPLES_COLUMNS,
     "ingestions": INGESTIONS_COLUMNS,
     "pedigree": PEDIGREE_COLUMNS,
+    "missing_genotypes": MISSING_GENOTYPES_COLUMNS,
+    "populations": POPULATIONS_COLUMNS,
 }
 
 

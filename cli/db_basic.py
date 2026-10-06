@@ -23,6 +23,7 @@ class IngestOptions:
     workers: int
     serial: bool
     keep_reference: bool
+    record_missing: bool
 
 
 @db.command(name="create")
@@ -64,7 +65,7 @@ def db_list() -> None:
 @click.argument("name")
 def db_info(name: str) -> None:
     """Show metadata about a database (row counts, ingestions, size)."""
-    from storage import count_expr, db_disk_size, db_path, get_session
+    from storage import count_expr, db_disk_size, db_path, get_session, table_exists
 
     path = db_path(name)
     if not path.exists():
@@ -92,6 +93,17 @@ def db_info(name: str) -> None:
     click.echo(f"samples:   {scalar(f'SELECT {c} FROM samples')}")
     click.echo(f"ingestions:{scalar(f'SELECT {c} FROM ingestions')}")
     click.echo(f"pedigree:  {scalar(f'SELECT {c} FROM pedigree')}")
+    # Newer tables: an older database may not have them yet.
+    for label, table in (
+        ("missing:", "missing_genotypes"),
+        ("populations:", "populations"),
+    ):
+        try:
+            present = table_exists(table)
+        except Exception:
+            present = False
+        count = scalar(f"SELECT {c} FROM {table}") if present else "(not present)"
+        click.echo(f"{label:<11} {count}")
 
 
 @db.command(name="ingest")
@@ -127,7 +139,16 @@ def db_info(name: str) -> None:
     "non-reference. Needed for defensible trio de-novo analysis (a parent "
     "must be provably 0/0, not merely absent). Stores more rows — use for "
     "trios/families from a joint-called VCF, not large cohorts. No-calls "
-    "(./.) are still dropped.",
+    "(./.) are still not stored as genotypes (see --record-missing).",
+)
+@click.option(
+    "--record-missing/--no-record-missing",
+    default=True,
+    show_default=True,
+    help="Record each fully missing call (./.) in the missing_genotypes "
+    "table, so per-population called counts can be derived (needed by "
+    "`db popgen` on cohorts with missing data). Per-site called counts "
+    "on `variants` (n_called, an_called, ac_called) are always recorded.",
 )
 @command_options(IngestOptions)
 def db_ingest(options: IngestOptions) -> None:
@@ -149,6 +170,7 @@ def db_ingest(options: IngestOptions) -> None:
             options.cohort,
             options.ingest_id,
             keep_reference=options.keep_reference,
+            record_missing=options.record_missing,
         )
     else:
         from ingest.parallel import ingest_parallel
@@ -159,6 +181,7 @@ def db_ingest(options: IngestOptions) -> None:
             ingest_id=options.ingest_id,
             workers=options.workers,
             keep_reference=options.keep_reference,
+            record_missing=options.record_missing,
         )
 
 

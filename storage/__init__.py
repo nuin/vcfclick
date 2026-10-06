@@ -23,11 +23,14 @@ from storage.db import (
     map_keys_from,
     parquet_file_expr,
     populated_expr,
+    query_arrow,
     rollback_ingest,
     schema_dir_for_backend,
     sql_quote_str,
+    table_columns,
     table_exists,
     typed_columns_sql,
+    upgrade_schema,
     validate_ingest_id,
 )
 
@@ -62,6 +65,9 @@ __all__ = [
     "populated_expr",
     "map_keys_from",
     "table_exists",
+    "table_columns",
+    "upgrade_schema",
+    "query_arrow",
     "DB_ROOT",
     "VCFCLICK_HOME",
 ]

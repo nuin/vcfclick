@@ -1,0 +1,24 @@
+##fileformat=VCFv4.2
+##contig=<ID=1,length=100000>
+##contig=<ID=X,length=100000>
+##FILTER=<ID=PASS,Description="All filters passed">
+##FILTER=<ID=LowQual,Description="Low quality">
+##INFO=<ID=AA,Number=1,Type=String,Description="Ancestral allele (upper case = high confidence)">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	A1	A2	A3	A4	B1	B2	B3	B4	C1	C2	U1
+1	100	.	A	G	50	PASS	AA=A	GT	0/1	0/0	1/1	0/1	0/0	0/0	0/1	0/0	1/1	0/1	0/0
+1	200	.	C	T	50	PASS	AA=t	GT	1/1	1/1	0/1	1/1	0/1	0/0	0/0	0/1	1/1	1/1	0/1
+1	300	.	G	A	50	PASS	AA=.	GT	0/0	0/1	0/0	0/0	0/1	0/1	1/1	0/1	0/0	0/0	0/0
+1	400	.	T	C	50	PASS	AA=T	GT	./.	0/1	0/1	0/0	0/0	0/0	0/0	0/0	0/1	0/0	0/0
+1	500	.	A	C	50	PASS	AA=A	GT	0/1	0/0	0/0	0/0	./1	0/0	0/1	0/0	0/0	0/0	0/0
+1	600	.	G	T	50	PASS	AA=G	GT	0/1	0/0	0/0	0/0	0/0	0/0	0/0	0/0	1	0/0	0/0
+1	700	.	A	G	50	PASS	.	GT	0/1	0/0	0/0	0/0	0/0	0/0	0/0	0/0	0/0	0/0	0/0
+1	700	.	A	T	50	PASS	.	GT	0/0	0/0	0/0	0/0	0/1	0/0	0/0	0/0	0/0	0/0	0/0
+1	800	.	AT	A	50	PASS	.	GT	0/1	0/0	0/0	0/0	0/0	0/1	0/0	0/0	0/0	0/0	0/0
+1	900	.	C	G	50	LowQual	AA=C	GT	0/1	0/0	0/0	0/0	0/0	0/0	0/1	0/0	0/0	0/0	0/0
+1	1000	.	C	A	50	PASS	AA=C	GT	0/0	0/0	0/0	0/0	0/0	0/0	0/0	0/0	0/0	0/0	0/0
+1	1100	.	T	G	50	PASS	AA=T	GT	0/1	0/0	0/0	0/0	./.	./.	./.	0/1	0/0	0/0	0/0
+1	1200	.	G	A	50	PASS	AA=A	GT	1/1	1/1	1/1	1/1	1/1	1/1	1/1	1/1	1/1	1/1	1/1
+1	1300	.	C	T	50	PASS	AA=C	GT	0/0	0/1	0/0	0/1	0/1	1/1	0/0	0/0	0/0	0/1	./.
+1	1400	.	A	T	50	PASS	AA=a	GT	0|1	1|0	0|0	0|0	0|0	0|0	0|0	0|0	0|0	0|0	1|1
+X	100	.	A	G	50	PASS	AA=A	GT	0/1	0/0	0/0	0/0	0/0	0/0	0/1	0/0	0/0	0/0	0/0

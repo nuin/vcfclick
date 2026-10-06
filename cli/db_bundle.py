@@ -12,7 +12,15 @@ import pyarrow.parquet as pq
 
 from cli.main import _set_db, db
 
-BUNDLE_TABLES = ("variants", "genotypes", "samples", "ingestions", "pedigree")
+BUNDLE_TABLES = (
+    "variants",
+    "genotypes",
+    "samples",
+    "ingestions",
+    "pedigree",
+    "missing_genotypes",
+    "populations",
+)
 
 
 @db.command(name="push")
@@ -63,21 +71,9 @@ def _quote_ident(name: str) -> str:
 
 def _table_columns(sess, table: str) -> list[str]:
     """Return target-table columns in storage order."""
-    from storage import backend
+    from storage import table_columns
 
-    if backend() == "duckdb":
-        sql = (
-            "SELECT column_name FROM information_schema.columns "
-            f"WHERE table_name = '{table}' ORDER BY ordinal_position"
-        )
-    else:
-        sql = (
-            "SELECT name FROM system.columns "
-            f"WHERE database = currentDatabase() AND table = '{table}' "
-            "ORDER BY position"
-        )
-    raw = sess.query(sql, "TSV").bytes().decode()
-    return [line.split("\t", 1)[0] for line in raw.splitlines() if line.strip()]
+    return table_columns(table)
 
 
 def _parquet_columns(path: Path) -> set[str]:
