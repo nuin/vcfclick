@@ -112,7 +112,8 @@ def parse_panel(path: str | Path, columns: PanelColumns = PanelColumns()) -> lis
     path = Path(path)
     lines = [
         ln
-        for ln in path.read_text().splitlines()
+        # utf-8-sig: a panel saved as CSV by Excel starts with a BOM.
+        for ln in path.read_text(encoding="utf-8-sig").splitlines()
         if ln.strip() and not ln.lstrip().startswith("##")
     ]
     if not lines:
@@ -209,6 +210,7 @@ def load_panel(rows: list[dict], ingest_id: str | None = None) -> PanelReport:
     from storage import (
         delete_where_sql,
         get_session,
+        ingest_id_lock,
         insert_via_parquet,
         sql_quote_str,
         upgrade_schema,
@@ -240,13 +242,18 @@ def load_panel(rows: list[dict], ingest_id: str | None = None) -> PanelReport:
     # A panel is the whole labelling of each ingestion it applies to:
     # replace every prior row of those ingestions, so a sample the new
     # panel no longer lists does not keep a stale label.
-    for ing in by_ingest:
-        sess.query(delete_where_sql("populations", f"ingest_id = {sql_quote_str(ing)}"))
-    insert_via_parquet(
-        "populations",
-        POPULATIONS_ARROW_SCHEMA,
-        [{"ingest_id": ing, **panel[s]} for ing, s in matched],
-    )
+    # Under the ingestion's lock, so a concurrent re-ingest of the same
+    # ingest_id (which prunes labels) cannot interleave with the replace.
+    for ing, samples in by_ingest.items():
+        with ingest_id_lock(ing):
+            sess.query(
+                delete_where_sql("populations", f"ingest_id = {sql_quote_str(ing)}")
+            )
+            insert_via_parquet(
+                "populations",
+                POPULATIONS_ARROW_SCHEMA,
+                [{"ingest_id": ing, **panel[s]} for s in samples],
+            )
     report.loaded = len(matched)
     report.by_ingest = {ing: len(s) for ing, s in by_ingest.items()}
     log.info("[panel] loaded %d sample labels", report.loaded)

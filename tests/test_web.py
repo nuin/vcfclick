@@ -171,6 +171,18 @@ def test_meta_lists_tables(duckdb_cohort):
     assert "chrom" in variants["columns"] and "pos" in variants["columns"]
 
 
+def test_meta_lists_live_columns_of_an_older_database(duckdb_cohort):
+    """A database from before the called-count columns is not upgraded by
+    the read-only web UI, so /api/meta must not advertise them."""
+    from storage import get_session
+
+    get_session("webdb").query("ALTER TABLE variants DROP COLUMN n_called", "CSV")
+    m = client.get("/api/meta").json()
+    variants = next(t for t in m["tables"] if t["name"] == "variants")
+    assert "n_called" not in variants["columns"]
+    assert "an_called" in variants["columns"] and "chrom" in variants["columns"]
+
+
 def test_query_runs_select(duckdb_cohort):
     d = client.post(
         "/api/query", json={"sql": "SELECT count(*) AS n FROM variants"}

@@ -95,7 +95,7 @@ def db_info(name: str) -> None:
     click.echo(f"pedigree:  {scalar(f'SELECT {c} FROM pedigree')}")
     # Newer tables: an older database may not have them yet.
     for label, table in (
-        ("missing:", "missing_genotypes"),
+        ("missing_gt:", "missing_genotypes"),
         ("populations:", "populations"),
     ):
         try:
@@ -148,7 +148,10 @@ def db_info(name: str) -> None:
     help="Record each fully missing call (./.) in the missing_genotypes "
     "table, so per-population called counts can be derived (needed by "
     "`db popgen` on cohorts with missing data). Per-site called counts "
-    "on `variants` (n_called, an_called, ac_called) are always recorded.",
+    "on `variants` (n_called, an_called, ac_called) are always recorded. "
+    "Adds one row per sample per site with a no-call (about samples x sites "
+    "x missing rate), so on large cohorts with much missing data it can "
+    "outgrow the genotypes table; skip it if you will not run `db popgen`.",
 )
 @command_options(IngestOptions)
 def db_ingest(options: IngestOptions) -> None:

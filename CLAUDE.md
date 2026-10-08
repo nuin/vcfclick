@@ -10,7 +10,7 @@ vcfclick is a Python CLI that turns VCF cohorts into local SQL databases (one na
 uv sync --extra tui --extra web --extra benchmark --group dev   # dev setup (CI uses web+benchmark+dev)
 uv run vcfclick --help
 
-uv run pytest tests/                       # full suite (~20s locally)
+uv run pytest tests/                       # full suite (several minutes; chDB tests run in subprocesses)
 uv run pytest tests/test_cli.py            # one file
 uv run pytest tests/test_trio.py::test_denovo_excludes_no_call_parent_site   # one test
 uv run pytest tests/ -k discover           # by name
@@ -59,6 +59,6 @@ Top-level packages (each is a wheel package listed in `pyproject.toml`; add new 
 - Commit messages: noun-first, present tense, brief subject; body wrapped at ~72 chars.
 - Releases: update `CHANGELOG.md` (`[Unreleased]` → version), bump `version` in `pyproject.toml` and the matching line in `uv.lock`, tag `v0.x.y` from `main`; `release.yml` publishes to PyPI and creates the GitHub release. If a newer local uv bumps the lockfile format revision, keep only the version line. Don't touch the bioconda recipe — BiocondaBot updates it after each PyPI release.
 - This is a public repo. Never commit private working docs (`PLAN.md`, strategy/roadmap/notes drafts, `workspace-*.md`, `paper/`, `web/`); several are gitignored for that reason. Check what's staged before pushing.
-- The desktop GUIs (SwiftUI, Avalonia) live in a separate repo, `vcfclick-desktop`, and drive this CLI as a subprocess (`db query --format JSON`, `db create`, `db ingest`) — keep those command interfaces stable.
+- The desktop GUIs (SwiftUI, Avalonia) live in a separate repo, `vcfclick-desktop`, and drive this CLI as a subprocess — keep these command interfaces and their JSON stable: `db query --format JSON`, `db create`, `db ingest` (incl. `--serial`, `--keep-reference`), `db ped --proband/--father/--mother`, `db trio --format json`, `db relatedness --format json`, `db qc --format json`, `db gene --format json`, `db export`.
 - User docs live in `docs/` (one page per feature, `docs/CLI.md` covers every command) — update them alongside CLI changes.
 - Out of scope: structural variants, non-stdio MCP transports.

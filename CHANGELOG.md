@@ -38,6 +38,20 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `db popgen summary` reports `projected_sites`, and summary, sfs and
+  windows warn when `--project` exceeds some sites' called haplotypes
+  (Tajima's D, Fay & Wu's H and the SFS then use fewer sites than θ_W and
+  π, or are NA). `db popgen sfs` returns `unfolded: null`, not an
+  all-zero spectrum, when no site could be polarised.
+- Ingest flushes staging batches on genotype + missing-call row count as
+  well as site count, bounding memory on large cohorts; `--record-missing`
+  and docs/SCHEMA.md now state the size of `missing_genotypes`.
+- `db panel` replaces an ingestion's labels under that ingestion's lock,
+  and reads a UTF-8 BOM (panels saved as CSV by Excel).
+- `db info` labels the missing-call count `missing_gt:`.
+- Web UI: `/api/meta` lists a table's live columns, so a database from
+  before the called-count columns does not advertise them.
+
 - Opening an older database for ingest (or `db panel`) adds the new
   columns and tables in place (idempotent, under a per-database lock); older rows read as NULL ("not
   recorded"). `db dump` skips tables an older database does not have,

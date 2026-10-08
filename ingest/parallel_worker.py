@@ -10,7 +10,7 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
-from ingest.vcf_rows import build_record_rows
+from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows
 
 
 def _worker(args: tuple) -> tuple[str, int, int]:
@@ -74,7 +74,10 @@ def _worker(args: tuple) -> tuple[str, int, int]:
         genotypes_batch.extend(genotype_rows)
         missing_batch.extend(missing_rows)
         total_variants += 1
-        if len(variants_batch) >= batch_size:
+        if (
+            len(variants_batch) >= batch_size
+            or len(genotypes_batch) + len(missing_batch) >= MAX_BATCH_ROWS
+        ):
             flush()
 
     flush()

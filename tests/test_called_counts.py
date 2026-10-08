@@ -255,7 +255,7 @@ def test_ingest_upgrades_an_older_database(vcfclick_home, popgen_vcf, backend):
     ):
         _vc(home, backend, "db", "query", "pg", sql)
     info = _vc(home, backend, "db", "info", "pg").stdout
-    assert "missing:    (not present)" in info
+    assert "missing_gt: (not present)" in info
 
     # Dump of the old database skips the absent tables instead of failing.
     r = _vc(home, backend, "db", "dump", "pg", "--out", str(home / "d"))
@@ -309,3 +309,49 @@ def test_ingest_upgrades_an_older_database(vcfclick_home, popgen_vcf, backend):
         "--serial",
     )
     assert _counts(home, backend, ingest_id="old")[400] == EXPECTED_COUNTS[400]
+
+
+_SMALL_BATCH_INGEST = """
+import json
+import sys
+
+import ingest.vcf_load as vl
+from storage import get_session
+
+if sys.argv[2] == "small":
+    vl.MAX_BATCH_ROWS = 1  # flush after every site that has any row
+vl.ingest(sys.argv[1], cohort="c", ingest_id="i1")
+sess = get_session()
+
+
+def n(table):
+    raw = sess.query(f"SELECT count(*) FROM {table}", "CSV").bytes().decode()
+    return [ln for ln in raw.splitlines() if ln.strip()][-1]
+
+
+print("COUNTS " + json.dumps({t: n(t) for t in (
+    "variants", "genotypes", "missing_genotypes"
+)}))
+"""
+
+
+def test_row_count_flush_lands_the_same_rows(vcfclick_home, popgen_vcf, run_python):
+    """Flushing staging batches on row count (not only every BATCH_SIZE
+    sites) must not lose or duplicate rows."""
+    counts = {}
+    for mode in ("small", "default"):
+        home = vcfclick_home / mode
+        home.mkdir()
+        (home / "dbs" / "rc").mkdir(parents=True)
+        out = run_python(
+            home,
+            _SMALL_BATCH_INGEST,
+            str(popgen_vcf),
+            mode,
+            VCFCLICK_DB_NAME="rc",
+            VCFCLICK_BACKEND="duckdb",
+        )
+        line = [ln for ln in out.splitlines() if ln.startswith("COUNTS ")][-1]
+        counts[mode] = json.loads(line.removeprefix("COUNTS "))
+    assert counts["small"] == counts["default"]
+    assert int(counts["default"]["missing_genotypes"]) > 0

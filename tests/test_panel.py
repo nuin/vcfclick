@@ -70,6 +70,14 @@ def test_parse_generic_csv_with_named_columns(tmp_path):
     ]
 
 
+def test_parse_csv_with_utf8_bom(tmp_path):
+    # Excel's "CSV UTF-8" starts the file with a byte-order mark.
+    p = tmp_path / "labels.csv"
+    p.write_bytes("\ufeffsample,pop\nS1,north\n".encode("utf-8"))
+    rows = parse_panel(p)
+    assert [(r["sample_id"], r["population"]) for r in rows] == [("S1", "north")]
+
+
 def test_parse_whitespace_separated(tmp_path):
     p = tmp_path / "labels.txt"
     p.write_text("sample population sex\nS1 popA 1\nS2 popB 2\n")

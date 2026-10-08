@@ -411,6 +411,11 @@ skips it. Partially missing calls (`./1`, `0/.`) are not rows here —
 a het, `0/.` as hom-ref, i.e. absent), and the per-site
 `variants.an_called` / `ac_called` remain exact.
 
+Size: about samples × sites × missing rate rows. On a large cohort with
+a lot of missing data that can exceed the sparse `genotypes` table, so
+pass `--no-record-missing` if you will not run `db popgen` (the per-site
+called counts on `variants` are recorded either way).
+
 | Column | Type | Meaning |
 |---|---|---|
 | `ingest_id` | `LowCardinality(String)` | |

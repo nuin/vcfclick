@@ -39,7 +39,7 @@ from ingest._arrow import (
     write_parquet,
 )
 from ingest.routing import classify_header
-from ingest.vcf_rows import build_record_rows
+from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows
 from storage import (
     apply_schema,
     db_path,
@@ -225,7 +225,10 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
         missing_batch.extend(missing_rows)
         n_variants += 1
 
-        if len(variants_batch) >= BATCH_SIZE:
+        if (
+            len(variants_batch) >= BATCH_SIZE
+            or len(genotypes_batch) + len(missing_batch) >= MAX_BATCH_ROWS
+        ):
             _write_stage_batch(
                 staging_path,
                 n_variants,

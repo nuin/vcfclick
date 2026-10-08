@@ -113,6 +113,12 @@ class CalledCounts:
 
 NOT_RECORDED = CalledCounts(None, None, None, ())
 
+# A staging batch is flushed after this many genotype + missing-call rows
+# as well as after the per-batch site count. On a large cohort one site can
+# carry tens of thousands of rows (missing calls, or 0/0 under
+# --keep-reference), so the site count alone does not bound memory.
+MAX_BATCH_ROWS = 2_000_000
+
 
 def called_counts(variant, n_samples: int) -> CalledCounts:
     """Count called samples/alleles from cyvcf2's per-sample allele array.
