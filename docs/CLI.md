@@ -267,7 +267,12 @@ Options:
                                   popgen` on cohorts with missing data). Per-
                                   site called counts on `variants` (n_called,
                                   an_called, ac_called) are always recorded.
-                                  [default: record-missing]
+                                  Adds one row per sample per site with a no-
+                                  call (about samples x sites x missing rate),
+                                  so on large cohorts with much missing data
+                                  it can outgrow the genotypes table; skip it
+                                  if you will not run `db popgen`.  [default:
+                                  record-missing]
   --help                          Show this message and exit.
 ```
 

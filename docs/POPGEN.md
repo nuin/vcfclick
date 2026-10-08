@@ -209,7 +209,10 @@ Per group:
   mk/n − m·P(J=m), and the second moment for θ_H), which equals building
   the projected spectrum but costs O(1) per site instead of O(m); `sfs`
   builds the full spectrum. D is undefined (`null`/`NA`) for S = 0 or
-  n < 4.
+  n < 4. `projected_sites` is the number of sites the projection used:
+  every retained site by default, fewer when `--project` exceeds the
+  called haplotypes at some sites (a warning says so), in which case D
+  and H describe those sites only while θ_W and π cover every site.
 - **Fay & Wu's H**, normalised (Zeng, Fu, Shi & Wu 2006, eq. 11), on the
   polarised sites only:
   H = (θ_π − θ_L) / sqrt(Var), θ_L = Σ i ξ_i / (n−1),
@@ -233,6 +236,8 @@ uncalled site kept by `--min-call-rate 0`), a warning says which group
 and why D, H (n < 4) or the spectrum (n < 2) cannot be computed. Sites with fewer than m called haplotypes are dropped and counted
 (`sites_dropped`). Spectra include the monomorphic classes (j = 0 and,
 unfolded, j = m) and are expected counts, so they can be fractional.
+`unfolded` is `null` when no retained site could be polarised (for
+example every INFO/AA is `.` or `N`), rather than an all-zero spectrum.
 
 ### fst
 

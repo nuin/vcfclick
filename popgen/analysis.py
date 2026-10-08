@@ -475,10 +475,28 @@ def projection_size(prep: Prepared, group: str, project: int | None) -> int | No
 
 def projection_warnings(prep: Prepared, project: int | None) -> list[str]:
     """Explain a projection size too small for the statistics that use it
-    (typically a site with almost no calls kept by --min-call-rate 0)."""
+    (typically a site with almost no calls kept by --min-call-rate 0), or an
+    explicit --project larger than some sites' called haplotypes, which
+    leaves Tajima's D, Fay & Wu's H and the SFS on fewer sites than θ_W and
+    π in the same row."""
     out = []
     for name in prep.groups:
         m = projection_size(prep, name, project)
+        if project is not None and m is not None and prep.n_sites:
+            _, n = prep.groups[name].at(slice(None))
+            used = int(np.count_nonzero(n >= m))
+            if used < len(n):
+                most = int(n.max()) if len(n) else 0
+                detail = (
+                    f"no site has that many (at most {most}), so they are NA"
+                    if used == 0
+                    else f"they use only the {used} of {len(n)} sites with at least {m}"
+                )
+                out.append(
+                    f"group {name}: --project {m} exceeds the called haplotypes "
+                    f"at some sites; Tajima's D, Fay & Wu's H and the SFS need "
+                    f"{m} per site, and {detail} (θ_W and π use every site)"
+                )
         if m is None or m >= 4:
             continue
         what = "the SFS" if m < 2 else "Tajima's D and Fay & Wu's H"
@@ -518,6 +536,7 @@ def _diversity(prep: Prepared, group: str, sel, m: int | None) -> dict:
     d = est.tajima_d(t.pi, t.s, m) if t is not None and used else None
     return {
         "sites": len(k),
+        "projected_sites": int(used),
         "segregating_sites": int(est.segregating(k, n).sum()),
         "theta_w": theta_w,
         "pi": pi,
@@ -560,6 +579,7 @@ def summary(prep: Prepared, project: int | None = None) -> list[dict]:
                 "tajima_d": div["tajima_d"],
                 **_fay_wu(prep, name, every, m),
                 "projection_n": m,
+                "projected_sites": div["projected_sites"],
                 "ho": het.ho,
                 "he": het.he,
                 "f": het.f,
@@ -595,7 +615,8 @@ def sfs(prep: Prepared, project: int | None = None) -> list[dict]:
         else:
             pol, d, n = prep.derived(name)
             uxi, uused = est.project_sfs(d[pol], n[pol], m)
-            entry["unfolded"] = uxi.tolist()
+            # No polarised site (every INFO/AA unknown): no spectrum, not zeros.
+            entry["unfolded"] = uxi.tolist() if uused else None
             entry["polarised_sites_used"] = uused
         out.append(entry)
     return out

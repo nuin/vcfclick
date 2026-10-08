@@ -597,3 +597,31 @@ def test_output_uses_stored_chromosome_names(homes):
     assert {r["chrom"] for r in doc["results"]} == {"1"}
     doc = popgen(homes, "fst", "pg", "--region", "chr1", "--window", "700")
     assert {r["chrom"] for r in doc["windows"]} == {"1"}
+
+
+def test_projected_sites_and_explicit_projection_warning(homes):
+    # Default projection: every retained site is used by D and H.
+    for r in popgen(homes, "summary", "pg")["results"]:
+        assert r["projected_sites"] == r["sites"]
+    # 1:400 has 6 YRI haplotypes: --project 8 leaves D and H on 7 of 8.
+    doc = popgen(homes, "summary", "pg", "--min-call-rate", "0.7", "--project", "8")
+    yri = by_group(doc)["YRI"]
+    assert (yri["sites"], yri["projected_sites"]) == (8, 7)
+    assert any(
+        "group YRI: --project 8" in w and "7 of 8 sites" in w for w in doc["warnings"]
+    )
+    assert not any("group CEU: --project" in w for w in doc["warnings"])
+    # Larger than any group has: D is NA, and the warning says why.
+    doc = popgen(homes, "summary", "pg", "--project", "30")
+    assert all(r["projected_sites"] == 0 for r in doc["results"])
+    assert all(r["tajima_d"] is None for r in doc["results"])
+    assert any("no site has that many" in w for w in doc["warnings"])
+
+
+def test_sfs_unfolded_is_null_without_polarised_sites(homes):
+    # 1:300 is AA=., so no site in the region can be polarised.
+    doc = popgen(homes, "sfs", "pg", "--region", "1:300")
+    for r in doc["results"]:
+        assert r["polarised_sites_used"] == 0
+        assert r["unfolded"] is None
+        assert r["folded"] is not None

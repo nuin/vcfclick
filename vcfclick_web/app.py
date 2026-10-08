@@ -34,7 +34,7 @@ from ingest._arrow import (
     column_names,
 )
 from ingest.combine import CombineError, combine_vcfs
-from storage import get_session, table_exists
+from storage import get_session, table_columns, table_exists
 from storage.sql_guard import is_read_only
 from vcfclick_web.page import INDEX_HTML
 
@@ -108,11 +108,14 @@ def index() -> str:
 
 @app.get("/api/meta")
 def meta() -> dict:
-    tables = [
-        {"name": name, "columns": column_names(schema)}
-        for name, schema in _TABLES
-        if table_exists(name)
-    ]
+    # The live columns, in schema order: a database ingested before a
+    # column was added has not been upgraded by the read-only web UI.
+    tables = []
+    for name, schema in _TABLES:
+        if table_exists(name):
+            live = set(table_columns(name))
+            cols = [c for c in column_names(schema) if c in live]
+            tables.append({"name": name, "columns": cols})
     ingest_ids = _scalar_list(
         "SELECT DISTINCT ingest_id FROM ingestions FORMAT JSONCompact"
     )

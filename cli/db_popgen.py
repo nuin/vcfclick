@@ -377,6 +377,7 @@ _SUMMARY_COLUMNS = [
     "tajima_d",
     "fay_wu_h",
     "projection_n",
+    "projected_sites",
     "ho",
     "he",
     "f",
