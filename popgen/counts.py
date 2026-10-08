@@ -212,7 +212,13 @@ def fetch_chrom(
     called = (
         "n_called, an_called, ac_called"
         if features.called_columns
-        else "NULL AS n_called, NULL AS an_called, NULL AS ac_called"
+        # A bare NULL is typed `Nothing` in ClickHouse, which some chDB builds
+        # cannot convert to Arrow; CASE gives a typed NULL in both dialects.
+        else (
+            "CASE WHEN 1 = 0 THEN 0 END AS n_called, "
+            "CASE WHEN 1 = 0 THEN 0 END AS an_called, "
+            "CASE WHEN 1 = 0 THEN 0 END AS ac_called"
+        )
     )
     # Site index = rank in (pos, ref, alt) order. The aggregates below
     # rebuild the same index in SQL, so their rows land on the right site
