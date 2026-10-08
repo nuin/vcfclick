@@ -174,3 +174,21 @@ def run_cli(home: Path, backend: str, *args: str, ok: bool = True):
             f"`vcfclick {' '.join(args)}` should fail:\n{r.stdout}"
         )
     return r
+
+
+def pytest_collection_modifyitems(config, items):
+    """In the DuckDB-only job, skip test variants parametrised for chDB.
+
+    Tests that compare backends parametrise ``backend`` over both engines.
+    The chDB jobs run every variant; when ``VCFCLICK_BACKEND=duckdb`` (the
+    DuckDB CI job) the chDB variants would only re-run chDB, and its
+    intermittent embedded-server startup hang can push the job past its
+    time limit.
+    """
+    if os.environ.get("VCFCLICK_BACKEND") != "duckdb":
+        return
+    skip = pytest.mark.skip(reason="chDB variant skipped under VCFCLICK_BACKEND=duckdb")
+    for item in items:
+        callspec = getattr(item, "callspec", None)
+        if callspec is not None and callspec.params.get("backend") == "chdb":
+            item.add_marker(skip)
