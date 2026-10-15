@@ -54,7 +54,7 @@ dependencies = [
     # bundles and shared demo vcfclick relies on. Stay on the mutually-readable
     # 1.x line until 2.0 support is validated. (2.0 is not on PyPI yet anyway.)
     "duckdb>=1.0.0,<2",
-    "mcp>=1.0.0",
+    "mcp>=1.0.0,<2",  # 2.x renamed FastMCP (mcp.server.fastmcp) to MCPServer
     "click>=8.1.0",
     "sqlglot>=25",
 ]

@@ -58,6 +58,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   and `db ingest-parquet` / `db pull` accept older dumps and bundles.
 - `db info` also reports `missing_genotypes` and `populations` counts.
 
+### Fixed
+
+- **MCP server broken on fresh installs.** `mcp` was required as
+  `>=1.0.0` with no upper bound; mcp 2.0 (October 2026) renamed `FastMCP`,
+  so a new install of 0.14.2 got mcp 2.x and `python -m
+  vcfclick_mcp.server` failed to import, as did the web UI's
+  natural-language questions. Pinned `mcp>=1.0.0,<2`.
+
 ## [0.14.2]
 
 ### Added
