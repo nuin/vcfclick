@@ -1560,7 +1560,7 @@ requires-dist = [
     { name = "cyvcf2", specifier = ">=0.31.0" },
     { name = "duckdb", specifier = ">=1.0.0,<2" },
     { name = "fastapi", marker = "extra == 'web'", specifier = ">=0.100.0" },
-    { name = "mcp", specifier = ">=1.0.0" },
+    { name = "mcp", specifier = ">=1.0.0,<2" },
     { name = "numpy", marker = "extra == 'benchmark'", specifier = ">=1.24" },
     { name = "pyarrow", specifier = ">=15.0.0" },
     { name = "pydantic", marker = "extra == 'web'", specifier = ">=2" },
