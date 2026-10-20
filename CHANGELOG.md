@@ -6,6 +6,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.14.3]
+
 ### Added
 
 - Siblings as probands. `vcfclick db ped --proband` repeats, so a family
