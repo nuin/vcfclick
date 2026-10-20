@@ -155,3 +155,67 @@ def test_text_output_unchanged(vcfclick_home):
     out = _vc(vcfclick_home, "db", "trio", "t", "--proband", "C1").stdout
     assert "trio: proband=C1 father=F mother=M" in out
     assert "denovo" in out and "recessive" in out
+
+
+def test_ped_declares_siblings_without_a_file(vcfclick_home):
+    _setup(vcfclick_home)
+    _vc(
+        vcfclick_home, "db", "ped", "t",
+        "--proband", "C1", "--proband", "C2", "--father", "F", "--mother", "M",
+    )  # fmt: skip
+    rows = json.loads(
+        _vc(
+            vcfclick_home,
+            "db",
+            "query",
+            "t",
+            "SELECT sample_id, father_id, mother_id, affected FROM pedigree ORDER BY sample_id",
+            "--format",
+            "JSONCompact",
+        ).stdout  # fmt: skip
+    )["data"]
+    assert [r[0] for r in rows] == ["C1", "C2", "F", "M"]
+    assert all(r[1:] == ["F", "M", "affected"] for r in rows if r[0] in ("C1", "C2"))
+    # Per-child sex needs a PED file; the same sample twice, or a parent as
+    # a child, is refused.
+    for extra, word in (
+        (["--proband", "C1", "--proband", "C2", "--proband-sex", "male"], "PED"),
+        (["--proband", "C1", "--proband", "C1"], "twice"),
+        (["--proband", "F"], "different"),
+    ):
+        r = _vc(
+            vcfclick_home, "db", "ped", "t", *extra, "--father", "F", "--mother", "M",
+            ok=False,
+        )  # fmt: skip
+        assert r.returncode != 0 and word in r.stderr
+
+
+def test_trio_without_proband_runs_every_child(vcfclick_home):
+    _setup(vcfclick_home)
+    _vc(
+        vcfclick_home, "db", "ped", "t",
+        "--proband", "C1", "--proband", "C2", "--father", "F", "--mother", "M",
+    )  # fmt: skip
+    doc = json.loads(_vc(vcfclick_home, "db", "trio", "t", "--format", "json").stdout)
+    assert [t["trio"]["proband"] for t in doc["trios"]] == ["C1", "C2"]
+    assert all(t["trio"]["father"] == "F" for t in doc["trios"])
+    counts = {
+        t["trio"]["proband"]: t["models"]["denovo"]["count"] for t in doc["trios"]
+    }
+    assert counts == {"C1": 3, "C2": 0}  # the planted de novo sites are C1's
+    # --proband keeps the single-document shape the desktop apps read.
+    single = _trio(vcfclick_home)
+    assert single["trio"]["proband"] == "C1" and "trios" not in single
+    text = _vc(vcfclick_home, "db", "trio", "t").stdout
+    assert "trio: proband=C1 father=F mother=M" in text
+    assert "trio: proband=C2 father=F mother=M" in text
+    assert text.index("proband=C1") < text.index("proband=C2")
+
+
+def test_trio_without_proband_needs_a_pedigree(vcfclick_home):
+    _vc(vcfclick_home, "db", "create", "t")
+    _vc(
+        vcfclick_home, "db", "ingest", "t", str(REL_VCF), "--ingest-id", "i1", "--serial"
+    )  # fmt: skip
+    r = _vc(vcfclick_home, "db", "trio", "t", ok=False)
+    assert r.returncode != 0 and "db ped" in r.stderr

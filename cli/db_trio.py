@@ -43,6 +43,7 @@ from cli.trio_analysis import (
 )
 from cli.trio_analysis import _comphet_genes as _comphet_genes
 from cli.trio_analysis import (
+    _children,
     _has_reference_rows,
     _resolve_parents,
     _sole_ingest_id,
@@ -56,7 +57,7 @@ class PedigreeOptions:
     name: str
     ped_path: str | None
     ingest_id: str | None
-    proband: str | None
+    proband: tuple[str, ...]
     father: str | None
     mother: str | None
     proband_sex: str
@@ -65,7 +66,7 @@ class PedigreeOptions:
 @dataclass(frozen=True)
 class TrioOptions:
     name: str
-    proband: str
+    proband: str | None
     category: str
     min_gq: int
     min_dp: int
@@ -94,8 +95,9 @@ class TrioOptions:
 )
 @click.option(
     "--proband",
-    default=None,
-    help="Without a PED file: the affected child's sample id.",
+    multiple=True,
+    help="Without a PED file: an affected child's sample id. Repeat it for "
+    "siblings who share the same parents.",
 )
 @click.option(
     "--father", default=None, help="Without a PED file: the father's sample id."
@@ -108,12 +110,14 @@ class TrioOptions:
     type=click.Choice(["male", "female", "unknown"]),
     default="unknown",
     show_default=True,
-    help="Without a PED file: the proband's sex.",
+    help="Without a PED file: the proband's sex (a single --proband only; "
+    "give each sibling's sex in a PED file).",
 )
 @command_options(PedigreeOptions)
 def db_ped(options: PedigreeOptions) -> None:
     """Load family relationships into NAME, from a PED/FAM file or as a
-    trio given by sample ids (--proband/--father/--mother).
+    family given by sample ids (--proband, repeatable for siblings,
+    with --father and --mother).
 
     The individual ids must match sample ids already ingested under the
     target ingest_id (v1 assumes a joint-called trio, so all members share
@@ -121,7 +125,7 @@ def db_ped(options: PedigreeOptions) -> None:
     ingest_id.
     """
     name, ped_path, ingest_id = options.name, options.ped_path, options.ingest_id
-    proband, father, mother = options.proband, options.father, options.mother
+    probands, father, mother = options.proband, options.father, options.mother
     proband_sex = options.proband_sex
     from storage import db_path
 
@@ -140,13 +144,24 @@ def db_ped(options: PedigreeOptions) -> None:
 
     from ingest.pedigree import load_pedigree
 
-    names = {"--proband": proband, "--father": father, "--mother": mother}
+    names = {"--proband": probands, "--father": father, "--mother": mother}
     if ped_path is None:
         missing = [k for k, v in names.items() if not v]
         if missing:
             raise click.ClickException(
                 "give a PED file, or all of --proband, --father and --mother "
                 f"(missing: {', '.join(missing)})"
+            )
+        if len(set(probands)) != len(probands):
+            raise click.ClickException("--proband lists the same sample twice")
+        if father in probands or mother in probands or father == mother:
+            raise click.ClickException(
+                "the probands, father and mother must be different samples"
+            )
+        if proband_sex != "unknown" and len(probands) > 1:
+            raise click.ClickException(
+                "--proband-sex applies to a single --proband; give each "
+                "sibling's sex in a PED file"
             )
     elif any(names.values()):
         raise click.ClickException(
@@ -160,11 +175,9 @@ def db_ped(options: PedigreeOptions) -> None:
         if ped_path is None:
             sex = {"male": "1", "female": "2", "unknown": "0"}[proband_sex]
             tmp = tempfile.NamedTemporaryFile("w", suffix=".ped", delete=False)
-            tmp.write(
-                f"fam1\t{father}\t0\t0\t1\t1\n"
-                f"fam1\t{mother}\t0\t0\t2\t1\n"
-                f"fam1\t{proband}\t{father}\t{mother}\t{sex}\t2\n"
-            )
+            tmp.write(f"fam1\t{father}\t0\t0\t1\t1\nfam1\t{mother}\t0\t0\t2\t1\n")
+            for child in probands:
+                tmp.write(f"fam1\t{child}\t{father}\t{mother}\t{sex}\t2\n")
             tmp.close()
             ped_path = tmp.name
         n = load_pedigree(ingest_id, ped_path)
@@ -178,7 +191,12 @@ def db_ped(options: PedigreeOptions) -> None:
 
 @db.command(name="trio")
 @click.argument("name")
-@click.option("--proband", required=True, help="Sample id of the affected child.")
+@click.option(
+    "--proband",
+    default=None,
+    help="Sample id of the affected child. Omitted: every child in the "
+    "pedigree with both parents declared, one report each.",
+)
 @click.option(
     "--category",
     type=click.Choice(["denovo", "recessive", "dominant", "comphet", "all"]),
@@ -212,7 +230,8 @@ def db_ped(options: PedigreeOptions) -> None:
     default="text",
     show_default=True,
     help="json: every model's count and candidates (with gene, gnomAD and "
-    "ClinVar when loaded) in one document.",
+    "ClinVar when loaded) in one document; without --proband, a `trios` "
+    "list with one document per child.",
 )
 @click.option(
     "--limit",
@@ -224,7 +243,8 @@ def db_ped(options: PedigreeOptions) -> None:
 @command_options(TrioOptions)
 def db_trio(options: TrioOptions) -> None:
     """Report candidate variants under Mendelian inheritance models for
-    a trio, with genotype quality gates and an AF rarity filter."""
+    a trio, with genotype quality gates and an AF rarity filter. Without
+    --proband, every child in the pedigree is analysed in turn."""
     from storage import db_path, get_session
 
     if not db_path(options.name).exists():
@@ -239,16 +259,33 @@ def db_trio(options: TrioOptions) -> None:
             "joint-called cohort. Re-ingest the trio as a single VCF "
             "(see `vcfclick merge`)."
         )
-    father, mother = _resolve_parents(sess, ingest_id, options.proband)
-    analysis = TrioAnalysis(
-        session=sess,
-        trio=Trio(ingest_id, options.proband, father, mother),
-        gates=options.gates,
-        has_reference=_has_reference_rows(sess),
-        gnomad_max_af=options.gnomad_max_af,
-    )
-    if options.out_format == "json":
-        result = _trio_json(analysis, options.category, options.limit)
-        click.echo(json.dumps(result, indent=2))
+    if options.proband is not None:
+        father, mother = _resolve_parents(sess, ingest_id, options.proband)
+        families = [(options.proband, father, mother)]
     else:
+        families = _children(sess, ingest_id)
+        if not families:
+            raise click.ClickException(
+                "no child with both parents in the pedigree. Load one with "
+                "`vcfclick db ped`, or name the proband with --proband."
+            )
+    has_ref = _has_reference_rows(sess)
+    analyses = [
+        TrioAnalysis(
+            session=sess,
+            trio=Trio(ingest_id, child, father, mother),
+            gates=options.gates,
+            has_reference=has_ref,
+            gnomad_max_af=options.gnomad_max_af,
+        )
+        for child, father, mother in families
+    ]
+    if options.out_format == "json":
+        docs = [_trio_json(a, options.category, options.limit) for a in analyses]
+        result = docs[0] if options.proband is not None else {"trios": docs}
+        click.echo(json.dumps(result, indent=2))
+        return
+    for i, analysis in enumerate(analyses):
+        if i:
+            click.echo()
         trio_text(analysis, options.category)

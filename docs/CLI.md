@@ -665,8 +665,9 @@ vcfclick db ped trio fam.ped
 ```
 Usage: vcfclick db ped [OPTIONS] NAME [PED_PATH]
 
-  Load family relationships into NAME, from a PED/FAM file or as a trio given
-  by sample ids (--proband/--father/--mother).
+  Load family relationships into NAME, from a PED/FAM file or as a family
+  given by sample ids (--proband, repeatable for siblings, with --father and
+  --mother).
 
   The individual ids must match sample ids already ingested under the target
   ingest_id (v1 assumes a joint-called trio, so all members share one
@@ -676,13 +677,15 @@ Options:
   --ingest-id TEXT                Ingest_id the pedigree's samples belong to.
                                   Inferred when the database has exactly one
                                   ingestion.
-  --proband TEXT                  Without a PED file: the affected child's
-                                  sample id.
+  --proband TEXT                  Without a PED file: an affected child's
+                                  sample id. Repeat it for siblings who share
+                                  the same parents.
   --father TEXT                   Without a PED file: the father's sample id.
   --mother TEXT                   Without a PED file: the mother's sample id.
   --proband-sex [male|female|unknown]
-                                  Without a PED file: the proband's sex.
-                                  [default: unknown]
+                                  Without a PED file: the proband's sex (a
+                                  single --proband only; give each sibling's
+                                  sex in a PED file).  [default: unknown]
   --help                          Show this message and exit.
 ```
 
@@ -702,10 +705,13 @@ vcfclick db trio trio --proband HG002 --category denovo
 Usage: vcfclick db trio [OPTIONS] NAME
 
   Report candidate variants under Mendelian inheritance models for a trio,
-  with genotype quality gates and an AF rarity filter.
+  with genotype quality gates and an AF rarity filter. Without --proband,
+  every child in the pedigree is analysed in turn.
 
 Options:
-  --proband TEXT                  Sample id of the affected child.  [required]
+  --proband TEXT                  Sample id of the affected child. Omitted:
+                                  every child in the pedigree with both
+                                  parents declared, one report each.
   --category [denovo|recessive|dominant|comphet|all]
                                   Inheritance model. 'all' prints per-model
                                   candidate counts.  [default: all]
@@ -722,7 +728,9 @@ Options:
                                   rare.
   --format [text|json]            json: every model's count and candidates
                                   (with gene, gnomAD and ClinVar when loaded)
-                                  in one document.  [default: text]
+                                  in one document; without --proband, a
+                                  `trios` list with one document per child.
+                                  [default: text]
   --limit INTEGER                 json: at most this many candidates per
                                   model.  [default: 1000]
   --help                          Show this message and exit.
