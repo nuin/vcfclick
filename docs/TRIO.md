@@ -164,6 +164,23 @@ the 4 confident sites and excludes the 3 sampled no-call sites, and
 `bcftools +mendelian2` independently flags the same 4. See
 [Validation](VALIDATION.md).
 
+## Families with several children
+
+Every child in the pedigree with both parents declared can be a proband:
+a PED file with siblings needs nothing more, and without a file
+`--proband` repeats:
+
+```bash
+vcfclick db ped fam1 --proband SIB1 --proband SIB2 --father DAD --mother MUM
+vcfclick db trio fam1                 # one report per child, in turn
+vcfclick db trio fam1 --proband SIB2  # just one
+```
+
+`--proband-sex` applies to a single `--proband`; a PED file carries each
+sibling's sex. Each child is analysed as its own trio against the same
+parents, so a de novo call in one sibling and not the other is the
+expected picture; shared candidates have to be read across the reports.
+
 ## Natural language
 
 The MCP server teaches an LLM the pedigree table, the inheritance
@@ -178,8 +195,10 @@ document: per model the candidate count, whether it is blocked by a missing
 population AF and, when those annotations are loaded, gene, gnomAD popmax and
 ClinVar significance. Compound hets come grouped by gene with the paternal and
 maternal hits. `--limit` caps candidates per model (default 1000). The desktop
-apps use this.
+apps use this. Without `--proband` the output is `{"trios": [...]}`, one such
+document per child in the pedigree.
 
-A trio can be declared without a PED file:
-`vcfclick db ped NAME --proband HG002 --father HG003 --mother HG004`.
+A family can be declared without a PED file:
+`vcfclick db ped NAME --proband HG002 --father HG003 --mother HG004`
+(`--proband` repeats for siblings).
 

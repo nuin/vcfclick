@@ -182,6 +182,26 @@ def _resolve_parents(sess, ingest_id: str, proband: str) -> tuple[str, str]:
     return father, mother
 
 
+def _children(sess, ingest_id: str) -> list[tuple[str, str, str]]:
+    """Every (child, father, mother) in the pedigree with both parents
+    declared, in sample-id order: the probands `db trio` runs without
+    --proband."""
+    from storage import sql_quote_str
+
+    raw = (
+        sess.query(
+            "SELECT sample_id, father_id, mother_id FROM pedigree "
+            f"WHERE ingest_id = {sql_quote_str(ingest_id)} "
+            "AND father_id IS NOT NULL AND father_id NOT IN ('0', '') "
+            "AND mother_id IS NOT NULL AND mother_id NOT IN ('0', '') "
+            "ORDER BY sample_id FORMAT JSONCompact"
+        )
+        .bytes()
+        .decode()
+    )
+    return [(c, f, m) for c, f, m in json.loads(raw)["data"]]
+
+
 def _has_reference_rows(sess) -> bool:
     from storage import count_expr
 

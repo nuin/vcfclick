@@ -8,6 +8,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- Siblings as probands. `vcfclick db ped --proband` repeats, so a family
+  with several children can be declared without a PED file; `db trio`
+  without `--proband` analyses every child in the pedigree in turn (text:
+  one block per child; `--format json`: a `trios` list). The desktop apps
+  list the family's children and switch proband among them.
+
 - Called-genotype accounting at ingest: `variants.n_called`, `an_called`
   and `ac_called` (ploidy-aware, from the GT allele arrays: a haploid call
   counts one allele, a partial `./1` its one called allele), and a new
