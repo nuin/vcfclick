@@ -25,7 +25,16 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `1/6`) and skips the `--max-af` gate with a note on stderr, instead of
   silently removing every private candidate. An explicit `--max-af` is
   always applied (and still reported as `cohort_derived_suspected`). In the
-  web tab, leave *max AF* blank for the same behaviour.
+  web tab, leave *max AF* blank for the same behaviour. "The cohort's own
+  frequency" is relative (1% of `ac_called / an_called`, plus 0.0005 from
+  0.01 up for a three-decimal print), so in a cohort of a hundred or more
+  samples a rare population frequency such as 0.0001 is not mistaken for it.
+- `db trio` no longer opens the annotation store once per candidate. The
+  compound-het gene grouping reads the gene table once, and the rendered
+  candidate rows share one open connection. With the AF gate skipped, a
+  family VCF can have hundreds of thousands of candidates: a 200,000-site
+  trio takes about 3 s where the per-candidate opens would have taken
+  minutes. Output is unchanged.
 - The `--max-af` gate keeps a site whose AF equals the threshold on both
   backends. `variants.info_AF` is a 32-bit float on chDB, so a site at
   exactly `--max-af 0.001` was dropped there but kept on DuckDB; the gate
