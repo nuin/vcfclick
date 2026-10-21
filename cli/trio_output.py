@@ -20,7 +20,7 @@ byte-for-byte once the whitelisted new keys are removed.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import click
 
@@ -98,6 +98,43 @@ class Render:
     limit: int
     have: dict  # annotation sources that hold data
     store: object | None = None  # open annotation connection, kept alive only
+    # Annotation answers prefetched in batches per model (see _prefetch), so
+    # a rendered candidate costs a dict lookup, not a store query.
+    cache: dict = field(default_factory=dict)
+
+
+def _prefetch(render: Render, rows: list) -> None:
+    """Look up genes, gnomAD and ClinVar for every row about to be rendered
+    in one batch per source. A per-candidate store query cost 0.1-1.5 ms
+    each (several seconds for a 1,000-candidate model on a slow disk); the
+    batch is one join. Rows already cached are skipped."""
+    from annotations.db import GeneIndex, clinvar_many, gnomad_af_many
+
+    keys = [(r[0], int(r[1]), r[2], r[3]) for r in rows]
+    todo = [k for k in dict.fromkeys(keys) if k not in render.cache]
+    if not todo:
+        return
+    conn = render.store
+    genes = gnomad = clinvar = None
+    if render.have["genes"]:
+        index = render.cache.get("__gene_index__")
+        if index is None:
+            index = render.cache["__gene_index__"] = GeneIndex(conn)
+        genes = index
+    if render.have["gnomad"]:
+        gnomad = gnomad_af_many(todo, conn=conn)
+    if render.have["clinvar"]:
+        clinvar = clinvar_many(todo, conn=conn)
+    for k in todo:
+        g = None if gnomad is None else gnomad.get(k)
+        c = None if clinvar is None else clinvar.get(k)
+        render.cache[k] = {
+            "genes": []
+            if genes is None
+            else [x.gene_symbol for x in genes.at(k[0], k[1])],
+            "gnomad_popmax": None if g is None else g.popmax,
+            "clinvar": None if c is None else c.clin_sig,
+        }
 
 
 # A decorator receives the candidate dict built so far, the source row and
@@ -114,6 +151,12 @@ def register_candidate_decorator(
     Order of registration is the order keys appear in the output."""
     _CANDIDATE_DECORATORS.append((fn, models))
     return fn
+
+
+def _candidates(rows: list, model: str, render: Render) -> list[dict]:
+    """Rendered candidates for `rows`, annotations fetched in one batch."""
+    _prefetch(render, rows)
+    return [_candidate(r, model, render) for r in rows]
 
 
 def _candidate(row: list, model: str, render: Render) -> dict:
@@ -138,7 +181,10 @@ def _candidate(row: list, model: str, render: Render) -> dict:
 @register_candidate_decorator
 def _annotation_columns(out: dict, row: list, model: str, render: Render) -> dict:
     chrom, pos, ref, alt = row[:4]
-    out.update(_enrich(chrom, pos, ref, alt, render.have))
+    hit = render.cache.get((chrom, int(pos), ref, alt))
+    out.update(
+        dict(hit) if hit is not None else _enrich(chrom, pos, ref, alt, render.have)
+    )
     return out
 
 
@@ -196,7 +242,7 @@ def _row_model(name: str, *, needs_reference: bool) -> ModelSpec:
             "blocked": blocked,
             "blocked_reason": _model_reason(blocked),
             "truncated": len(rows) > limit,
-            "candidates": [_candidate(r, name, render) for r in rows[:limit]],
+            "candidates": _candidates(rows[:limit], name, render),
         }
 
     def summary(analysis: TrioAnalysis) -> str:

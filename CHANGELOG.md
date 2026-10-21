@@ -35,6 +35,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   family VCF can have hundreds of thousands of candidates: a 200,000-site
   trio takes about 3 s where the per-candidate opens would have taken
   minutes. Output is unchanged.
+- `db trio --format json` fetches each model's gene, gnomAD and ClinVar
+  annotations in one batch per source instead of one store query per
+  candidate (new `annotations.clinvar_many`). With gnomAD loaded on a
+  20,000-site trio the document takes 0.5 s instead of 2.4 s; the output
+  is unchanged.
 - `db trio --gnomad-max-af` looks every candidate up in gnomAD with one
   query per model instead of one store open and query per candidate. With
   the AF gate skipped on a family VCF a trio has thousands of candidates, and

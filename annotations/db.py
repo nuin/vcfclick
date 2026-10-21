@@ -257,6 +257,53 @@ def gnomad_af(chrom: str, pos: int, ref: str, alt: str) -> GnomadAF | None:
     return GnomadAF(*row) if row else None
 
 
+def clinvar_many(
+    alleles: Iterable[tuple[str, int, str, str]],
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> dict[tuple[str, int, str, str], ClinVarRecord]:
+    """`clinvar_lookup` for many alleles in one query, the ClinVar
+    counterpart of `gnomad_af_many`: {(chrom, pos, ref, alt): ClinVarRecord}
+    for alleles present, none for those absent. When an allele has several
+    rows the first one returned wins, as in `clinvar_lookup`."""
+    keys = list(dict.fromkeys((c, int(p), r, a) for c, p, r, a in alleles))
+    if not keys:
+        return {}
+    own = conn is None
+    if conn is None:
+        conn = get_connection()
+    try:
+        if conn.execute("SELECT 1 FROM clinvar_variants LIMIT 1").fetchone() is None:
+            return {}
+        import pyarrow as pa
+
+        batch = pa.table(
+            {
+                "chrom": pa.array([k[0] for k in keys], pa.string()),
+                "pos": pa.array([k[1] for k in keys], pa.int64()),
+                "ref": pa.array([k[2] for k in keys], pa.string()),
+                "alt": pa.array([k[3] for k in keys], pa.string()),
+            }
+        )
+        name = "_vcfclick_clinvar_alleles"
+        conn.register(name, batch)
+        try:
+            rows = conn.execute(
+                "SELECT v.chrom, v.pos, v.ref, v.alt, v.clin_sig, v.review_status, "
+                "v.clinvar_id, v.condition "
+                f"FROM clinvar_variants v JOIN {name} c ON v.chrom = c.chrom "
+                "AND v.pos = c.pos AND v.ref = c.ref AND v.alt = c.alt"
+            ).fetchall()
+        finally:
+            conn.unregister(name)
+    finally:
+        if own:
+            conn.close()
+    found: dict[tuple[str, int, str, str], ClinVarRecord] = {}
+    for row in rows:
+        found.setdefault((row[0], int(row[1]), row[2], row[3]), ClinVarRecord(*row))
+    return found
+
+
 def gnomad_af_many(
     alleles: Iterable[tuple[str, int, str, str]],
     conn: duckdb.DuckDBPyConnection | None = None,
