@@ -36,9 +36,16 @@ Stop the server with `Ctrl-C`.
   SQL, and runs it. Bring your own API key (Gemini or Anthropic) — it
   stays in your browser and is sent only to the provider you pick.
 - **Trio** — pick a proband, an inheritance model (de-novo / recessive /
-  dominant) and quality thresholds; reuses `db trio`. De-novo / dominant
-  show a note if the cohort lacks stored hom-reference rows (re-ingest
-  with `--keep-reference`).
+  dominant / comphet: the list is the CLI's `--category` list, so a new
+  model appears here without a page edit) and quality thresholds; reuses
+  `db trio`. De-novo / dominant / comphet show a note if the cohort lacks
+  stored hom-reference rows (re-ingest with `--keep-reference`). Compound
+  hets are listed one row per candidate variant under its gene and need the
+  gene annotations loaded. Leave *max AF* blank for the default 0.01, which
+  is skipped (with a note) when the VCF's `INFO/AF` is the cohort's own
+  frequency; a value you type is always applied. The response carries the
+  same `af_gate` as `db trio --format json`
+  (see [TRIO.md](TRIO.md#cohort-derived-infoaf)).
 - **Combine** — paste two call sets and run the GATK3-style
   `CombineVariants` merge with `set=` provenance.
 

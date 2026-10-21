@@ -1,0 +1,102 @@
+{
+  "trio": {
+    "ingest_id": "g1",
+    "proband": "HG002",
+    "father": "HG003",
+    "mother": "HG004"
+  },
+  "keep_reference": true,
+  "gates": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_af": 0.01,
+    "min_ab": 0.25,
+    "max_ab": 0.75,
+    "gnomad_max_af": null
+  },
+  "annotations": {
+    "genes": false,
+    "clinvar": false,
+    "gnomad": false
+  },
+  "models": {
+    "denovo": {
+      "count": 4,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr20",
+          "pos": 2202238,
+          "ref": "C",
+          "alt": "T",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 0,
+          "af": null,
+          "genes": [],
+          "gnomad_popmax": null,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr20",
+          "pos": 5739093,
+          "ref": "A",
+          "alt": "G",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 0,
+          "af": null,
+          "genes": [],
+          "gnomad_popmax": null,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr20",
+          "pos": 5864738,
+          "ref": "G",
+          "alt": "A",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 0,
+          "af": null,
+          "genes": [],
+          "gnomad_popmax": null,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr20",
+          "pos": 5893991,
+          "ref": "G",
+          "alt": "C",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 0,
+          "af": null,
+          "genes": [],
+          "gnomad_popmax": null,
+          "clinvar": null
+        }
+      ]
+    },
+    "recessive": {
+      "count": 0,
+      "blocked": false,
+      "truncated": false,
+      "candidates": []
+    },
+    "dominant": {
+      "count": 0,
+      "blocked": false,
+      "truncated": false,
+      "candidates": []
+    },
+    "comphet": {
+      "count": 0,
+      "blocked": false,
+      "needs_genes": true,
+      "truncated": false,
+      "genes": []
+    }
+  }
+}

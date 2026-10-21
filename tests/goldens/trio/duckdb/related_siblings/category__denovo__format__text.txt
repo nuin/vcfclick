@@ -1,0 +1,10 @@
+trio: proband=C1 father=F mother=M
+
+denovo candidates: 3
+  chr1:151000000 A>G  proband_gt=1 father_gt=0 mother_gt=0  AF=NA
+  chr1:151500000 C>T  proband_gt=1 father_gt=0 mother_gt=0  AF=NA
+  chr1:152000000 A>G  proband_gt=1 father_gt=0 mother_gt=0  AF=NA
+
+trio: proband=C2 father=F mother=M
+
+denovo candidates: 0

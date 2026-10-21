@@ -336,9 +336,17 @@ Sparse: only non-reference calls. One row per
 | `ingest_id` | `LowCardinality(String)` | same as on `variants` |
 | `chrom`, `pos`, `ref`, `alt` | as in `variants` | |
 | `sample_id` | `LowCardinality(String)` | per-VCF sample name |
-| `gt` | `Int8` | alt-allele count: `1` = het (0/1 or 1/0), `2` = hom-alt (1/1), `-1` = hemizygous or mixed-missing. **`0` and `./.` are NOT stored.** |
-| `phased` | `UInt8 DEFAULT 0` | `1` if `|`-separated in the VCF, else `0` |
+| `gt` | `Int8` | alt-allele count: `1` = het (0/1 or 1/0) or a partial call with one ALT allele (`./1`), `2` = hom-alt (1/1) **or a haploid ALT call** (see below), `0` = hom-ref, stored only with `--keep-reference`. **The encoder never writes a negative value** (there is no hemizygous code), and `./.` is never stored; without `--keep-reference` `0/0` is not stored either. |
+| `phased` | `UInt8 DEFAULT 0` | `1` if `|`-separated in the VCF, else `0`. A haploid call (a lone `1`) reads as phased. |
 | `ingested_at` | `DateTime` | |
+
+**Haploid calls are stored as `1/1`.** A male's call on the non-PAR chrX or
+chrY, or a call on chrM, is a lone allele in the VCF (`GT=1`). It is stored
+as `gt = 2` with `phased = 1`: indistinguishable by `gt` alone from a
+diploid hom-alt call, and a haploid `0` becomes `gt = 0` (with
+`--keep-reference`). Count alleles from `an_called` / `ac_called` on
+`variants`, which are ploidy-aware, rather than assuming two alleles per
+sample on sex chromosomes.
 
 ### Reserved FORMAT scalars
 

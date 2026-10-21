@@ -1,0 +1,66 @@
+{
+  "trios": [
+    {
+      "trio": {
+        "ingest_id": "g1",
+        "proband": "C1",
+        "father": "F",
+        "mother": "M"
+      },
+      "keep_reference": true,
+      "gates": {
+        "min_gq": 20,
+        "min_dp": 10,
+        "max_af": 0.01,
+        "min_ab": 0.25,
+        "max_ab": 0.75,
+        "gnomad_max_af": null
+      },
+      "annotations": {
+        "genes": false,
+        "clinvar": false,
+        "gnomad": false
+      },
+      "models": {
+        "comphet": {
+          "count": 0,
+          "blocked": false,
+          "needs_genes": true,
+          "truncated": false,
+          "genes": []
+        }
+      }
+    },
+    {
+      "trio": {
+        "ingest_id": "g1",
+        "proband": "C2",
+        "father": "F",
+        "mother": "M"
+      },
+      "keep_reference": true,
+      "gates": {
+        "min_gq": 20,
+        "min_dp": 10,
+        "max_af": 0.01,
+        "min_ab": 0.25,
+        "max_ab": 0.75,
+        "gnomad_max_af": null
+      },
+      "annotations": {
+        "genes": false,
+        "clinvar": false,
+        "gnomad": false
+      },
+      "models": {
+        "comphet": {
+          "count": 0,
+          "blocked": false,
+          "needs_genes": true,
+          "truncated": false,
+          "genes": []
+        }
+      }
+    }
+  ]
+}

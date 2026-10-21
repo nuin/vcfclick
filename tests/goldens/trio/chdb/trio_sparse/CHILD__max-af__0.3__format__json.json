@@ -1,0 +1,63 @@
+{
+  "trio": {
+    "ingest_id": "fam1",
+    "proband": "CHILD",
+    "father": "FATHER",
+    "mother": "MOTHER"
+  },
+  "keep_reference": false,
+  "gates": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_af": 0.3,
+    "min_ab": 0.25,
+    "max_ab": 0.75,
+    "gnomad_max_af": null
+  },
+  "annotations": {
+    "genes": false,
+    "clinvar": false,
+    "gnomad": false
+  },
+  "models": {
+    "denovo": {
+      "count": 0,
+      "blocked": true,
+      "truncated": false,
+      "candidates": []
+    },
+    "recessive": {
+      "count": 1,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr1",
+          "pos": 200,
+          "ref": "C",
+          "alt": "T",
+          "proband_gt": 2,
+          "father_gt": 1,
+          "mother_gt": 1,
+          "af": 0.2,
+          "genes": [],
+          "gnomad_popmax": null,
+          "clinvar": null
+        }
+      ]
+    },
+    "dominant": {
+      "count": 0,
+      "blocked": true,
+      "truncated": false,
+      "candidates": []
+    },
+    "comphet": {
+      "count": 0,
+      "blocked": true,
+      "needs_genes": true,
+      "truncated": false,
+      "genes": []
+    }
+  }
+}

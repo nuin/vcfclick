@@ -216,3 +216,158 @@ def test_unexpected_errors_are_logged_not_returned(monkeypatch, caplog):
     assert "internal detail" not in out["error"]
     assert out["sql"] == "SELECT 1"
     assert "internal detail" in caplog.text
+
+
+# ───────────────────────── /api/trio on a family ─────────────────────────
+
+
+@pytest.fixture
+def trio_web_store(tmp_path, monkeypatch):
+    """`make(vcf, keep_reference=True)` builds a one-ingestion DuckDB trio
+    (pedigree loaded) the in-process app then reads.
+
+    The storage layer caches one session per database NAME, not per path, so
+    every store gets a name of its own and its session is dropped afterwards;
+    otherwise a later test would read the first test's data."""
+    import uuid
+
+    import storage.db as sdb
+
+    names: list[str] = []
+
+    def make(vcf, *, keep_reference=True) -> str:
+        name = f"triodb_{uuid.uuid4().hex[:8]}"
+        names.append(name)
+        env = os.environ.copy()
+        env["VCFCLICK_HOME"] = str(tmp_path / "triohome")
+        env["VCFCLICK_BACKEND"] = "duckdb"
+        env["VCFCLICK_ANNOTATIONS_DB"] = str(tmp_path / "ann.duckdb")
+
+        def run(*args):
+            r = subprocess.run(
+                [VCFCLICK_BIN, *args], env=env, capture_output=True, text=True
+            )
+            assert r.returncode == 0, f"{' '.join(args)} failed:\n{r.stderr}"
+
+        run("db", "create", name)
+        ingest = ["db", "ingest", name, str(vcf), "--ingest-id", "i1", "--serial"]
+        if keep_reference:
+            ingest.append("--keep-reference")
+        run(*ingest)
+        run("db", "ped", name, str(FIX / "trio.ped"))
+        for key, value in env.items():
+            if key.startswith("VCFCLICK_"):
+                monkeypatch.setenv(key, value)
+        monkeypatch.setenv("VCFCLICK_DB_NAME", name)
+        return name
+
+    yield make
+    for name in names:
+        session = sdb._sessions.pop(f"duckdb::{name}", None)
+        if hasattr(session, "close"):
+            session.close()
+
+
+def _seed_gene(tmp_path, monkeypatch):
+    """GENEX over chr1:1-100000 in the (per-test) annotation store."""
+    from annotations.db import get_connection
+
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO refseq_genes VALUES "
+        "('GENEX', 'chr1', 1, 100000, '+', 'id', 'protein_coding')"
+    )
+    conn.close()
+
+
+def test_trio_endpoint_serves_every_category(tmp_path, monkeypatch, trio_web_store):
+    from cli.trio_analysis import CATEGORIES
+
+    trio_web_store(FIX / "trio.vcf.gz")
+    _seed_gene(tmp_path, monkeypatch)
+    out = {}
+    for category in CATEGORIES:
+        d = client.get(
+            "/api/trio",
+            params={"proband": "CHILD", "category": category, "max_af": 0.3},
+        ).json()
+        assert "error" not in d, (category, d)
+        assert d["father"] == "FATHER" and d["mother"] == "MOTHER"
+        # five sites are too few for the cohort-AF probe to judge
+        assert d["af_gate"] == "unavailable"
+        assert d["row_count"] == len(d["rows"])
+        out[category] = d
+    # the original three: one row per variant, same columns as before
+    assert out["denovo"]["columns"] == [
+        "chrom", "pos", "ref", "alt", "proband_gt", "father_gt", "mother_gt", "af",
+    ]  # fmt: skip
+    assert [r[1] for r in out["denovo"]["rows"]] == [100]
+    assert [r[1] for r in out["recessive"]["rows"]] == [200]
+    assert [r[1] for r in out["dominant"]["rows"]] == [300, 400]
+    # comphet: GENEX has a paternal (300) and a maternal (400) het
+    comphet = out["comphet"]
+    assert comphet["columns"] == ["gene", "origin", "chrom", "pos", "ref", "alt", "af"]
+    assert [(r[0], r[1], r[3]) for r in comphet["rows"]] == [
+        ("GENEX", "paternal", 300),
+        ("GENEX", "maternal", 400),
+    ]
+    assert comphet["genes"] == 1
+    assert "note" not in comphet and "note" not in out["denovo"]
+
+
+def test_trio_endpoint_comphet_says_when_no_genes_are_loaded(
+    trio_web_store,
+):
+    trio_web_store(FIX / "trio.vcf.gz")
+    d = client.get(
+        "/api/trio",
+        params={"proband": "CHILD", "category": "comphet", "max_af": 0.3},
+    ).json()
+    assert d["rows"] == [] and "No gene annotations" in d["note"]
+
+
+def test_trio_endpoint_keep_reference_note_follows_the_model(trio_web_store):
+    """de novo / dominant / comphet need stored hom-ref rows; recessive
+    does not and gets no note."""
+    trio_web_store(FIX / "trio.vcf.gz", keep_reference=False)
+    for category, noted in (
+        ("denovo", True),
+        ("dominant", True),
+        ("comphet", True),
+        ("recessive", False),
+    ):
+        d = client.get(
+            "/api/trio",
+            params={"proband": "CHILD", "category": category, "max_af": 0.3},
+        ).json()
+        assert "error" not in d, (category, d)
+        assert ("--keep-reference" in d.get("note", "")) is noted, category
+
+
+def test_trio_endpoint_skips_a_cohort_derived_af_gate_unless_asked(
+    tmp_path, trio_web_store
+):
+    """A callset-AF trio (every private het has AF 1/6 or 1/3): with no
+    max_af the gate is skipped with a note, an explicit max_af is honoured
+    exactly as `db trio --max-af` does."""
+    from tests.fixtures._vcfgen import TRIO_SAMPLES, trio_sites, write_vcf
+
+    vcf = write_vcf(tmp_path / "cohort.vcf", TRIO_SAMPLES, trio_sites(30, af="cohort"))
+    trio_web_store(vcf)
+
+    auto = client.get("/api/trio", params={"proband": "CHILD"}).json()
+    assert auto["af_gate"] == "skipped_cohort_derived"
+    assert auto["row_count"] == 15  # every de novo site survives
+    assert "own allele frequency" in auto["note"] and "skipped" in auto["note"]
+
+    asked = client.get("/api/trio", params={"proband": "CHILD", "max_af": 0.01}).json()
+    assert asked["af_gate"] == "cohort_derived_suspected"
+    assert asked["row_count"] == 0  # the gate ran, as asked
+    assert "applied as requested" in asked["note"]
+
+    # the page leaves max AF blank by default and sends it only when filled
+    from vcfclick_web.page import INDEX_HTML
+
+    assert 'id="t-af" type="number" step="0.01" placeholder' in INDEX_HTML
+    assert "if($('t-af').value !== '') q.max_af" in INDEX_HTML

@@ -699,6 +699,16 @@ Candidate variants under Mendelian models (de-novo/recessive/dominant/comp-het).
 vcfclick db trio trio --proband HG002 --category denovo
 ```
 
+`--format json` reports, for every model, `blocked` and `blocked_reason`
+(`null`, or `needs_keep_reference` / `needs_genes`), and under `gates` the
+`af_gate` outcome (`applied`, `cohort_derived_suspected`,
+`skipped_cohort_derived`, `unavailable`). When the VCF's `INFO/AF` is the
+cohort's own frequency, the `--max-af` gate is skipped with a note on stderr
+unless `--max-af` is given; see
+[TRIO.md](TRIO.md#cohort-derived-infoaf). The JSON is additive-only; the
+[compatibility policy](TRIO.md#compatibility-policy) is the contract the
+desktop apps rely on.
+
 <details><summary>options</summary>
 
 ```
@@ -718,7 +728,11 @@ Options:
   --min-gq INTEGER                [default: 20]
   --min-dp INTEGER                [default: 10]
   --max-af FLOAT                  Keep variants with population info_AF <=
-                                  this (rarity filter).  [default: 0.01]
+                                  this (rarity filter). If INFO/AF turns out
+                                  to be this cohort's own frequency (GATK-
+                                  style family VCFs), the filter is skipped
+                                  with a note unless this option is given
+                                  explicitly.  [default: 0.01]
   --min-ab FLOAT                  [default: 0.25]
   --max-ab FLOAT                  [default: 0.75]
   --gnomad-max-af FLOAT           Additionally drop candidates whose gnomAD

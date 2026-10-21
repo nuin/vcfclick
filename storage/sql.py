@@ -116,3 +116,132 @@ def map_keys_from(table: str, map_col: str) -> str:
     if backend() == "duckdb":
         return f"(SELECT unnest(map_keys({map_col})) AS k FROM {table})"
     return f"{table} ARRAY JOIN mapKeys({map_col}) AS k"
+
+
+# ───────────────────────── shared query fragments ─────────────────────────
+#
+# Small builders every genotype query repeats. They exist so a lesson learned
+# the hard way (a LEFT JOIN that reads an absent parent as 0/0 on chDB, an
+# unsigned add that overflows on DuckDB) is encoded once, with a test on both
+# backends, instead of being rediscovered by each feature.
+
+_IDENT_PATH_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)?$")
+
+
+def _ident(name: str) -> str:
+    if not _IDENT_PATH_RE.match(name):
+        raise ValueError(f"Unsafe identifier: {name!r}")
+    return name
+
+
+def str_list(values) -> str:
+    """`'a', 'b'` for an `IN (...)` list; every value through sql_quote_str."""
+    return ", ".join(sql_quote_str(v) for v in values)
+
+
+def autosome_filter(col: str = "chrom") -> str:
+    """`chrom IN (<every autosome spelling>)`. The names come from
+    storage.contigs, the one definition of the contig alias sets."""
+    from storage.contigs import autosome_names
+
+    return f"{_ident(col)} IN ({str_list(autosome_names())})"
+
+
+def sample_join(
+    alias: str, sample_id: str, *, base: str = "g", table: str = "genotypes"
+) -> str:
+    """`INNER JOIN genotypes <alias> ...` bringing in SAMPLE_ID's call at the
+    same (ingest_id, chrom, pos, ref, alt) as `base`.
+
+    Always an INNER join, on purpose. A LEFT JOIN would hand back, for a
+    sample with no stored row at that site, a default instead of NULL on
+    chDB (an unmatched row reads gt = 0), so absence would look like a
+    proven 0/0. With an INNER join a site where the sample has no row simply
+    does not match. Use `genotype_pivot_sql` when absence must be visible.
+    """
+    a, b = _ident(alias), _ident(base)
+    key = " AND ".join(
+        f"{a}.{c} = {b}.{c}" for c in ("ingest_id", "chrom", "pos", "ref", "alt")
+    )
+    return (
+        f"INNER JOIN {_ident(table)} {a} ON {key} AND "
+        f"{a}.sample_id = {sql_quote_str(sample_id)}"
+    )
+
+
+def to_int64(expr: str) -> str:
+    """NULL-safe widening to a 64-bit integer. chDB's CAST(x AS BIGINT)
+    throws on a NULL in a Nullable column; toInt64 propagates the NULL."""
+    from storage.db import backend
+
+    if backend() == "duckdb":
+        return f"CAST({expr} AS BIGINT)"
+    return f"toInt64({expr})"
+
+
+def to_double(expr: str) -> str:
+    from storage.db import backend
+
+    if backend() == "duckdb":
+        return f"CAST({expr} AS DOUBLE)"
+    return f"toFloat64({expr})"
+
+
+def allele_fraction_sql(alt_col: str, ref_col: str) -> str:
+    """alt / (ref + alt) as a double, NULL when either count is NULL.
+
+    The read counts are 16-bit unsigned columns. DuckDB adds two USMALLINTs
+    in USMALLINT and raises on overflow (65535 + 1), so both are widened to
+    BIGINT before they are added. A zero denominator is the caller's to
+    guard (`ref + alt > 0`): both engines return nan or inf, not NULL.
+    """
+    alt, ref = to_int64(_ident(alt_col)), to_int64(_ident(ref_col))
+    return f"({to_double(alt)} / {to_double(f'{alt} + {ref}')})"
+
+
+def genotype_pivot_sql(
+    ingest_id: str, samples: dict[str, str], fields: tuple[str, ...] = ("gt",)
+) -> str:
+    """A subquery with one row per site and, per ROLE in `samples`
+    ({"p": "CHILD", "f": "DAD"}), one column per field named `<role>_<field>`
+    (`p_gt`, `f_gt`, ...), plus ingest_id, chrom, pos, ref, alt.
+
+    A sample with no stored row at the site reads NULL, never 0: the value
+    is `max(CASE WHEN sample_id = ... THEN field END)`, and an aggregate
+    over no matching row is NULL on both backends. That is the null-safe
+    way to see an absent parent; the equivalent LEFT JOIN reads gt = 0 on
+    chDB. Only sites where at least one listed sample has a row appear.
+    Wrap it as `FROM (<this>) x` and alias the columns you select.
+    """
+    if not samples:
+        raise ValueError("genotype_pivot_sql needs at least one sample")
+    cols = []
+    for role, sample in samples.items():
+        for field in fields:
+            cols.append(
+                f"max(CASE WHEN sample_id = {sql_quote_str(sample)} "
+                f"THEN {_ident(field)} END) AS {_ident(role)}_{_ident(field)}"
+            )
+    return (
+        "SELECT ingest_id, chrom, pos, ref, alt, "
+        + ", ".join(cols)
+        + f" FROM genotypes WHERE ingest_id = {sql_quote_str(ingest_id)} "
+        f"AND sample_id IN ({str_list(samples.values())}) "
+        "GROUP BY ingest_id, chrom, pos, ref, alt"
+    )
+
+
+# `variants.info_AF` is Float32 on chDB and REAL on DuckDB. A site whose AF
+# is exactly the threshold (0.001) is stored as 0.0010000000474..., which is
+# greater than the double 0.001, so `info_AF <= 0.001` kept it on DuckDB and
+# dropped it on chDB. The rarity gate adds this much to the threshold: far
+# below any real frequency step, above float32 rounding for every AF a VCF
+# carries (relative error 6e-8), so a site AT --max-af is kept on both.
+AF_EPSILON = 1e-7
+
+
+def af_gate_sql(col: str, max_af: float) -> str:
+    """The rarity gate: NULL AF passes (absence is not rarity evidence
+    either way), otherwise AF <= max_af + AF_EPSILON."""
+    c = _ident(col)
+    return f"({c} IS NULL OR {c} <= {float(max_af)!r} + {AF_EPSILON!r})"

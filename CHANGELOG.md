@@ -6,6 +6,67 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- `db trio --format json`: every model object gains `blocked_reason`
+  (`null` when nothing is wrong, else `needs_keep_reference` or
+  `needs_genes`, from one closed vocabulary), and `gates` gains `af_gate`
+  (`applied`, `cohort_derived_suspected`, `skipped_cohort_derived`,
+  `unavailable`). Additive only: no existing key moves, and the
+  compatibility policy is written down in `docs/TRIO.md`.
+- The web Trio tab and `/api/trio` serve compound hets (one row per candidate
+  variant under its gene). The tab's model list is generated from the CLI's,
+  so it can no longer lag behind it.
+
+### Changed
+
+- `db trio` recognises an `INFO/AF` that is the cohort's own allele
+  frequency (GATK-style family VCFs, where a private het in a trio is
+  `1/6`) and skips the `--max-af` gate with a note on stderr, instead of
+  silently removing every private candidate. An explicit `--max-af` is
+  always applied (and still reported as `cohort_derived_suspected`). In the
+  web tab, leave *max AF* blank for the same behaviour. "The cohort's own
+  frequency" is relative (1% of `ac_called / an_called`, plus 0.0005 from
+  0.01 up for a three-decimal print), so in a cohort of a hundred or more
+  samples a rare population frequency such as 0.0001 is not mistaken for it.
+- `db trio` no longer opens the annotation store once per candidate. The
+  compound-het gene grouping reads the gene table once, and the rendered
+  candidate rows share one open connection. With the AF gate skipped, a
+  family VCF can have hundreds of thousands of candidates: a 200,000-site
+  trio takes about 3 s where the per-candidate opens would have taken
+  minutes. Output is unchanged.
+- `db trio --format json` fetches each model's gene, gnomAD and ClinVar
+  annotations in one batch per source instead of one store query per
+  candidate (new `annotations.clinvar_many`). With gnomAD loaded on a
+  20,000-site trio the document takes 0.5 s instead of 2.4 s; the output
+  is unchanged.
+- `db trio --gnomad-max-af` looks every candidate up in gnomAD with one
+  query per model instead of one store open and query per candidate. With
+  the AF gate skipped on a family VCF a trio has thousands of candidates, and
+  the per-candidate lookups cost 6 s (JSON) to 40 s (text listing) at 5,000
+  sites, minutes at WGS size, whether or not gnomAD was loaded. The same
+  trio now takes about 1 s and 0.4 s. Which candidates are kept is
+  unchanged. `annotations.gnomad_af` and `clinvar_lookup` also pass the
+  position as the column's own type, so DuckDB skips row groups by position:
+  a lookup is about 15 times faster on a table of millions of rows.
+- The `--max-af` gate keeps a site whose AF equals the threshold on both
+  backends. `variants.info_AF` is a 32-bit float on chDB, so a site at
+  exactly `--max-af 0.001` was dropped there but kept on DuckDB; the gate
+  now allows 1e-7 of rounding. This can only add a candidate sitting on the
+  threshold.
+- The MCP briefing no longer says `db trio` applies `GQ>=20` "exactly": it
+  states the CLI's NULL-tolerant gates against the stricter generic rule,
+  lists `comphet` among the models, warns about a cohort-derived `INFO/AF`
+  and says how a haploid call is stored.
+
+### Fixed
+
+- The `genotypes.gt` comments in `schema/02_genotypes.sql`,
+  `schema/duckdb/02_genotypes.sql` and `docs/SCHEMA.md` described a
+  `-1` "hemizygous" code that the encoder has never written. A haploid ALT
+  call (male non-PAR chrX/chrY, chrM) is stored as `gt = 2` with
+  `phased = 1`; `gt` is never negative.
+
 ## [0.14.3]
 
 ### Added

@@ -1,0 +1,5 @@
+trio: proband=CHILD father=FATHER mother=MOTHER
+
+dominant candidates: 2
+  chr1:300 G>A  proband_gt=1 father_gt=1 mother_gt=0  AF=0.05000000074505806
+  chr1:400 T>C  proband_gt=1 father_gt=0 mother_gt=1  AF=0.05000000074505806

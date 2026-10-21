@@ -9,23 +9,107 @@ from typing import Any, NamedTuple
 import click
 
 
+# The inheritance models, in the order a trio document lists them. This is
+# the one definition: the CLI's --category choices, the web UI's category
+# list and the MCP briefing all derive from it (tests/test_trio_categories.py
+# ties them together).
+ROW_CATEGORIES: tuple[str, ...] = (
+    "denovo",
+    "recessive",
+    "dominant",
+)  # one row per variant
+GENE_CATEGORIES: tuple[str, ...] = ("comphet",)  # reported per gene
+CATEGORIES: tuple[str, ...] = ROW_CATEGORIES + GENE_CATEGORIES
+CATEGORY_CHOICES: tuple[str, ...] = CATEGORIES + ("all",)
+
+# The default for `db trio --max-af` (and the web API's max_af).
+DEFAULT_MAX_AF = 0.01
+
+# Why a model reports `blocked_reason` instead of results: the closed
+# vocabulary of the JSON `blocked_reason` key (null when not blocked).
+# Defined once here; each desktop app mirrors it in one reason -> text map.
+# The four classic models use the first two; the rest are reserved for the
+# family models that are not implemented yet (phasing, X-linked, ...).
+BLOCKED_REASONS: tuple[str, ...] = (
+    "needs_keep_reference",  # no stored hom-ref rows to prove a 0/0 parent
+    "needs_genes",  # gene annotations not loaded (comphet)
+    "needs_phase",
+    "needs_parents",
+    "needs_sex",
+    "needs_ad",
+    "needs_parent_ad",
+    "no_autosomes",
+    "no_x_data",
+    "parent_sex_conflict",
+    "build_conflict",
+)
+
+
+# What happened to the --max-af gate, reported as `gates.af_gate`:
+#   applied                   the gate ran; the cohort-AF probe found no sign
+#                             the VCF's INFO/AF is the cohort's own
+#   cohort_derived_suspected  INFO/AF looks cohort-derived but the gate ran
+#                             because --max-af was given explicitly
+#   skipped_cohort_derived    INFO/AF looks cohort-derived and --max-af was
+#                             not given, so the gate was not applied
+#   unavailable               the probe could not run (called counts missing
+#                             or too few sites to judge); the gate ran
+AF_GATE_VALUES: tuple[str, ...] = (
+    "applied",
+    "cohort_derived_suspected",
+    "skipped_cohort_derived",
+    "unavailable",
+)
+AF_GATE_SKIPPED = "skipped_cohort_derived"
+
+
+def check_blocked_reason(reason: str | None) -> str | None:
+    """Return `reason` if it is null or in the closed enum, else raise."""
+    if reason is not None and reason not in BLOCKED_REASONS:
+        raise ValueError(f"unknown blocked_reason {reason!r}")
+    return reason
+
+
 class Trio(NamedTuple):
-    """A resolved family: the cohort and the three sample ids."""
+    """A resolved family: the cohort, the proband and the declared parents.
+
+    A parent is None when the pedigree declares none (a duo has one parent
+    and only the analyses written for it accept that). The classic models
+    need both and refuse a trio without them."""
 
     ingest_id: str
     proband: str
-    father: str
-    mother: str
+    father: str | None
+    mother: str | None
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        """The declared parents, father first."""
+        return tuple(p for p in (self.father, self.mother) if p is not None)
+
+    @property
+    def kind(self) -> str:
+        """`trio` (both parents), `duo` (one) or `none`."""
+        return {2: "trio", 1: "duo"}.get(len(self.parents), "none")
 
 
 class Gates(NamedTuple):
-    """The tunable quality / rarity thresholds, passed together."""
+    """The tunable quality / rarity thresholds, passed together.
+
+    Only ever gains trailing defaulted fields, so positional construction
+    (cli/db_trio.py, vcfclick_web/app.py) keeps working."""
 
     min_gq: int
     min_dp: int
     max_af: float
     min_ab: float
     max_ab: float
+    # A parent's stored 0/0 row is trusted as "parent does not carry it" only
+    # when its allele balance stays under this (see parent_ref_ok). The four
+    # classic models do not read it.
+    max_parent_alt_frac: float = 0.05
+    # See AF_GATE_VALUES. Only `skipped_cohort_derived` changes the SQL.
+    af_gate: str = "applied"
 
 
 def _sole_ingest_id(name: str) -> str | None:
@@ -61,16 +145,48 @@ def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
     )
 
 
-def _parent_joins(father: str, mother: str) -> str:
-    from storage import sql_quote_str
+def _parent_joins(father: str | None, mother: str | None) -> str:
+    from storage.sql import sample_join
 
-    key = "f.ingest_id = g.ingest_id AND f.chrom = g.chrom AND f.pos = g.pos AND f.ref = g.ref AND f.alt = g.alt"
-    mkey = key.replace("f.", "m.")
+    if father is None or mother is None:
+        raise ValueError(
+            "this model needs both parents declared (father="
+            f"{father!r}, mother={mother!r})"
+        )
     return (
-        f"INNER JOIN genotypes f ON {key} AND f.sample_id = {sql_quote_str(father)} "
-        f"INNER JOIN genotypes m ON {mkey} AND m.sample_id = {sql_quote_str(mother)} "
+        f"{sample_join('f', father)} {sample_join('m', mother)} "
         "LEFT JOIN variants v ON v.ingest_id = g.ingest_id AND v.chrom = g.chrom "
         "AND v.pos = g.pos AND v.ref = g.ref AND v.alt = g.alt"
+    )
+
+
+def parent_ref_ok(alias: str, gates: Gates) -> str:
+    """SQL boolean: a parent's STORED 0/0 row at this site can be trusted as
+    "the parent does not carry the allele" (alias = the parent's genotypes
+    row). It is not trusted when the reads say otherwise, since a caller can
+    emit 0/0 for a site with real alt support.
+
+        ad_alt IS NULL                    no allele depths recorded: trusted
+        ad_alt < 2                        zero or one alt read: noise, trusted
+        ad_ref IS NOT NULL AND
+          alt / (ref + alt) < frac        otherwise the alt fraction must stay
+                                          strictly below gates.max_parent_alt_frac
+
+    A NULL ad_ref with two or more alt reads is NOT trusted: the fraction
+    cannot be computed, and two alt reads are the least evidence we accept as
+    contradicting a 0/0. The expression is never NULL (a NULL would silently
+    drop the row), so it can be negated or combined freely. The four classic
+    models do not use it; the models that prove a parent's absence do.
+    """
+    frac = gates.max_parent_alt_frac
+    if not 0.0 <= frac <= 1.0:
+        raise ValueError(f"max_parent_alt_frac must be in [0, 1], got {frac!r}")
+    from storage.sql import allele_fraction_sql
+
+    ratio = allele_fraction_sql(f"{alias}.ad_alt", f"{alias}.ad_ref")
+    return (
+        f"({alias}.ad_alt IS NULL OR {alias}.ad_alt < 2 OR "
+        f"({alias}.ad_ref IS NOT NULL AND {ratio} < {frac!r}))"
     )
 
 
@@ -78,17 +194,18 @@ def _where(trio: Trio, gates: Gates, model: str) -> str:
     """Shared WHERE clause: the genotype model plus the quality / rarity
     gates, scoped to this proband and ingest."""
     from storage import sql_quote_str
+    from storage.sql import af_gate_sql
 
-    predicate = " AND ".join(
-        [
-            model,
-            _quality_gate("g", gates.min_gq, gates.min_dp),
-            _quality_gate("f", gates.min_gq, gates.min_dp),
-            _quality_gate("m", gates.min_gq, gates.min_dp),
-            _het_ab_gate("g", gates.min_ab, gates.max_ab),
-            f"(v.info_AF IS NULL OR v.info_AF <= {gates.max_af})",
-        ]
-    )
+    parts = [
+        model,
+        _quality_gate("g", gates.min_gq, gates.min_dp),
+        _quality_gate("f", gates.min_gq, gates.min_dp),
+        _quality_gate("m", gates.min_gq, gates.min_dp),
+        _het_ab_gate("g", gates.min_ab, gates.max_ab),
+    ]
+    if gates.af_gate != AF_GATE_SKIPPED:
+        parts.append(af_gate_sql("v.info_AF", gates.max_af))
+    predicate = " AND ".join(parts)
     return (
         f"g.ingest_id = {sql_quote_str(trio.ingest_id)} "
         f"AND g.sample_id = {sql_quote_str(trio.proband)} AND {predicate}"
@@ -143,13 +260,16 @@ def _comphet_genes(candidate_rows: list) -> dict:
     that carry BOTH a paternal and a maternal het (trans configuration →
     both gene copies hit). A variant overlapping several genes counts for
     each. Returns {gene_symbol: {"paternal": [...], "maternal": [...]}}."""
-    from annotations import gene_at
+    from annotations.db import GeneIndex
 
     genes: dict = {}
+    index = None  # read the gene table once, at the first candidate
     for chrom, pos, ref, alt, af, origin in candidate_rows:
         if origin not in ("paternal", "maternal"):
             continue
-        for gr in gene_at(chrom, int(pos)):
+        if index is None:
+            index = GeneIndex()
+        for gr in index.at(chrom, int(pos)):
             entry = genes.setdefault(gr.gene_symbol, {"paternal": [], "maternal": []})
             entry[origin].append((chrom, pos, ref, alt, af))
     return {sym: e for sym, e in genes.items() if e["paternal"] and e["maternal"]}
@@ -215,14 +335,23 @@ def _has_reference_rows(sess) -> bool:
     return int(json.loads(raw)["data"][0][0]) > 0
 
 
-def _gnomad_keep(chrom: str, pos, ref: str, alt: str, max_af: float) -> bool:
-    """Keep a candidate whose gnomAD popmax AF is <= max_af, or that is
-    absent from the loaded gnomAD slice — absence is treated as rare
-    (the slice may simply not cover the locus), never as AF 0."""
-    from annotations import gnomad_af
+def _gnomad_filter(rows: list, max_af: float) -> list:
+    """The rows (chrom, pos, ref, alt, ...) whose gnomAD popmax AF is
+    <= max_af, or that are absent from the loaded gnomAD slice: absence is
+    treated as rare (the slice may simply not cover the locus), never as
+    AF 0. One batched lookup for all rows, not one per row: with the AF
+    gate skipped on a family VCF, a trio has thousands of candidates."""
+    from annotations import gnomad_af_many
 
-    g = gnomad_af(chrom, int(pos), ref, alt)
-    return g is None or g.popmax is None or g.popmax <= max_af
+    found = gnomad_af_many((row[0], row[1], row[2], row[3]) for row in rows)
+    if not found:
+        return list(rows)  # nothing loaded, or none of the candidates in it
+    keep = []
+    for row in rows:
+        g = found.get((row[0], int(row[1]), row[2], row[3]))
+        if g is None or g.popmax is None or g.popmax <= max_af:
+            keep.append(row)
+    return keep
 
 
 @dataclass(frozen=True)
@@ -238,7 +367,7 @@ class TrioAnalysis:
     def _gnomad(self, rows: list) -> list:
         if self.gnomad_max_af is None:
             return rows
-        return [row for row in rows if _gnomad_keep(*row[:4], self.gnomad_max_af)]
+        return _gnomad_filter(rows, self.gnomad_max_af)
 
     def detail_rows(self, category: str) -> list:
         sql = trio_sql(category, self.trio, self.gates, count_only=False)

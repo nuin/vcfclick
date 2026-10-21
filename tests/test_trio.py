@@ -172,6 +172,49 @@ def _seed_gene(symbol: str, chrom: str, start: int, end: int) -> None:
     conn.close()
 
 
+def test_gene_index_answers_like_gene_at(tmp_path, monkeypatch):
+    """`GeneIndex.at` (one table read, then arrays) must return the genes
+    `gene_at` (one query per position) does, over overlapping, nested and
+    same-start intervals, at and around every boundary."""
+    import random
+
+    from annotations import gene_at
+    from annotations.db import GeneIndex, get_connection
+
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    assert GeneIndex().at("chr1", 100) == []  # an empty store is fine
+
+    rng = random.Random(3)
+    conn = get_connection()
+    for i in range(80):
+        chrom = rng.choice(["chr1", "chr2", "chrX"])
+        start = rng.randint(1, 900)
+        # a few long genes that swallow shorter ones, many short ones
+        end = start + (rng.randint(300, 700) if i % 7 == 0 else rng.randint(0, 60))
+        conn.execute(
+            "INSERT INTO refseq_genes VALUES (?, ?, ?, ?, '+', 'id', 'protein_coding')",
+            [f"G{i:02d}", chrom, start, end],
+        )
+    conn.execute(
+        "INSERT INTO refseq_genes VALUES ('TWINA', 'chr1', 400, 450, '+', 'id', 'x'), "
+        "('TWINB', 'chr1', 400, 450, '-', 'id', 'x')"  # same interval
+    )
+    rows = conn.execute("SELECT chrom, start_pos, end_pos FROM refseq_genes").fetchall()
+    conn.close()
+
+    index = GeneIndex()
+    probes = {
+        (c, p) for c, s, e in rows for p in (s - 1, s, s + 1, e - 1, e, e + 1) if p >= 1
+    } | {(c, p) for c in ("chr1", "chr2", "chrX", "chr3") for p in range(1, 1700, 7)}
+    assert len(probes) > 500
+    for chrom, pos in sorted(probes):
+        want = sorted(g.gene_symbol for g in gene_at(chrom, pos))
+        got = sorted(g.gene_symbol for g in index.at(chrom, pos))
+        assert got == want, (chrom, pos)
+        starts = [g.start_pos for g in index.at(chrom, pos)]
+        assert starts == sorted(starts)  # ordered by start, as gene_at is
+
+
 def test_comphet_genes_grouping_unit(tmp_path, monkeypatch):
     """The gene grouping keeps a gene only when it has BOTH a paternal and
     a maternal het; single-origin genes and intergenic variants are
@@ -299,6 +342,57 @@ def test_giab_trio_gnomad_filter(vcfclick_home, tmp_path, monkeypatch):
     assert "recessive       0" in out
     assert "dominant        1" in out
     assert "comphet         0" in out
+
+
+def test_gnomad_filter_is_the_per_row_rule(tmp_path, monkeypatch):
+    """The batched --gnomad-max-af filter keeps exactly the rows the rule
+    does row by row: popmax at or below the cut, popmax unknown, and alleles
+    absent from the slice (absence is rare, never AF 0). Row order, repeated
+    rows and a position given as a string are untouched, and the comphet
+    rows' sixth column is carried through."""
+    from annotations import gnomad_af
+    from cli.trio_analysis import _gnomad_filter
+
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    rows_in_store = [
+        ("chr1", 1, "A", "C", 0.001, 0.002),  # rare: kept
+        ("chr1", 2, "A", "C", 0.5, 0.9),  # common: dropped
+        ("chr1", 3, "A", "C", 0.01, 0.01),  # exactly the cut: kept
+        ("chr1", 4, "A", "C", 0.02, None),  # popmax falls back to AF: dropped
+        ("chr1", 5, "A", "C", None, None),  # popmax unknown: kept
+        ("chr1", 6, "A", "C", 0.9, 0.001),  # popmax 0.001 beats AF 0.9: kept
+    ]
+    from annotations.db import get_connection
+
+    conn = get_connection()
+    conn.executemany("INSERT INTO gnomad_af VALUES (?, ?, ?, ?, ?, ?)", rows_in_store)
+    conn.close()
+
+    candidates = [
+        ["chr1", 2, "A", "C", 0.1, "paternal"],
+        ["chr1", 1, "A", "C", 0.1, "maternal"],
+        ["chr1", "3", "A", "C", 0.1, None],  # position as a string
+        ["chr1", 4, "A", "C", 0.1, None],
+        ["chr1", 5, "A", "C", 0.1, None],
+        ["chr1", 6, "A", "C", 0.1, None],
+        ["chr1", 7, "A", "C", 0.1, None],  # absent from the slice: kept
+        ["chr1", 1, "A", "G", 0.1, None],  # same locus, absent allele: kept
+        ["chr2", 2, "A", "C", 0.1, None],  # other chromosome: kept
+        ["chr1", 1, "A", "C", 0.1, "maternal"],  # repeated row
+    ]
+
+    def per_row(row):
+        g = gnomad_af(row[0], int(row[1]), row[2], row[3])
+        return g is None or g.popmax is None or g.popmax <= 0.01
+
+    want = [r for r in candidates if per_row(r)]
+    assert _gnomad_filter(candidates, 0.01) == want
+    assert [r[1] for r in want] == [1, "3", 5, 6, 7, 1, 2, 1]  # the expectation
+    assert _gnomad_filter([], 0.01) == []
+    # no gnomAD at all: every row is kept, in a list of its own
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "empty.duckdb"))
+    kept = _gnomad_filter(candidates, 0.01)
+    assert kept == candidates and kept is not candidates
 
 
 # ───────── de-novo VALIDATION: GIAB benchmark BED as ground truth ─────────

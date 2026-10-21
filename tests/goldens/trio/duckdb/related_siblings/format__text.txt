@@ -1,0 +1,11 @@
+trio: proband=C1 father=F mother=M
+  denovo          3
+  recessive     133
+  dominant      739
+  comphet         0  genes
+
+trio: proband=C2 father=F mother=M
+  denovo          0
+  recessive     121
+  dominant      730
+  comphet         0  genes

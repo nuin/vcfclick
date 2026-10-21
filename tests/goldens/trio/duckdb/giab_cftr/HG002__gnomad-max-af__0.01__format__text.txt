@@ -1,0 +1,5 @@
+trio: proband=HG002 father=HG003 mother=HG004
+  denovo          0
+  recessive       0
+  dominant        1
+  comphet         0  genes

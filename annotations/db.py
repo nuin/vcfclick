@@ -27,6 +27,8 @@ jobs that run on a cron, not part of the query path.
 from __future__ import annotations
 
 import os
+from bisect import bisect_right
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -162,6 +164,64 @@ def gene_at(chrom: str, pos: int) -> list[GeneRange]:
     return [GeneRange(*r) for r in rows]
 
 
+class GeneIndex:
+    """Every gene interval, in memory, for a caller that looks up many
+    positions. `gene_at` opens the store and runs a query per position
+    (about 0.1 ms each once the store is open, a few ms if it is opened
+    every time); `GeneIndex.at` answers the same question from a sorted
+    array in about a microsecond. The table is read once, when the index
+    is built."""
+
+    def __init__(self, conn: duckdb.DuckDBPyConnection | None = None) -> None:
+        own = conn is None
+        if conn is None:
+            conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT gene_symbol, chrom, start_pos, end_pos, strand "
+                "FROM refseq_genes ORDER BY chrom, start_pos"
+            ).fetchall()
+        finally:
+            if own:
+                conn.close()
+        self._genes: dict[str, list[GeneRange]] = {}
+        for row in rows:
+            self._genes.setdefault(row[1], []).append(GeneRange(*row))
+        # per chromosome: start of each gene, and the furthest end reached
+        # by it or any gene before it (so a backwards scan can stop)
+        self._starts = {c: [g.start_pos for g in gs] for c, gs in self._genes.items()}
+        self._reach: dict[str, list[int]] = {}
+        for chrom, genes in self._genes.items():
+            far, reach = 0, []
+            for g in genes:
+                far = max(far, g.end_pos)
+                reach.append(far)
+            self._reach[chrom] = reach
+
+    def at(self, chrom: str, pos: int) -> list[GeneRange]:
+        """Same genes as `gene_at(chrom, pos)`, ordered by start."""
+        genes = self._genes.get(chrom)
+        if not genes:
+            return []
+        reach = self._reach[chrom]
+        hits = []
+        i = bisect_right(self._starts[chrom], pos) - 1  # last gene starting <= pos
+        while i >= 0 and reach[i] >= pos:
+            if genes[i].end_pos >= pos:
+                hits.append(genes[i])
+            i -= 1
+        hits.reverse()
+        return hits
+
+
+# The point lookups below cast the position parameter to the column's type:
+# DuckDB binds a Python int as BIGINT and then casts the UINTEGER `pos` column
+# to match, which stops it skipping row groups by their min/max. Cast the
+# parameter instead and a lookup reads one row group, not the whole table (4.5
+# ms against 0.3 ms on 5 million rows). TRY_CAST keeps "no such position"
+# (negative, or past 2^32) a miss, not an error.
+
+
 def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | None:
     """Look up ClinVar significance for a specific allele.
 
@@ -174,7 +234,7 @@ def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | 
         SELECT chrom, pos, ref, alt, clin_sig, review_status,
                clinvar_id, condition
         FROM clinvar_variants
-        WHERE chrom = ? AND pos = ? AND ref = ? AND alt = ?
+        WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?
         """,
         [chrom, pos, ref, alt],
     ).fetchone()
@@ -191,7 +251,108 @@ def gnomad_af(chrom: str, pos: int, ref: str, alt: str) -> GnomadAF | None:
     conn = get_connection()
     row = conn.execute(
         "SELECT chrom, pos, ref, alt, af, af_grpmax FROM gnomad_af "
-        "WHERE chrom = ? AND pos = ? AND ref = ? AND alt = ?",
+        "WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?",
         [chrom, pos, ref, alt],
     ).fetchone()
     return GnomadAF(*row) if row else None
+
+
+def clinvar_many(
+    alleles: Iterable[tuple[str, int, str, str]],
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> dict[tuple[str, int, str, str], ClinVarRecord]:
+    """`clinvar_lookup` for many alleles in one query, the ClinVar
+    counterpart of `gnomad_af_many`: {(chrom, pos, ref, alt): ClinVarRecord}
+    for alleles present, none for those absent. When an allele has several
+    rows the first one returned wins, as in `clinvar_lookup`."""
+    keys = list(dict.fromkeys((c, int(p), r, a) for c, p, r, a in alleles))
+    if not keys:
+        return {}
+    own = conn is None
+    if conn is None:
+        conn = get_connection()
+    try:
+        if conn.execute("SELECT 1 FROM clinvar_variants LIMIT 1").fetchone() is None:
+            return {}
+        import pyarrow as pa
+
+        batch = pa.table(
+            {
+                "chrom": pa.array([k[0] for k in keys], pa.string()),
+                "pos": pa.array([k[1] for k in keys], pa.int64()),
+                "ref": pa.array([k[2] for k in keys], pa.string()),
+                "alt": pa.array([k[3] for k in keys], pa.string()),
+            }
+        )
+        name = "_vcfclick_clinvar_alleles"
+        conn.register(name, batch)
+        try:
+            rows = conn.execute(
+                "SELECT v.chrom, v.pos, v.ref, v.alt, v.clin_sig, v.review_status, "
+                "v.clinvar_id, v.condition "
+                f"FROM clinvar_variants v JOIN {name} c ON v.chrom = c.chrom "
+                "AND v.pos = c.pos AND v.ref = c.ref AND v.alt = c.alt"
+            ).fetchall()
+        finally:
+            conn.unregister(name)
+    finally:
+        if own:
+            conn.close()
+    found: dict[tuple[str, int, str, str], ClinVarRecord] = {}
+    for row in rows:
+        found.setdefault((row[0], int(row[1]), row[2], row[3]), ClinVarRecord(*row))
+    return found
+
+
+def gnomad_af_many(
+    alleles: Iterable[tuple[str, int, str, str]],
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> dict[tuple[str, int, str, str], GnomadAF]:
+    """`gnomad_af` for many alleles in one query: {(chrom, pos, ref, alt):
+    GnomadAF} for those present in the loaded slice. An allele absent from
+    the slice has no entry, exactly as `gnomad_af` returns None for it.
+
+    A caller that filters every candidate of a trio (thousands of alleles)
+    must use this, not `gnomad_af` in a loop: a lookup costs 0.1 to 1.5 ms
+    on an open connection, growing with the table, and about 5 ms when it
+    has to open the store, so 9,000 candidates took 6 s to 40 s. Here the
+    alleles are joined to the table as one Arrow batch (a few ms for 9,000
+    against a million-row table). `conn` is the caller's open connection; with
+    none, the store is opened and closed here."""
+    keys = list(dict.fromkeys((c, int(p), r, a) for c, p, r, a in alleles))
+    if not keys:
+        return {}
+    own = conn is None
+    if conn is None:
+        conn = get_connection()
+    try:
+        # the common case: no gnomAD loaded, nothing to look up
+        if conn.execute("SELECT 1 FROM gnomad_af LIMIT 1").fetchone() is None:
+            return {}
+        import pyarrow as pa
+
+        batch = pa.table(
+            {
+                "chrom": pa.array([k[0] for k in keys], pa.string()),
+                "pos": pa.array([k[1] for k in keys], pa.int64()),
+                "ref": pa.array([k[2] for k in keys], pa.string()),
+                "alt": pa.array([k[3] for k in keys], pa.string()),
+            }
+        )
+        name = "_vcfclick_gnomad_alleles"
+        conn.register(name, batch)
+        try:
+            rows = conn.execute(
+                "SELECT g.chrom, g.pos, g.ref, g.alt, g.af, g.af_grpmax "
+                f"FROM gnomad_af g JOIN {name} c ON g.chrom = c.chrom "
+                "AND g.pos = c.pos AND g.ref = c.ref AND g.alt = c.alt"
+            ).fetchall()
+        finally:
+            conn.unregister(name)
+    finally:
+        if own:
+            conn.close()
+    found: dict[tuple[str, int, str, str], GnomadAF] = {}
+    for row in rows:
+        found.setdefault((row[0], int(row[1]), row[2], row[3]), GnomadAF(*row))
+    return found

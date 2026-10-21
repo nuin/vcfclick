@@ -1,0 +1,5 @@
+trio: proband=C1 father=F mother=M
+  denovo          0  (needs --keep-reference)
+  recessive     133
+  dominant        0  (needs --keep-reference)
+  comphet         0  (needs --keep-reference)  genes

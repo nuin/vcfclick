@@ -1,0 +1,6 @@
+trio: proband=CHILD father=FATHER mother=MOTHER
+
+comphet candidate genes: 1
+  GENEX
+    paternal chr1:300 G>A  AF=0.05000000074505806
+    maternal chr1:400 T>C  AF=0.05000000074505806

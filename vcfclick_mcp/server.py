@@ -21,10 +21,82 @@ from annotations import clinvar_lookup as _clinvar_lookup
 from annotations import gene_at as _gene_at
 from annotations import gnomad_af as _gnomad_af
 from annotations import position_for_gene as _position_for_gene
+from cli.family_checks import PROBE_FRACTION, PROBE_MIN_SITES, PROBE_REL_TOLERANCE
+from cli.trio_analysis import CATEGORY_CHOICES, DEFAULT_MAX_AF
 from storage import get_session
+from storage.sql import AF_EPSILON
 from storage.sql_guard import is_read_only
 
 mcp = FastMCP("vcfclick")
+
+
+# Convention 8 of the briefing is built from these paragraphs, joined once
+# (_TRIO_CONVENTION below), so a feature that changes one of them does not
+# touch the others. The model names come from the CLI's own list
+# (cli.trio_analysis.CATEGORY_CHOICES); tests/test_trio_categories.py checks
+# the briefing against it.
+_TRIO_PEDIGREE = """\
+   The `pedigree` table maps relationships:
+       (ingest_id, sample_id, family_id, father_id, mother_id, sex, affected)
+   father_id/mother_id are sample_ids ('0' = founder). Resolve a
+   proband's parents from pedigree, then self-join genotypes on
+   (ingest_id, chrom, pos, ref, alt) aliasing the proband (g), father
+   (f), mother (m). Genotype encoding: gt 0=hom-ref, 1=het, 2=hom-alt."""
+
+_TRIO_MODELS = f"""\
+   Inheritance models (gt comes from `genotypes`):
+     - recessive:  g.gt=2 AND f.gt=1 AND m.gt=1
+     - dominant:   g.gt=1 AND exactly one parent carries (gt>0), other gt=0
+     - de novo:    g.gt>0 AND f.gt=0 AND m.gt=0
+     - comphet:    two rare proband hets in the SAME gene, one inherited
+                   from each parent (the dominant pattern grouped by gene,
+                   so it needs the annotation tools, not one SQL query)
+   `vcfclick db trio --category` takes: {", ".join(CATEGORY_CHOICES)}."""
+
+_TRIO_DENOVO_CAVEAT = """\
+   CRITICAL de-novo caveat: genotypes is sparse, so a parent ABSENT at a
+   site is 0/0 OR ./. (no-call) — indistinguishable. Confident de novo
+   needs the parents to have a STORED gt=0 row (requires the cohort was
+   ingested with --keep-reference). An INNER JOIN to both parents
+   requiring f.gt=0 AND m.gt=0 naturally excludes no-call parents (no
+   row → no join). If the DB has no gt=0 rows, de novo cannot be proven;
+   say so rather than reporting absence-based de novo."""
+
+_TRIO_GATES = f"""\
+   Standard candidate filters (slivar-style): GQ>=20, DP>=10, het
+   allele-balance ad_alt/(ad_ref+ad_alt) between 0.25 and 0.75 (het calls
+   only), and population rarity info_AF<={DEFAULT_MAX_AF:g}. `vcfclick db trio`
+   applies them as NULL-TOLERANT gates: a missing GQ, DP, AD or AF passes,
+       (gq IS NULL OR gq >= 20) AND (dp IS NULL OR dp >= 10)
+   whereas convention 2's `gq >= 20 AND dp >= 10` drops those rows. To
+   reproduce a `db trio` count in hand-written SQL use the NULL-tolerant
+   form, and compare the AF as info_AF <= {DEFAULT_MAX_AF:g} + {AF_EPSILON!r}
+   (info_AF is a 32-bit float, so a site exactly at the threshold may sit
+   just above it)."""
+
+_TRIO_COHORT_AF = f"""\
+   COHORT-DERIVED AF: family VCFs from GATK-style joint callers carry the
+   callset's OWN allele frequency in INFO/AF (a private het in a trio is
+   1/6 = 0.167), not a population frequency, so `info_AF <= {DEFAULT_MAX_AF:g}`
+   removes every private candidate. `vcfclick db trio` checks for this
+   (INFO/AF equal to ac_called/an_called, to {PROBE_REL_TOLERANCE:.0%} of that
+   value plus print rounding, at {PROBE_FRACTION:.0%} of at least
+   {PROBE_MIN_SITES} sites), skips its --max-af gate when it holds and
+   --max-af was not given, and reports gates.af_gate:
+   applied | cohort_derived_suspected | skipped_cohort_derived |
+   unavailable. In hand-written SQL compare info_AF with
+   ac_called/an_called before using it as a rarity filter, or use
+   gnomad_lookup for a population frequency."""
+
+_TRIO_CONVENTION = "\n\n".join(
+    [
+        _TRIO_PEDIGREE,
+        _TRIO_MODELS,
+        _TRIO_DENOVO_CAVEAT,
+        _TRIO_GATES,
+        _TRIO_COHORT_AF,
+    ]
+)
 
 
 SCHEMA_DESCRIPTION = """\
@@ -63,6 +135,11 @@ genotypes — sparse: ONLY non-reference calls are stored.
   ad_ref/ad_alt, adf_*/adr_*, pl_ref_ref/pl_ref_alt/pl_alt_alt,
   mq, ft, ps, pq, phased. Non-reserved FORMAT fields in
   `format_extra Map(String, String)`.
+  gt is 1 (het), 2 (hom-alt) or 0 (hom-ref, only on --keep-reference
+  ingests) and is never negative. A HAPLOID call (a male's non-PAR
+  chrX/chrY, chrM) is stored as gt=2 with phased=1, i.e. as if it were
+  1/1: there is no hemizygous code, so gt alone cannot tell a haploid
+  ALT call from a diploid hom-alt, and an_called counts ONE allele for it.
 
 samples — (ingest_id, sample_id, cohort, sex).
   Sample identity is (ingest_id, sample_id).
@@ -164,30 +241,8 @@ clin_sig columns in chDB — they do not exist there.
        info_extra['SOMETHING']     or     format_extra['SOMETHING']
    Returns String; CAST if numeric comparison.
 
-8. FAMILY / TRIO ANALYSIS: the `pedigree` table maps relationships:
-       (ingest_id, sample_id, family_id, father_id, mother_id, sex, affected)
-   father_id/mother_id are sample_ids ('0' = founder). Resolve a
-   proband's parents from pedigree, then self-join genotypes on
-   (ingest_id, chrom, pos, ref, alt) aliasing the proband (g), father
-   (f), mother (m). Genotype encoding: gt 0=hom-ref, 1=het, 2=hom-alt.
-
-   Inheritance models (gt comes from `genotypes`):
-     - recessive:  g.gt=2 AND f.gt=1 AND m.gt=1
-     - dominant:   g.gt=1 AND exactly one parent carries (gt>0), other gt=0
-     - de novo:    g.gt>0 AND f.gt=0 AND m.gt=0
-
-   CRITICAL de-novo caveat: genotypes is sparse, so a parent ABSENT at a
-   site is 0/0 OR ./. (no-call) — indistinguishable. Confident de novo
-   needs the parents to have a STORED gt=0 row (requires the cohort was
-   ingested with --keep-reference). An INNER JOIN to both parents
-   requiring f.gt=0 AND m.gt=0 naturally excludes no-call parents (no
-   row → no join). If the DB has no gt=0 rows, de novo cannot be proven;
-   say so rather than reporting absence-based de novo.
-
-   Standard candidate filters (slivar-style): GQ>=20, DP>=10, het
-   allele-balance ad_alt/(ad_ref+ad_alt) near 0.5, and population
-   rarity info_AF<=0.01. The `vcfclick db trio` CLI command applies
-   exactly these.
+8. FAMILY / TRIO ANALYSIS:
+@@TRIO_CONVENTION@@
 
 ──────────────────────────── EXAMPLE ────────────────────────────
 
@@ -210,7 +265,7 @@ SQL:
 Always return BOTH the plan (annotation lookups performed) AND the SQL
 string. The UI shows them side-by-side — the chain of reasoning is
 part of the answer, not a debug trace.
-"""
+""".replace("@@TRIO_CONVENTION@@", _TRIO_CONVENTION)
 
 
 @mcp.tool()
