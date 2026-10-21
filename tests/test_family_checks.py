@@ -21,6 +21,9 @@ from tests.fixtures._vcfgen import (
     TRIO_PED,
     TRIO_SAMPLES,
     Site,
+    cohort_denovo_sites,
+    cohort_samples,
+    gatk_af,
     trio_sites,
     write_vcf,
 )
@@ -386,6 +389,141 @@ def test_probe_unavailable_on_a_database_without_called_counts(
     doc, err = _trio_json(vcfclick_home, backend)
     assert doc["gates"]["af_gate"] == "unavailable"
     assert doc["models"]["denovo"]["count"] == 0  # gate applied as before
+
+
+# (ac_called, an_called, INFO/AF as stored, is it the cohort's own AF?)
+LIKE_TABLE = [
+    # a trio: 1/6 and 1/3, printed at full precision and as GATK writes them
+    (1, 6, 0.166667, True),
+    (1, 6, 0.167, True),
+    (2, 6, 0.3333333, True),
+    (2, 6, 0.333, True),
+    (3, 6, 0.5, True),
+    (1, 6, 0.3, False),
+    (1, 6, 0.0005, False),  # a population frequency on a private het
+    (3, 6, 0.51, False),
+    # a cohort of 48 (1/96 = 0.0104): three-decimal printing is off by 0.0004
+    (1, 96, 0.010, True),
+    (1, 96, 0.0104167, True),
+    (1, 96, 0.02, False),
+    # 100 samples: the cohort's own AF of a singleton is 0.005
+    (1, 200, 0.005, True),
+    (1, 200, 0.0001, False),  # a rare population AF is not the cohort's
+    (1, 200, 0.0049, False),
+    (1, 200, 0.3, False),
+    # 150 samples: 1/300 = 0.00333, printed 3.333e-03
+    (1, 300, 0.003333, True),
+    (1, 300, 0.0004, False),
+    (1, 300, 0.003, False),  # below 0.01 writers print significant digits
+    # 1000 samples: 0.0005, where an absolute 0.005 matched everything
+    (1, 2000, 0.0005, True),
+    (1, 2000, 0.0001, False),
+    (1, 2000, 0.004, False),
+    # a site nobody carries
+    (0, 6, 0.0, True),
+    (0, 6, 0.0004, False),
+]
+
+
+def test_cohort_like_predicate_is_relative_to_the_cohort_frequency(monkeypatch):
+    """The probe's equality, row by row, evaluated on an in-memory DuckDB
+    (it is the same text the probe runs on either backend). A fixed
+    absolute tolerance is the bug this pins: it called every rare
+    population AF cohort-like once ac/an fell under it."""
+    import duckdb
+
+    from cli.family_checks import cohort_like_sql
+
+    monkeypatch.setenv("VCFCLICK_BACKEND", "duckdb")
+    con = duckdb.connect(":memory:")
+    con.execute(
+        "CREATE TABLE variants (id INTEGER, info_AF FLOAT, ac_called INTEGER, "
+        "an_called INTEGER)"
+    )
+    con.executemany(
+        "INSERT INTO variants VALUES (?, ?, ?, ?)",
+        [(i, af, ac, an) for i, (ac, an, af, _) in enumerate(LIKE_TABLE)],
+    )
+    got = dict(
+        con.execute(
+            f"SELECT id, {cohort_like_sql()} FROM variants ORDER BY id"
+        ).fetchall()
+    )
+    for i, (ac, an, af, expected) in enumerate(LIKE_TABLE):
+        assert got[i] is expected, f"ac={ac} an={an} INFO/AF={af}: expected {expected}"
+
+
+def _cohort_store(home, backend, tmp_path, n_samples, infos):
+    """A cohort of `n_samples` that holds the trio, with one de novo het in
+    CHILD per entry of `infos` (that site's INFO string); the proband's
+    parents are in the PED."""
+    vcf = write_vcf(
+        tmp_path / "cohort.vcf",
+        cohort_samples(n_samples),
+        cohort_denovo_sites(n_samples, infos),
+    )
+    ped = tmp_path / "trio.ped"
+    ped.write_text(TRIO_PED)
+    _ingest(home, backend, vcf)
+    run_cli(home, backend, "db", "ped", "t", str(ped))
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_rare_population_af_in_a_hundred_sample_cohort_is_applied(
+    backend, vcfclick_home, tmp_path
+):
+    """27 sites carry a real population frequency (0.0001) and 3 a common one
+    (0.3), all private hets in the proband of a 100-sample cohort, where the
+    cohort's own AF is 0.005. The AF is not the cohort's: the default gate
+    must run, keep the 27 and drop the 3 common sites."""
+    infos = [("AF=0.3" if i % 10 == 9 else "AF=0.0001") for i in range(30)]
+    _cohort_store(vcfclick_home, backend, tmp_path, 100, infos)
+    doc, err = _trio_json(vcfclick_home, backend)
+    assert doc["gates"]["af_gate"] == "applied"
+    assert doc["models"]["denovo"]["count"] == 27
+    assert "cohort" not in err
+    # the common sites are only dropped by the gate: lift it and all 30 return
+    doc, _ = _trio_json(vcfclick_home, backend, "--max-af", "0.5")
+    assert doc["gates"]["af_gate"] == "applied"
+    assert doc["models"]["denovo"]["count"] == 30
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_rare_population_af_in_a_large_cohort_is_applied(
+    backend, vcfclick_home, tmp_path
+):
+    """150 samples, 60 sites, population AF 0.0004 against a cohort AF of
+    1/300: not the cohort's, whatever the margin to an absolute 0.005."""
+    _cohort_store(vcfclick_home, backend, tmp_path, 150, ["AF=0.0004"] * 60)
+    doc, err = _trio_json(vcfclick_home, backend)
+    assert doc["gates"]["af_gate"] == "applied"
+    assert doc["models"]["denovo"]["count"] == 60
+    assert "cohort" not in err
+
+
+# (cohort size, how the AF is printed). 3 and 48 are the sizes where the
+# cohort's own AF (0.167, 0.0104) is over --max-af 0.01 and the gate would
+# have removed every site; the rest check the probe still fires at scale.
+COHORT_DERIVED = [
+    (3, "gatk"),
+    (48, "gatk"),
+    (150, "gatk"),
+    (150, "full"),
+]
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("n_samples,style", COHORT_DERIVED)
+def test_a_cohorts_own_af_is_detected_at_any_size(
+    n_samples, style, backend, vcfclick_home, tmp_path
+):
+    own = 1 / (2 * n_samples)
+    text = gatk_af(own) if style == "gatk" else f"{own:.9g}"
+    _cohort_store(vcfclick_home, backend, tmp_path, n_samples, [f"AF={text}"] * 30)
+    doc, err = _trio_json(vcfclick_home, backend)
+    assert doc["gates"]["af_gate"] == "skipped_cohort_derived", text
+    assert doc["models"]["denovo"]["count"] == 30
+    assert "cohort" in err and "--max-af" in err
 
 
 def test_resolve_af_gate_covers_the_whole_enum():

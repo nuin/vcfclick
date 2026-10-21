@@ -21,7 +21,7 @@ from annotations import clinvar_lookup as _clinvar_lookup
 from annotations import gene_at as _gene_at
 from annotations import gnomad_af as _gnomad_af
 from annotations import position_for_gene as _position_for_gene
-from cli.family_checks import PROBE_FRACTION, PROBE_MIN_SITES, PROBE_TOLERANCE
+from cli.family_checks import PROBE_FRACTION, PROBE_MIN_SITES, PROBE_REL_TOLERANCE
 from cli.trio_analysis import CATEGORY_CHOICES, DEFAULT_MAX_AF
 from storage import get_session
 from storage.sql import AF_EPSILON
@@ -79,8 +79,9 @@ _TRIO_COHORT_AF = f"""\
    callset's OWN allele frequency in INFO/AF (a private het in a trio is
    1/6 = 0.167), not a population frequency, so `info_AF <= {DEFAULT_MAX_AF:g}`
    removes every private candidate. `vcfclick db trio` checks for this
-   (INFO/AF within {PROBE_TOLERANCE:g} of ac_called/an_called at {PROBE_FRACTION:.0%} of
-   at least {PROBE_MIN_SITES} sites), skips its --max-af gate when it holds and
+   (INFO/AF equal to ac_called/an_called, to {PROBE_REL_TOLERANCE:.0%} of that
+   value plus print rounding, at {PROBE_FRACTION:.0%} of at least
+   {PROBE_MIN_SITES} sites), skips its --max-af gate when it holds and
    --max-af was not given, and reports gates.af_gate:
    applied | cohort_derived_suspected | skipped_cohort_derived |
    unavailable. In hand-written SQL compare info_AF with

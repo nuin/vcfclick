@@ -143,9 +143,13 @@ frequency, and a private het in a trio is `1/6 = 0.167`. The default
 is most of them.
 
 `db trio` checks for this from the called-genotype counts stored at ingest
-(`ac_called / an_called`): if `INFO/AF` lies within 0.005 of the cohort's own
-frequency at 90% or more of at least 20 sites, it is treated as
-cohort-derived. Then:
+(`ac_called / an_called`): if `INFO/AF` equals the cohort's own frequency at
+90% or more of at least 20 sites, it is treated as cohort-derived. "Equals"
+is relative, to 1% of the cohort's frequency, plus 0.0005 for a frequency
+of 0.01 or more (a writer that prints three decimals turns 1/6 into
+0.167). It has to be relative: in a cohort of a hundred or more samples
+the cohort's own frequency of a rare site is 0.005 or less, and a real
+population frequency such as 0.0001 must not be mistaken for it. Then:
 
 - without `--max-af` on the command line, the AF gate is **skipped** and a
   `note:` on stderr says so (and points at `--gnomad-max-af`, which is a real

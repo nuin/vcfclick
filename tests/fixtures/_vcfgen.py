@@ -137,6 +137,52 @@ def trio_sites(
     return sites
 
 
+def gatk_af(x: float) -> str:
+    """`x` printed the way GATK (htsjdk) writes a Float: three significant
+    digits in scientific notation below 0.01, three decimals from 0.01 to 1
+    (so 1/6 reads 0.167 and 1/300 reads 3.333e-03)."""
+    if x < 1:
+        if x < 0.01:
+            return f"{x:.3e}" if abs(x) >= 1e-20 else "0.00"
+        return f"{x:.3f}"
+    return f"{x:.2f}"
+
+
+def cohort_samples(n_samples: int) -> list[str]:
+    """CHILD, FATHER, MOTHER, then unrelated samples U004... up to
+    `n_samples` in all."""
+    if n_samples < 3:
+        raise ValueError("a cohort that holds the trio has at least 3 samples")
+    return TRIO_SAMPLES + [f"U{i:03d}" for i in range(4, n_samples + 1)]
+
+
+def cohort_denovo_sites(
+    n_samples: int,
+    infos: list[str],
+    *,
+    start: int = 1000,
+    step: int = 1000,
+    chrom: str = "chr1",
+) -> list[Site]:
+    """One private de novo het in CHILD per entry of `infos` (that site's
+    INFO string), in a cohort of `n_samples` where every other sample is
+    0/0. Each site has ac_called = 1 and an_called = 2 * n_samples, so the
+    cohort's own frequency is 1 / (2 * n_samples) at every site."""
+    others = ("0/0:30,0:99:30",) * (n_samples - 1)
+    return [
+        Site(
+            chrom,
+            start + i * step,
+            "A",
+            "G",
+            ("0/1:15,15:99:30", *others),
+            info=info,
+            fmt="GT:AD:GQ:DP",
+        )
+        for i, info in enumerate(infos)
+    ]
+
+
 TRIO_SAMPLES = ["CHILD", "FATHER", "MOTHER"]
 TRIO_PED = (
     "FAM1\tCHILD\tFATHER\tMOTHER\t1\t2\n"

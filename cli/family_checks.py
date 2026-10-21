@@ -62,9 +62,21 @@ def family_has_reference(sess, ingest_id: str, samples: Iterable[str]) -> bool:
 # gate then removes every candidate, silently. The probe recognises that
 # case from the data: at how many sites does INFO/AF equal ac_called /
 # an_called (the AF of this cohort, computed at ingest)?
+#
+# "Equal" has to be relative. The cohort's own AF of a rare site is tiny
+# (1/(2N): 0.005 at N = 100, 0.0017 at N = 300), and a real population
+# frequency of 0.0001 is still a different number from it. A fixed absolute
+# tolerance of 0.005 would call every rare population AF "cohort-like" from
+# about N = 100 on, and the rarity gate would then be skipped for a large
+# cohort that carries real, common variants. So the tolerance scales with
+# the value it is compared to; only the rounding a writer applies to
+# printed values is allowed on top: a three-decimal AF (0.167 for 1/6) is
+# off by up to 0.0005, but only values from 0.01 up are printed that way.
 PROBE_MIN_SITES = 20  # fewer sites with AF and called counts: cannot judge
 PROBE_FRACTION = 0.9  # at least this share of sites equals the cohort's AF
-PROBE_TOLERANCE = 0.005  # |INFO/AF - ac_called/an_called| within this
+PROBE_REL_TOLERANCE = 0.01  # |INFO/AF - ac/an| <= this share of ac/an ...
+PROBE_ROUNDING = 0.0005  # ... plus this, when ac/an >= PROBE_ROUNDING_FROM
+PROBE_ROUNDING_FROM = 0.01  # below this, writers print significant digits
 
 
 @dataclass(frozen=True)
@@ -73,7 +85,7 @@ class CohortAfProbe:
 
     available: bool
     n_sites: int = 0  # sites with INFO/AF and called counts
-    n_cohort_like: int = 0  # of those, INFO/AF within tolerance of ac/an
+    n_cohort_like: int = 0  # of those, INFO/AF equals ac/an (see PROBE_* above)
     n_singleton_like: int = 0  # cohort-like sites with ac_called = 1 (AF = 1/an)
     reason: str = ""  # why it is unavailable
 
@@ -86,6 +98,20 @@ class CohortAfProbe:
         return self.available and self.fraction >= PROBE_FRACTION
 
 
+def cohort_like_sql() -> str:
+    """The predicate "this row's INFO/AF is the cohort's own frequency",
+    over the `variants` columns info_AF, ac_called and an_called (see the
+    PROBE_* notes above for the tolerance)."""
+    from storage.sql import to_double
+
+    ratio = f"({to_double('ac_called')} / {to_double('an_called')})"
+    tolerance = (
+        f"({PROBE_REL_TOLERANCE!r} * {ratio} + CASE WHEN {ratio} >= "
+        f"{PROBE_ROUNDING_FROM!r} THEN {PROBE_ROUNDING!r} ELSE 0.0 END)"
+    )
+    return f"abs(info_AF - {ratio}) <= {tolerance}"
+
+
 def cohort_af_probe(sess, ingest_id: str) -> CohortAfProbe:
     """Probe whether INFO/AF in `ingest_id` is the cohort's own frequency.
 
@@ -94,14 +120,12 @@ def cohort_af_probe(sess, ingest_id: str) -> CohortAfProbe:
     called counts. Reads `variants` only; no genotype scan.
     """
     from storage import count_expr, sql_quote_str, table_columns
-    from storage.sql import to_double
 
     cols = set(table_columns("variants"))
     if not {"ac_called", "an_called"} <= cols:
         return CohortAfProbe(False, reason="no called counts (older database)")
 
-    ratio = f"{to_double('ac_called')} / {to_double('an_called')}"
-    like = f"abs(info_AF - ({ratio})) <= {PROBE_TOLERANCE!r}"
+    like = cohort_like_sql()
     sql = (
         f"SELECT {count_expr()}, "
         f"sum(CASE WHEN {like} THEN 1 ELSE 0 END), "
