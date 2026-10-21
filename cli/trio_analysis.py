@@ -42,6 +42,24 @@ BLOCKED_REASONS: tuple[str, ...] = (
 )
 
 
+# What happened to the --max-af gate, reported as `gates.af_gate`:
+#   applied                   the gate ran; the cohort-AF probe found no sign
+#                             the VCF's INFO/AF is the cohort's own
+#   cohort_derived_suspected  INFO/AF looks cohort-derived but the gate ran
+#                             because --max-af was given explicitly
+#   skipped_cohort_derived    INFO/AF looks cohort-derived and --max-af was
+#                             not given, so the gate was not applied
+#   unavailable               the probe could not run (called counts missing
+#                             or too few sites to judge); the gate ran
+AF_GATE_VALUES: tuple[str, ...] = (
+    "applied",
+    "cohort_derived_suspected",
+    "skipped_cohort_derived",
+    "unavailable",
+)
+AF_GATE_SKIPPED = "skipped_cohort_derived"
+
+
 def check_blocked_reason(reason: str | None) -> str | None:
     """Return `reason` if it is null or in the closed enum, else raise."""
     if reason is not None and reason not in BLOCKED_REASONS:
@@ -87,6 +105,8 @@ class Gates(NamedTuple):
     # when its allele balance stays under this (see parent_ref_ok). The four
     # classic models do not read it.
     max_parent_alt_frac: float = 0.05
+    # See AF_GATE_VALUES. Only `skipped_cohort_derived` changes the SQL.
+    af_gate: str = "applied"
 
 
 def _sole_ingest_id(name: str) -> str | None:
@@ -137,21 +157,51 @@ def _parent_joins(father: str | None, mother: str | None) -> str:
     )
 
 
+def parent_ref_ok(alias: str, gates: Gates) -> str:
+    """SQL boolean: a parent's STORED 0/0 row at this site can be trusted as
+    "the parent does not carry the allele" (alias = the parent's genotypes
+    row). It is not trusted when the reads say otherwise, since a caller can
+    emit 0/0 for a site with real alt support.
+
+        ad_alt IS NULL                    no allele depths recorded: trusted
+        ad_alt < 2                        zero or one alt read: noise, trusted
+        ad_ref IS NOT NULL AND
+          alt / (ref + alt) < frac        otherwise the alt fraction must stay
+                                          strictly below gates.max_parent_alt_frac
+
+    A NULL ad_ref with two or more alt reads is NOT trusted: the fraction
+    cannot be computed, and two alt reads are the least evidence we accept as
+    contradicting a 0/0. The expression is never NULL (a NULL would silently
+    drop the row), so it can be negated or combined freely. The four classic
+    models do not use it; the models that prove a parent's absence do.
+    """
+    frac = gates.max_parent_alt_frac
+    if not 0.0 <= frac <= 1.0:
+        raise ValueError(f"max_parent_alt_frac must be in [0, 1], got {frac!r}")
+    from storage.sql import allele_fraction_sql
+
+    ratio = allele_fraction_sql(f"{alias}.ad_alt", f"{alias}.ad_ref")
+    return (
+        f"({alias}.ad_alt IS NULL OR {alias}.ad_alt < 2 OR "
+        f"({alias}.ad_ref IS NOT NULL AND {ratio} < {frac!r}))"
+    )
+
+
 def _where(trio: Trio, gates: Gates, model: str) -> str:
     """Shared WHERE clause: the genotype model plus the quality / rarity
     gates, scoped to this proband and ingest."""
     from storage import sql_quote_str
 
-    predicate = " AND ".join(
-        [
-            model,
-            _quality_gate("g", gates.min_gq, gates.min_dp),
-            _quality_gate("f", gates.min_gq, gates.min_dp),
-            _quality_gate("m", gates.min_gq, gates.min_dp),
-            _het_ab_gate("g", gates.min_ab, gates.max_ab),
-            f"(v.info_AF IS NULL OR v.info_AF <= {gates.max_af})",
-        ]
-    )
+    parts = [
+        model,
+        _quality_gate("g", gates.min_gq, gates.min_dp),
+        _quality_gate("f", gates.min_gq, gates.min_dp),
+        _quality_gate("m", gates.min_gq, gates.min_dp),
+        _het_ab_gate("g", gates.min_ab, gates.max_ab),
+    ]
+    if gates.af_gate != AF_GATE_SKIPPED:
+        parts.append(f"(v.info_AF IS NULL OR v.info_AF <= {gates.max_af})")
+    predicate = " AND ".join(parts)
     return (
         f"g.ingest_id = {sql_quote_str(trio.ingest_id)} "
         f"AND g.sample_id = {sql_quote_str(trio.proband)} AND {predicate}"

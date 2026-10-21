@@ -22,7 +22,7 @@ import json
 
 import pytest
 
-from cli.trio_analysis import BLOCKED_REASONS, CATEGORIES
+from cli.trio_analysis import AF_GATE_VALUES, BLOCKED_REASONS, CATEGORIES
 from tests.conftest import FIXTURES, run_cli
 
 BACKENDS = ("chdb", "duckdb")
@@ -55,6 +55,9 @@ def assert_trio_document(doc: dict) -> None:
     assert _is_int(gates["min_gq"]) and _is_int(gates["min_dp"])
     assert all(_is_num(gates[k]) for k in ("max_af", "min_ab", "max_ab"))
     assert gates["gnomad_max_af"] is None or _is_num(gates["gnomad_max_af"])
+    # additive, after the original keys
+    assert list(gates)[len(GATE_KEYS)] == "af_gate"
+    assert gates["af_gate"] in AF_GATE_VALUES
     # annotations stays {string: bool}: an app decodes it as a dictionary
     # of booleans and throws on any other value.
     assert doc["annotations"], "annotations is never empty"
@@ -114,7 +117,8 @@ def test_contract_checker_rejects_what_would_blank_an_app():
     good = {
         "trio": {"ingest_id": "i", "proband": "C", "father": "F", "mother": "M"},
         "keep_reference": True,
-        "gates": dict.fromkeys(GATE_KEYS, 1) | {"gnomad_max_af": None},
+        "gates": dict.fromkeys(GATE_KEYS, 1)
+        | {"gnomad_max_af": None, "af_gate": "applied"},
         "annotations": {"genes": False},
         "models": {
             "recessive": {
@@ -138,6 +142,7 @@ def test_contract_checker_rejects_what_would_blank_an_app():
     broken(lambda d: d["models"]["recessive"].update(blocked="no"))
     broken(lambda d: d["models"]["recessive"].pop("blocked_reason"))
     broken(lambda d: d["models"]["recessive"].update(blocked_reason="because"))
+    broken(lambda d: d["gates"].update(af_gate="maybe"))
     broken(lambda d: d["annotations"].update(genes="yes"))
     broken(lambda d: d["models"]["recessive"].update(blocked=True))
 

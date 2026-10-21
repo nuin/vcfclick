@@ -315,6 +315,7 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
             "min_ab": gates.min_ab,
             "max_ab": gates.max_ab,
             "gnomad_max_af": analysis.gnomad_max_af,
+            "af_gate": gates.af_gate,
         },
         "annotations": render.have,
         "models": models,

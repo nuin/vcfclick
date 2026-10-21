@@ -33,7 +33,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import click
+from click.core import ParameterSource
 
+from cli.family_checks import af_gate_note, cohort_af_probe, resolve_af_gate
 from cli.main import _set_db, db
 from cli.options import command_options
 from cli.trio_analysis import CATEGORY_CHOICES
@@ -271,11 +273,24 @@ def db_trio(options: TrioOptions) -> None:
                 "`vcfclick db ped`, or name the proband with --proband."
             )
     has_ref = _has_reference_rows(sess)
+    # Is INFO/AF this cohort's own frequency? Then --max-af would remove
+    # every private candidate: say so, and skip the gate unless --max-af was
+    # given on the command line (an explicit threshold is always honoured).
+    probe = cohort_af_probe(sess, ingest_id)
+    explicit_af = (
+        click.get_current_context().get_parameter_source("max_af")
+        != ParameterSource.DEFAULT
+    )
+    af_gate = resolve_af_gate(probe, explicit=explicit_af)
+    note = af_gate_note(probe, af_gate, options.max_af)
+    if note:
+        click.echo(note, err=True)
+    gates = options.gates._replace(af_gate=af_gate)
     analyses = [
         TrioAnalysis(
             session=sess,
             trio=Trio(ingest_id, child, father, mother),
-            gates=options.gates,
+            gates=gates,
             has_reference=has_ref,
             gnomad_max_af=options.gnomad_max_af,
         )
