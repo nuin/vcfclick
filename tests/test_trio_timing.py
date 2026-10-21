@@ -93,6 +93,11 @@ from tests.fixtures._vcfgen import (
     write_vcf,
 )
 
+# Wall-clock gates need one machine, not every CI cell: the test matrix
+# deselects them (-m "not timing") and the `timing` job runs them. A plain
+# `pytest tests/` still runs them locally.
+pytestmark = pytest.mark.timing
+
 BACKENDS = ("chdb", "duckdb")
 GIAB = FIXTURES / "giab"
 

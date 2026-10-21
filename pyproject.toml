@@ -102,6 +102,9 @@ dev = [
 # failing assertion fails all attempts and still reports, so retries
 # rescue flakes without masking real failures. No real test needs 180s.
 timeout = 180
+markers = [
+    "timing: wall-clock budget gates; one dedicated CI job runs them (-m timing), the test matrix skips them",
+]
 addopts = "--reruns 2 --reruns-delay 2 --only-rerun rc=- --only-rerun returncode=- --only-rerun pthread_mutex --only-rerun recursive_mutex --only-rerun glibc --only-rerun Timeout"
 
 [tool.isort]

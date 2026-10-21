@@ -93,12 +93,14 @@ jobs:
         run: uv sync --extra web --extra benchmark --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
-        # Suite normally completes in 25–90s on CI. The chDB session-init
-        # retry wrapper (storage.db._open_session_with_retry) adds bounded
-        # backoff variance — 12 minutes gives the retries room without
-        # giving up real-hang detection.
-        timeout-minutes: 20
-        run: uv run pytest tests/ -v
+        # The suite takes 6-11 min on a typical runner (most tests drive the
+        # CLI in a subprocess, and a chDB subprocess start is slow on Linux),
+        # and some shared runners are 2x slower than that. The chDB
+        # session-init retry wrapper (storage.db._open_session_with_retry)
+        # adds bounded backoff variance. The wall-clock timing gates run in
+        # the `timing` job instead of every cell.
+        timeout-minutes: 30
+        run: uv run pytest tests/ -v -m "not timing"
 
   # DuckDB backend coverage. Smaller matrix than the chDB one because
   # the DuckDB path is pure-Python on top of duckdb's manylinux wheels;
@@ -144,5 +146,33 @@ jobs:
         # Faster than the chDB matrix because there is no EmbeddedServer
         # init race to retry through. test_stats and the chDB-specific
         # quote-roundtrip test self-skip on this backend.
-        timeout-minutes: 8
-        run: uv run pytest tests/ -v
+        timeout-minutes: 15
+        run: uv run pytest tests/ -v -m "not timing"
+
+  # Wall-clock timing gates (tests/test_trio_timing.py), both backends,
+  # on one runner. Their budgets are relative to a scan of the same store
+  # on the same machine, so a slow runner scales both sides.
+  timing:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install bgzip + tabix
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends tabix bcftools
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install Python 3.13
+        run: uv python install 3.13
+
+      - name: Install project + dev deps
+        run: uv sync --extra web --extra benchmark --group dev --python 3.13
+
+      - name: Run timing gates
+        timeout-minutes: 20
+        run: uv run pytest tests/test_trio_timing.py -v -m timing

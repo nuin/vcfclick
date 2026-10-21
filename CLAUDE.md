@@ -15,6 +15,7 @@ uv run pytest tests/test_cli.py            # one file
 uv run pytest tests/test_trio.py::test_denovo_excludes_no_call_parent_site   # one test
 uv run pytest tests/ -k discover           # by name
 VCFCLICK_BACKEND=duckdb uv run pytest tests/   # DuckDB backend (CI runs both)
+uv run pytest tests/ -m "not timing"     # skip the wall-clock gates (CI runs them in one `timing` job)
 
 uvx ruff@0.15.16 format --check .          # CI pins this ruff version
 uvx ruff@0.15.16 check .
