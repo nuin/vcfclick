@@ -224,6 +224,16 @@ def _strip_added(doc: dict) -> dict:
     return doc
 
 
+# Log lines the embedded engine prints on its own, unrelated to vcfclick's
+# output: the Linux chDB build (26.3.x) announces its allocator setting on
+# stderr; the macOS build does not.
+ENGINE_NOISE = re.compile(r"^Default dirty pages decay period: \d+ms\n", re.M)
+
+
+def _engine_quiet(stderr: str) -> str:
+    return ENGINE_NOISE.sub("", stderr)
+
+
 def _normalise(run: tuple[str, ...], stdout: str) -> str:
     if "json" in run:
         return json.dumps(_strip_added(json.loads(stdout)), indent=2) + "\n"
@@ -292,7 +302,9 @@ def test_trio_output_matches_goldens(
         stem = _golden_name(run)
         ext = "json" if "json" in run else "txt"
         _check(root / f"{stem}.{ext}", _normalise(run, r.stdout), stem, failures)
-        _check(root / f"{stem}.err", r.stderr, f"{stem} (stderr)", failures)
+        _check(
+            root / f"{stem}.err", _engine_quiet(r.stderr), f"{stem} (stderr)", failures
+        )
     assert not failures, "\n\n".join(failures)
 
 
@@ -374,3 +386,13 @@ def test_no_golden_candidate_sits_on_an_af_gate_boundary():
     for max_af in (0.01, 0.001, 0.3):
         assert not [a for a in afs if max_af < a <= max_af + 1e-7], max_af
     assert 0.001 not in afs
+
+
+def test_engine_noise_is_the_only_thing_stripped_from_stderr():
+    note = "  note: this database has no stored hom-reference calls\n"
+    noisy = "Default dirty pages decay period: 5000ms\n" + note
+    assert _engine_quiet(noisy) == note
+    assert _engine_quiet(note) == note
+    # Only a whole line in that exact shape is engine noise.
+    kept = "warning: Default dirty pages decay period: 5000ms\n"
+    assert _engine_quiet(kept) == kept

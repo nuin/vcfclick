@@ -187,11 +187,32 @@ def _seed_genes(n_sites: int) -> int:
     return len(genes)
 
 
-def _synthetic_budget(n: int) -> float:
-    return float(
-        os.environ.get("VCFCLICK_TIMING_BUDGET_S")
-        or SYNTHETIC_BASE_S + SYNTHETIC_PER_SITE_S * n
-    )
+# Wall-clock seconds on a shared CI runner are 3-6x what they are on the
+# machine the constants above were measured on, so the synthetic-store
+# budgets are relative: a multiple of a full scan of the same store's
+# genotypes on the same machine, run just before (interpreter start plus
+# one pass over the table). Measured: db trio is 9-10x that baseline on
+# both backends, 16x with a gnomAD slice loaded. The regressions this file
+# exists for (one query or store open per candidate, a second pass) were
+# 40-250x.
+SYNTHETIC_RATIO = 35.0
+
+
+def _baseline(home, backend) -> float:
+    """Best of two `db query` full scans of the genotypes table."""
+    took, _ = _best_of_two(
+        home, backend, "db", "query", "t",
+        "SELECT count(*) AS n, sum(gt) AS s FROM genotypes",
+    )  # fmt: skip
+    return took
+
+
+def _synthetic_budget(n: int, baseline: float | None = None) -> float:
+    if os.environ.get("VCFCLICK_TIMING_BUDGET_S"):
+        return float(os.environ["VCFCLICK_TIMING_BUDGET_S"])
+    if baseline is not None:
+        return SYNTHETIC_RATIO * baseline
+    return SYNTHETIC_BASE_S + SYNTHETIC_PER_SITE_S * n
 
 
 def _wgs_store(af, backend, home, tmp_path, monkeypatch):
@@ -226,7 +247,7 @@ def test_default_db_trio_on_a_synthetic_wgs_store(
     af, backend, vcfclick_home, tmp_path, monkeypatch
 ):
     n, n_genes = _wgs_store(af, backend, vcfclick_home, tmp_path, monkeypatch)
-    budget = _synthetic_budget(n)
+    budget = _synthetic_budget(n, _baseline(vcfclick_home, backend))
 
     took, result = _best_of_two(
         vcfclick_home,
@@ -288,7 +309,7 @@ def test_gnomad_filter_on_a_synthetic_wgs_store(
     join runs and drops the common ones."""
     n, n_genes = _wgs_store("cohort", backend, vcfclick_home, tmp_path, monkeypatch)
     n_rows = _seed_gnomad(n) if gnomad == "slice" else 0
-    budget = _synthetic_budget(n)
+    budget = _synthetic_budget(n, _baseline(vcfclick_home, backend))
     trio = ("db", "trio", "t", "--proband", "CHILD")
 
     base = json.loads(run_cli(vcfclick_home, backend, *trio, "--format", "json").stdout)
