@@ -35,7 +35,12 @@ Stop the server with `Ctrl-C`.
   briefing the MCP server gives an LLM to generate SQL, shows you the
   SQL, and runs it. Bring your own API key (Gemini or Anthropic) — it
   stays in your browser and is sent only to the provider you pick.
-- **Trio** — pick a proband, an inheritance model (de-novo / recessive /
+- **Trio** — pick a proband (the list is the probands of the loaded
+  pedigree, by the rule `db trio` uses: a child with both parents declared
+  who is not marked unaffected and has no children or is affected; with
+  several ingestions it falls back to every child with two parents; `/api/meta`
+  also returns a `families` list, see [TRIO.md](TRIO.md#probands-and-db-families)),
+  an inheritance model (de-novo / recessive /
   dominant / comphet: the list is the CLI's `--category` list, so a new
   model appears here without a page edit) and quality thresholds; reuses
   `db trio`. De-novo / dominant / comphet show a note if the cohort lacks

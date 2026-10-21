@@ -9,7 +9,7 @@ Run `vcfclick --help` or `vcfclick <command> --help` any time for the same infor
 - **Databases** — [`db create`](#db-create) · [`db list`](#db-list) · [`db info`](#db-info) · [`db path`](#db-path) · [`db rm`](#db-rm) · [`db query`](#db-query) · [`db stats`](#db-stats) · [`db diff`](#db-diff) · [`db gene`](#db-gene)
 - **Ingesting variants** — [`db ingest`](#db-ingest) · [`db ingest-batch`](#db-ingest-batch) · [`merge`](#merge) · [`combine`](#combine) · [`discover`](#discover)
 - **Population genetics** — [`db panel`](#db-panel) · [`db popgen`](#db-popgen) ([`summary`](#db-popgen-summary) · [`sfs`](#db-popgen-sfs) · [`fst`](#db-popgen-fst) · [`windows`](#db-popgen-windows))
-- **Family / trio analysis** — [`db ped`](#db-ped) · [`db trio`](#db-trio) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
+- **Family / trio analysis** — [`db ped`](#db-ped) · [`db families`](#db-families) · [`db trio`](#db-trio) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
 - **Benchmarking** — [`benchmark`](#benchmark) · [`benchmark-cohort`](#benchmark-cohort)
 - **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad)
 - **Export & sharing** — [`db export`](#db-export) · [`db dump`](#db-dump) · [`db ingest-parquet`](#db-ingest-parquet) · [`db push`](#db-push) · [`db pull`](#db-pull)
@@ -654,10 +654,19 @@ Pedigree-aware inheritance analysis. See [Trio](TRIO.md).
 
 ### db ped
 
-Load family relationships from a PED/FAM file. See [TRIO.md](TRIO.md).
+Load family relationships from a PED/FAM file, or declare a family with
+flags: several families, grandparents, half siblings and duos are supported.
+A PED file replaces the stored pedigree; the flags describe one family, and a
+call that would delete individuals it does not name fails until you add
+`--merge` (which replaces only the family it names). Flag-declared parents are
+stored with unknown phenotype. See
+[TRIO.md](TRIO.md#families-generations-and-probands).
 
 ```bash
 vcfclick db ped trio fam.ped
+vcfclick db ped trio --proband HG002 --father HG003 --mother HG004
+vcfclick db ped fams --family famB --merge --proband K1 --proband K2 \
+    --father FB --mother MB --parents FB=GF,GM
 ```
 
 <details><summary>options</summary>
@@ -667,11 +676,13 @@ Usage: vcfclick db ped [OPTIONS] NAME [PED_PATH]
 
   Load family relationships into NAME, from a PED/FAM file or as a family
   given by sample ids (--proband, repeatable for siblings, with --father and
-  --mother).
+  --mother; --parents adds grandparents and half siblings).
 
   The individual ids must match sample ids already ingested under the target
-  ingest_id (v1 assumes a joint-called trio, so all members share one
-  ingest_id). Re-loading replaces the prior pedigree for that ingest_id.
+  ingest_id, and all members share that one ingest_id. A PED file replaces the
+  stored pedigree for that ingest_id. Flags describe one family; add --merge
+  to replace just that family and keep the others. Everything is checked
+  before anything is deleted.
 
 Options:
   --ingest-id TEXT                Ingest_id the pedigree's samples belong to.
@@ -680,13 +691,68 @@ Options:
   --proband TEXT                  Without a PED file: an affected child's
                                   sample id. Repeat it for siblings who share
                                   the same parents.
-  --father TEXT                   Without a PED file: the father's sample id.
-  --mother TEXT                   Without a PED file: the mother's sample id.
+  --father TEXT                   Without a PED file: the proband's father
+                                  (sample id; 0 when only the mother is
+                                  known).
+  --mother TEXT                   Without a PED file: the proband's mother
+                                  (sample id; 0 when only the father is
+                                  known).
+  --family TEXT                   Without a PED file: the family id of every
+                                  listed sample. [default: fam1]
+  --parents CHILD=FATHER,MOTHER   Without a PED file: the parents of another
+                                  member, to declare grandparents or half
+                                  siblings (e.g. F=PGF,PGM). Repeatable;
+                                  either side may be 0.
+  --merge                         Replace only the families named in this call
+                                  (the PED file's, or --family) and keep every
+                                  other family. Without it a PED file replaces
+                                  the whole pedigree, and a flag call that
+                                  would delete individuals it does not name
+                                  fails.
+  --affected TEXT                 Without a PED file: mark a listed sample
+                                  affected. Repeatable.
+  --unaffected TEXT               Without a PED file: mark a listed sample
+                                  unaffected. Repeatable.
+  --unknown TEXT                  Without a PED file: mark a listed sample's
+                                  phenotype unknown. Repeatable. Probands
+                                  default to affected, everyone else to
+                                  unknown.
+  --sex ID=male|female|unknown    Without a PED file: a listed sample's sex.
+                                  Repeatable. A father is male and a mother
+                                  female unless this says otherwise.
   --proband-sex [male|female|unknown]
                                   Without a PED file: the proband's sex (a
-                                  single --proband only; give each sibling's
-                                  sex in a PED file).  [default: unknown]
+                                  single --proband only; use --sex for each
+                                  sibling, or a PED file).  [default: unknown]
   --help                          Show this message and exit.
+```
+
+</details>
+
+### db families
+
+List the families in a database's pedigree: members by generation, the probands `db trio` analyses, every trio or duo with its siblings, and problems in the pedigree. Read-only; exits 0 even when it finds problems. See [TRIO.md](TRIO.md#probands-and-db-families).
+
+```bash
+vcfclick db families trio
+vcfclick db families trio --format json
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db families [OPTIONS] NAME
+
+  List the families in NAME's pedigree: members by generation, the probands
+  `db trio` analyses, each trio or duo with its siblings, and problems in the
+  pedigree. Read-only; exits 0 even when it finds problems.
+
+Options:
+  --ingest-id TEXT      Ingest_id whose pedigree to list. Inferred when the
+                        database has exactly one ingestion.
+  --format [text|json]  json: {ingest_id, families: [{family_id, members,
+                        probands, trios}], problems}.  [default: text]
+  --help                Show this message and exit.
 ```
 
 </details>
@@ -697,7 +763,18 @@ Candidate variants under Mendelian models (de-novo/recessive/dominant/comp-het).
 
 ```bash
 vcfclick db trio trio --proband HG002 --category denovo
+vcfclick db trio fams                      # the probands of every family
+vcfclick db trio fams --family famB        # one family
+vcfclick db trio fams --all-trios          # every child with both parents
 ```
+
+Without `--proband`, `db trio` analyses the **probands**: children with both
+parents declared who are not marked unaffected and who either have no children
+of their own or are affected (`db families` lists them). `--all-trios` is the
+older rule, every child with both parents declared. `--format json` adds
+`trio.family_id`, `trio.kind` and `trio.siblings` to each document, and a
+`families` list to the `trios` document; see
+[TRIO.md](TRIO.md#running-db-trio-over-a-family).
 
 `--format json` reports, for every model, `blocked` and `blocked_reason`
 (`null`, or `needs_keep_reference` / `needs_genes`), and under `gates` the
@@ -716,12 +793,23 @@ Usage: vcfclick db trio [OPTIONS] NAME
 
   Report candidate variants under Mendelian inheritance models for a trio,
   with genotype quality gates and an AF rarity filter. Without --proband,
-  every child in the pedigree is analysed in turn.
+  every proband in the pedigree is analysed in turn (--family limits that to
+  one family, --all-trios widens it to every child).
 
 Options:
   --proband TEXT                  Sample id of the affected child. Omitted:
-                                  every child in the pedigree with both
-                                  parents declared, one report each.
+                                  every proband in the pedigree, one report
+                                  each. A proband is a child with both parents
+                                  declared who is not marked unaffected and
+                                  who either has no children of their own or
+                                  is affected (`db families` lists them).
+  --family TEXT                   Analyse every proband of this family (see
+                                  `db families`). Not with --proband.
+  --all-trios                     Without --proband: analyse every child with
+                                  both parents declared, including children
+                                  marked unaffected and parents who have
+                                  children of their own (the rule before
+                                  probands were defined).
   --category [denovo|recessive|dominant|comphet|all]
                                   Inheritance model. 'all' prints per-model
                                   candidate counts.  [default: all]
@@ -743,8 +831,9 @@ Options:
   --format [text|json]            json: every model's count and candidates
                                   (with gene, gnomAD and ClinVar when loaded)
                                   in one document; without --proband, a
-                                  `trios` list with one document per child.
-                                  [default: text]
+                                  `trios` list with one document per proband,
+                                  and the `families` they are in.  [default:
+                                  text]
   --limit INTEGER                 json: at most this many candidates per
                                   model.  [default: 1000]
   --help                          Show this message and exit.

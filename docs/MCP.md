@@ -175,6 +175,10 @@ correct cohort queries:
   family VCF's `INFO/AF` is often the callset's own frequency, which makes
   `info_AF <= 0.01` remove every private candidate (`db trio` detects this
   and skips the gate, reporting `gates.af_gate`).
+- Families: a pedigree can hold several families and generations, so scope
+  by `ingest_id` and `family_id`; `affected = NULL` is unknown, not
+  unaffected; and what a proband is (the rule `db trio` and `db families`
+  use, with `--family` and `--all-trios`).
 
 See [Schema reference](SCHEMA.md) for the SQL patterns behind those
 rules, and [Trio](TRIO.md) for the gates.

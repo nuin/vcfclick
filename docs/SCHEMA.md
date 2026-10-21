@@ -452,7 +452,17 @@ under the same `ingest_id`.
 
 `pedigree` (`vcfclick db ped`, see [TRIO.md](TRIO.md)):
 `ingest_id, sample_id, family_id, father_id, mother_id, sex,
-affected`.
+affected`. One row per individual. `father_id` / `mother_id` are the
+parent's `sample_id` in the same ingestion, or `'0'` for no parent
+declared (a founder, or the unknown side of a child with one known
+parent). `sex` is `male` / `female` / NULL and `affected` is `affected` /
+`unaffected` / NULL, where **NULL means unknown, not unaffected**. A
+pedigree can hold several families (`family_id`) and several generations,
+so scope a query by `ingest_id` **and** `family_id`; `sample_id` is unique
+per ingestion, so a person is in one family. The table is a
+ReplacingMergeTree on chDB: a re-inserted individual can be read twice until a
+background merge, so read it through `vcfclick db families` (or collapse to the
+newest `ingested_at` per `sample_id`) rather than counting rows.
 
 `populations` (`vcfclick db panel`, see [POPGEN.md](POPGEN.md)). A
 panel load replaces the labelling of each ingestion it applies to;

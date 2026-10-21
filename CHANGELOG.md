@@ -17,8 +17,56 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - The web Trio tab and `/api/trio` serve compound hets (one row per candidate
   variant under its gene). The tab's model list is generated from the CLI's,
   so it can no longer lag behind it.
+- Pedigrees with several families and generations. `db ped` without a PED
+  file takes `--family FID`, `--parents CHILD=FATHER,MOTHER` (grandparents,
+  half siblings; repeatable), `--affected`/`--unaffected`/`--unknown`
+  (set the phenotype of any listed sample), `--sex ID=male|female|unknown`,
+  and `0` for a parent that is not known (`--father 0`: a duo). `--merge`
+  replaces only the families a call names and keeps the others, for flags
+  and for a PED file. Every check (unknown sample, self-parent, cycle,
+  parent in another family, a sample moving families) runs before anything
+  is deleted. `db ped` also prints a `families: famA(13), famB(5)` line.
+- `db families NAME [--format text|json]`: read-only list of a database's
+  families with members by generation, the probands, every trio or duo with
+  its full and half siblings, and problems (cycle, parent in another family,
+  individual not in the data, duo). It reads tolerantly and exits 0, so it
+  also describes a pedigree that an older vcfclick let in.
+- `db trio --family FID` analyses the probands of one family and
+  `--all-trios` analyses every child with both parents declared. The trio
+  block of `db trio --format json` gains `family_id`, `kind` (`trio` or
+  `duo`) and `siblings` (`[{"sample", "kind": "full" | "half_paternal" |
+  "half_maternal"}]`), and the `trios` document gains `families`. Additive;
+  old keys are byte-stable. `/api/meta` gains `families` (per family its
+  probands and trios with siblings), and the MCP briefing explains families,
+  `affected = NULL` as unknown, and probands.
 
 ### Changed
+
+- `db trio` without `--proband` now analyses the **probands** of every
+  family, ordered by family and sample id: children with both parents
+  declared who are not marked unaffected and who either have no children of
+  their own or are affected. Before it analysed every child with both
+  parents declared. A one-generation family whose children are not marked
+  unaffected gets the same output; a pedigree with an unaffected sibling or
+  a middle generation gets fewer reports, and `--all-trios` restores the old
+  set. A note on stderr lists the children left out and any duo skipped, and
+  an error names `--all-trios` when no child qualifies. The same rule picks
+  the proband list of the web UI (`/api/meta`).
+- `db ped --proband/--father/--mother` stores the parents with an unknown
+  phenotype instead of unaffected (and probands as affected, as before).
+  Only a PED file or an explicit `--affected`/`--unaffected` asserts a
+  parent's status. Databases already loaded keep what they stored.
+- A `db ped` flag call that would delete individuals it does not name now
+  fails, with a message that names `--merge` (or `--family FID --merge` when
+  the samples it names already live in one family), instead of silently
+  replacing the whole pedigree. The desktop apps send this form and show
+  stderr only when a command fails, so a quiet replace lost families without
+  anyone noticing. A PED file still replaces the whole pedigree.
+- `db ped` (a PED file as well as flags) refuses a pedigree with a cycle of
+  ancestors, an individual who is their own parent, or a parent in a
+  different family, before changing anything, and warns on stderr about a
+  father recorded as female or a mother as male. Pedigrees that were loaded
+  earlier are still read, and `db families` reports what is wrong with them.
 
 - `db trio` recognises an `INFO/AF` that is the cohort's own allele
   frequency (GATK-style family VCFs, where a private het in a trio is
@@ -61,6 +109,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A database without a `pedigree` table, or one with no pedigree loaded, now
+  says `no pedigree loaded` from `db trio` and `db families` (and gives no
+  probands in the web UI) instead of failing in SQL. A pedigree row that
+  chDB shows twice before a background merge is read once, newest wins.
+- `db ped` deleted the old pedigree with the ingest id pasted into the
+  statement; it now goes through the same quoting as every other literal.
 - The `genotypes.gt` comments in `schema/02_genotypes.sql`,
   `schema/duckdb/02_genotypes.sql` and `docs/SCHEMA.md` described a
   `-1` "hemizygous" code that the encoder has never written. A haploid ALT
