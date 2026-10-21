@@ -134,7 +134,15 @@ def meta() -> dict:
     }
 
 
-_noted_duos: set[str] = set()
+_noted: set[str] = set()
+
+
+def _note_once(key: str, message: str, *args) -> None:
+    """Log `message` the first time `key` comes up: /api/meta runs on every
+    page load, and the same note each time would bury the log."""
+    if key not in _noted:
+        _noted.add(key)
+        _log.info(message, *args)
 
 
 def _pedigree_meta(ingest_ids: list[str]) -> tuple[list[str], list[dict]]:
@@ -151,7 +159,12 @@ def _pedigree_meta(ingest_ids: list[str]) -> tuple[list[str], list[dict]]:
     flat list of every child with two declared parents is all there is. A
     database without a pedigree, or one the graph cannot read, gives none.
     """
+    from cli.pedigree_load import NO_PEDIGREE
+
     if not table_exists("pedigree"):
+        _note_once(
+            "no-pedigree", "pedigree: %s The proband list is empty.", NO_PEDIGREE
+        )
         return [], []
     if len(ingest_ids) == 1:
         try:
@@ -160,9 +173,9 @@ def _pedigree_meta(ingest_ids: list[str]) -> tuple[list[str], list[dict]]:
 
             graph = load_pedigree_graph(get_session(), ingest_ids[0])
             for child in graph.analysable_children():
-                if graph.kind_of(child) == "duo" and child not in _noted_duos:
-                    _noted_duos.add(child)
-                    _log.info(
+                if graph.kind_of(child) == "duo":
+                    _note_once(
+                        f"duo:{child}",
                         "pedigree: %s has one declared parent (a duo); duo "
                         "analysis is not available yet, so it is not offered "
                         "as a proband",

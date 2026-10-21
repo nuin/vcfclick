@@ -6,6 +6,8 @@ with the desktop apps and scripts, so they are listed here in full.
 
 from __future__ import annotations
 
+import re
+
 from cli.pedigree_report import families_document, families_text, web_families
 from storage.pedigree_graph import Pedigree
 
@@ -51,6 +53,29 @@ def test_the_document_has_exactly_the_documented_keys():
     ]  # fmt: skip
     assert list(d["problems"][0]) == ["family_id", "level", "code", "message"]
     assert fam["trios"][0]["siblings"][0].keys() == {"sample", "kind"}
+
+
+KEY = re.compile(r"^[a-z][a-z0-9]*(_[a-z][a-z0-9]*)*$")
+
+
+def all_keys(value):
+    if isinstance(value, dict):
+        for k, v in value.items():
+            yield k
+            yield from all_keys(v)
+    elif isinstance(value, list):
+        for v in value:
+            yield from all_keys(v)
+
+
+def test_every_key_is_snake_case_with_digits_only_inside_a_word():
+    """The apps' key strategy cannot cope with a segment that starts with a
+    digit (docs/TRIO.md, compatibility policy)."""
+    graph = Pedigree.from_rows(ROWS, genotyped=GENOTYPED)
+    keys = set(all_keys(families_document(graph, "i1")))
+    keys |= set(all_keys(web_families(graph)))
+    assert keys and not [k for k in keys if not KEY.match(k)]
+    assert KEY.match("n_ibs0") and not KEY.match("n_0ibs") and not KEY.match("Ibs")
 
 
 def test_members_probands_trios_and_duos():

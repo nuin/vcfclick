@@ -210,6 +210,9 @@ class Pedigree:
         return [c for c in self.members(family_id) if self.kind_of(c)]
 
     def is_proband(self, child: str, *, include_duos: bool = False) -> bool:
+        """Is `child` a proband: analysable (a trio, or a duo with
+        `include_duos`), not explicitly unaffected, and either affected or
+        without children of their own?"""
         kind = self.kind_of(child)
         if kind is None or (kind == "duo" and not include_duos):
             return False
@@ -234,9 +237,9 @@ class Pedigree:
     def siblings(self, sample_id: str) -> list[Sibling]:
         """Everyone who shares a declared parent with `sample_id`, sorted
         by sample id. `full`: both parents shared; otherwise the single
-        shared parent decides `half_paternal` or `half_maternal`. A child
-        with one parent declared on both sides is a half sibling: only the
-        declared parent is known to be shared."""
+        shared parent decides `half_paternal` or `half_maternal`. Two
+        children who each name only the same one parent are half siblings:
+        that parent is all that is known to be shared."""
         me = self._people.get(sample_id)
         if me is None:
             return []

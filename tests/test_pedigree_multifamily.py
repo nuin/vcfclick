@@ -7,9 +7,11 @@ per backend for the module. A test that changes the pedigree asks for the
 command), so every other test can read the base pedigree.
 
 `db ped` is the subject of the first half: the flag surface, `--merge` (a
-partial delete of the pedigree table, which chDB runs as a mutation on a
-ReplacingMergeTree), and the rule that every check happens before anything
-is deleted. The second half reads the families back (`db families`,
+partial delete of the pedigree table on chDB: a mutation that removes the
+rows of the named families, i.e. their sample_id list, from a
+ReplacingMergeTree, where every `db ped` so far deleted the whole
+ingestion's rows), and the rule that every check happens before anything is
+deleted. The second half reads the families back (`db families`,
 `db trio`).
 """
 
@@ -42,7 +44,9 @@ def backend(request):
 
 
 @pytest.fixture(scope="module")
-def ext_home(backend, tmp_path_factory):
+def ext_store(backend, tmp_path_factory):
+    """The ingested store, once per backend: its home and whether a test
+    left the pedigree changed."""
     home = tmp_path_factory.mktemp("ext") / "vcfclick"
     home.mkdir()
     run_cli(home, backend, "db", "create", "t")
@@ -51,7 +55,7 @@ def ext_home(backend, tmp_path_factory):
         "--ingest-id", "i1", "--serial", "--keep-reference",
     )  # fmt: skip
     run_cli(home, backend, "db", "ped", "t", str(EXT_PED))
-    return home
+    return {"home": home, "dirty": False}
 
 
 def db(home, backend, *args, ok=True):
@@ -59,10 +63,23 @@ def db(home, backend, *args, ok=True):
 
 
 @pytest.fixture
-def mutable(ext_home, backend):
-    """For a test that changes the pedigree: put the base one back after."""
+def ext_home(ext_store, backend):
+    """The store's home with the base pedigree loaded."""
+    if ext_store["dirty"]:  # a reset did not finish (a command was killed)
+        db(ext_store["home"], backend, "ped", "t", str(EXT_PED))
+        ext_store["dirty"] = False
+    return ext_store["home"]
+
+
+@pytest.fixture
+def mutable(ext_store, ext_home, backend):
+    """For a test that changes the pedigree: put the base one back after.
+    Marked dirty meanwhile, so if the reset itself is interrupted (a chDB
+    hang, then a rerun) the next test starts by finishing it."""
+    ext_store["dirty"] = True
     yield
     db(ext_home, backend, "ped", "t", str(EXT_PED))
+    ext_store["dirty"] = False
 
 
 def stored(home, backend) -> dict[str, list]:

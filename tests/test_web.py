@@ -188,6 +188,19 @@ def test_meta_without_a_pedigree_has_no_probands(duckdb_cohort):
     assert m["probands"] == [] and m["families"] == []
 
 
+def test_meta_of_a_database_with_no_pedigree_table(trio_web_store):
+    """An older database has no `pedigree` table at all: the picker is empty
+    and the schema list leaves the table out, instead of /api/meta failing."""
+    trio_web_store(FIX / "trio.vcf.gz")
+    _query("DROP TABLE pedigree")
+    m = client.get("/api/meta").json()
+    assert m["probands"] == [] and m["families"] == []
+    assert "pedigree" not in {t["name"] for t in m["tables"]}
+    # /api/trio says why, in the words `db trio` uses
+    d = client.get("/api/trio", params={"proband": "CHILD"}).json()
+    assert "no pedigree loaded" in d["error"]
+
+
 def _query(sql: str) -> None:
     from storage import get_session
 
