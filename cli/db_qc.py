@@ -18,10 +18,12 @@ import json
 import click
 
 from cli.main import _set_db, db
+from storage.contigs import X_NAMES
+from storage.sql import str_list
 
-# chrX names (non-PAR handling is left to the caller's data; PAR variants
-# slightly inflate male het and are rare relative to the whole X).
-_CHRX = ("chrX", "X", "chr23", "23")
+# chrX names come from storage.contigs (non-PAR handling is left to the
+# caller's data; PAR variants slightly inflate male het and are rare relative
+# to the whole X).
 
 # Below this chrX-het fraction a sample reads as male (hemizygous → few
 # hets); above the upper bound, female. Between, ambiguous.
@@ -46,7 +48,7 @@ def _qc_sql() -> str:
     snv = "length(ref) = 1 AND length(alt) = 1"
     ti = f"{snv} AND {_transition()}"
     tv = f"{snv} AND NOT {_transition()}"
-    chrx = "chrom IN (" + ", ".join(f"'{c}'" for c in _CHRX) + ")"
+    chrx = f"chrom IN ({str_list(X_NAMES)})"
     cols = ", ".join(
         [
             "ingest_id",

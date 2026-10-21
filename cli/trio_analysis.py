@@ -123,19 +123,15 @@ def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
 
 
 def _parent_joins(father: str | None, mother: str | None) -> str:
-    from storage import sql_quote_str
+    from storage.sql import sample_join
 
     if father is None or mother is None:
         raise ValueError(
             "this model needs both parents declared (father="
             f"{father!r}, mother={mother!r})"
         )
-
-    key = "f.ingest_id = g.ingest_id AND f.chrom = g.chrom AND f.pos = g.pos AND f.ref = g.ref AND f.alt = g.alt"
-    mkey = key.replace("f.", "m.")
     return (
-        f"INNER JOIN genotypes f ON {key} AND f.sample_id = {sql_quote_str(father)} "
-        f"INNER JOIN genotypes m ON {mkey} AND m.sample_id = {sql_quote_str(mother)} "
+        f"{sample_join('f', father)} {sample_join('m', mother)} "
         "LEFT JOIN variants v ON v.ingest_id = g.ingest_id AND v.chrom = g.chrom "
         "AND v.pos = g.pos AND v.ref = g.ref AND v.alt = g.alt"
     )
