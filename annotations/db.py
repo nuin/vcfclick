@@ -27,6 +27,7 @@ jobs that run on a cron, not part of the query path.
 from __future__ import annotations
 
 import os
+from bisect import bisect_right
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -160,6 +161,56 @@ def gene_at(chrom: str, pos: int) -> list[GeneRange]:
         [chrom, pos],
     ).fetchall()
     return [GeneRange(*r) for r in rows]
+
+
+class GeneIndex:
+    """Every gene interval, in memory, for a caller that looks up many
+    positions. `gene_at` opens the store and runs a query per position
+    (about 0.1 ms each once the store is open, a few ms if it is opened
+    every time); `GeneIndex.at` answers the same question from a sorted
+    array in about a microsecond. The table is read once, when the index
+    is built."""
+
+    def __init__(self, conn: duckdb.DuckDBPyConnection | None = None) -> None:
+        own = conn is None
+        if conn is None:
+            conn = get_connection()
+        try:
+            rows = conn.execute(
+                "SELECT gene_symbol, chrom, start_pos, end_pos, strand "
+                "FROM refseq_genes ORDER BY chrom, start_pos"
+            ).fetchall()
+        finally:
+            if own:
+                conn.close()
+        self._genes: dict[str, list[GeneRange]] = {}
+        for row in rows:
+            self._genes.setdefault(row[1], []).append(GeneRange(*row))
+        # per chromosome: start of each gene, and the furthest end reached
+        # by it or any gene before it (so a backwards scan can stop)
+        self._starts = {c: [g.start_pos for g in gs] for c, gs in self._genes.items()}
+        self._reach: dict[str, list[int]] = {}
+        for chrom, genes in self._genes.items():
+            far, reach = 0, []
+            for g in genes:
+                far = max(far, g.end_pos)
+                reach.append(far)
+            self._reach[chrom] = reach
+
+    def at(self, chrom: str, pos: int) -> list[GeneRange]:
+        """Same genes as `gene_at(chrom, pos)`, ordered by start."""
+        genes = self._genes.get(chrom)
+        if not genes:
+            return []
+        reach = self._reach[chrom]
+        hits = []
+        i = bisect_right(self._starts[chrom], pos) - 1  # last gene starting <= pos
+        while i >= 0 and reach[i] >= pos:
+            if genes[i].end_pos >= pos:
+                hits.append(genes[i])
+            i -= 1
+        hits.reverse()
+        return hits
 
 
 def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | None:

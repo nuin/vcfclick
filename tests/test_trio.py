@@ -172,6 +172,49 @@ def _seed_gene(symbol: str, chrom: str, start: int, end: int) -> None:
     conn.close()
 
 
+def test_gene_index_answers_like_gene_at(tmp_path, monkeypatch):
+    """`GeneIndex.at` (one table read, then arrays) must return the genes
+    `gene_at` (one query per position) does, over overlapping, nested and
+    same-start intervals, at and around every boundary."""
+    import random
+
+    from annotations import gene_at
+    from annotations.db import GeneIndex, get_connection
+
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    assert GeneIndex().at("chr1", 100) == []  # an empty store is fine
+
+    rng = random.Random(3)
+    conn = get_connection()
+    for i in range(80):
+        chrom = rng.choice(["chr1", "chr2", "chrX"])
+        start = rng.randint(1, 900)
+        # a few long genes that swallow shorter ones, many short ones
+        end = start + (rng.randint(300, 700) if i % 7 == 0 else rng.randint(0, 60))
+        conn.execute(
+            "INSERT INTO refseq_genes VALUES (?, ?, ?, ?, '+', 'id', 'protein_coding')",
+            [f"G{i:02d}", chrom, start, end],
+        )
+    conn.execute(
+        "INSERT INTO refseq_genes VALUES ('TWINA', 'chr1', 400, 450, '+', 'id', 'x'), "
+        "('TWINB', 'chr1', 400, 450, '-', 'id', 'x')"  # same interval
+    )
+    rows = conn.execute("SELECT chrom, start_pos, end_pos FROM refseq_genes").fetchall()
+    conn.close()
+
+    index = GeneIndex()
+    probes = {
+        (c, p) for c, s, e in rows for p in (s - 1, s, s + 1, e - 1, e, e + 1) if p >= 1
+    } | {(c, p) for c in ("chr1", "chr2", "chrX", "chr3") for p in range(1, 1700, 7)}
+    assert len(probes) > 500
+    for chrom, pos in sorted(probes):
+        want = sorted(g.gene_symbol for g in gene_at(chrom, pos))
+        got = sorted(g.gene_symbol for g in index.at(chrom, pos))
+        assert got == want, (chrom, pos)
+        starts = [g.start_pos for g in index.at(chrom, pos)]
+        assert starts == sorted(starts)  # ordered by start, as gene_at is
+
+
 def test_comphet_genes_grouping_unit(tmp_path, monkeypatch):
     """The gene grouping keeps a gene only when it has BOTH a paternal and
     a maternal het; single-origin genes and intergenic variants are

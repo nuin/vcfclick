@@ -260,13 +260,16 @@ def _comphet_genes(candidate_rows: list) -> dict:
     that carry BOTH a paternal and a maternal het (trans configuration →
     both gene copies hit). A variant overlapping several genes counts for
     each. Returns {gene_symbol: {"paternal": [...], "maternal": [...]}}."""
-    from annotations import gene_at
+    from annotations.db import GeneIndex
 
     genes: dict = {}
+    index = None  # read the gene table once, at the first candidate
     for chrom, pos, ref, alt, af, origin in candidate_rows:
         if origin not in ("paternal", "maternal"):
             continue
-        for gr in gene_at(chrom, int(pos)):
+        if index is None:
+            index = GeneIndex()
+        for gr in index.at(chrom, int(pos)):
             entry = genes.setdefault(gr.gene_symbol, {"paternal": [], "maternal": []})
             entry[origin].append((chrom, pos, ref, alt, af))
     return {sym: e for sym, e in genes.items() if e["paternal"] and e["maternal"]}
