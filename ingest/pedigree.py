@@ -13,8 +13,11 @@ Lines beginning with '#' are skipped. We normalise sex and affected to
 readable strings ('male'/'female', 'affected'/'unaffected') so SQL
 filters read naturally, matching vcfclick's filter='PASS' style.
 
-v1 assumes a JOINT-called trio: all members share one ingest_id, so
-father_id/mother_id resolve to sample_ids within the same ingest_id.
+All members share one ingest_id, so father_id/mother_id resolve to
+sample_ids within the same ingest_id. A pedigree may hold several families
+and several generations. Everything is checked before the table is touched
+(an unknown sample, a self-parent, a cycle, a parent in another family), so
+a refused load leaves the stored pedigree as it was.
 """
 
 from __future__ import annotations
@@ -68,14 +71,67 @@ def parse_ped(path: str | Path) -> list[dict]:
     return rows
 
 
-def load_pedigree(ingest_id: str, ped_path: str | Path) -> int:
-    """Load a PED file into the active DB's pedigree table under
-    `ingest_id`. Replaces any prior pedigree rows for that ingest_id
-    (idempotent re-load). Returns the number of individuals loaded.
+def resulting_rows(
+    rows: list[dict], existing: list[dict] | None, *, merge: bool
+) -> list[dict]:
+    """The pedigree a load will leave behind. Without `merge` it is `rows`
+    alone (the whole pedigree of the ingest_id is replaced). With `merge` it
+    is `rows` plus every stored row of a family that `rows` does not name.
 
-    Validates that every individual and every named parent is a real
-    sample in the cohort under this ingest_id — a PED referencing
-    sample_ids that aren't in the data is almost always a mistake.
+    Raises ValueError when `merge` would move a sample out of the family it
+    is stored in: --merge replaces whole families, so a sample that is
+    named under a different family id is an error, not a silent move.
+    """
+    if not merge:
+        return list(rows)
+    if existing is None:
+        raise ValueError("a merge needs the stored pedigree rows (existing=...)")
+    incoming = {r["family_id"] for r in rows}
+    named = {r["sample_id"]: r["family_id"] for r in rows}
+    for e in existing:
+        fam = named.get(e["sample_id"])
+        if fam is not None and e["family_id"] not in incoming:
+            raise ValueError(
+                f"{e['sample_id']!r} is already in family {e['family_id']!r}; "
+                f"it cannot also join {fam!r}. A sample belongs to one "
+                "family; --merge replaces whole families."
+            )
+    return [e for e in existing if e["family_id"] not in incoming] + list(rows)
+
+
+def load_pedigree(
+    ingest_id: str,
+    ped_path: str | Path,
+    *,
+    merge: bool = False,
+    existing: list[dict] | None = None,
+) -> int:
+    """Load a PED file into the active DB's pedigree table under
+    `ingest_id` (see `load_rows`). Returns the number of individuals
+    loaded."""
+    return load_rows(ingest_id, parse_ped(ped_path), merge=merge, existing=existing)
+
+
+def load_rows(
+    ingest_id: str,
+    rows: list[dict],
+    *,
+    merge: bool = False,
+    existing: list[dict] | None = None,
+) -> int:
+    """Write pedigree `rows` (the shape `parse_ped` returns) into the active
+    DB under `ingest_id`. Returns the number of individuals loaded.
+
+    Without `merge`, the prior pedigree of the ingest_id is replaced
+    (idempotent re-load). With `merge`, only the families named in `rows`
+    are replaced and every other family stays; `existing` must then hold
+    the stored rows (cli/pedigree_load.pedigree_rows).
+
+    Everything is validated BEFORE anything is deleted, so a refused load
+    changes nothing: every individual and every named parent must be a
+    real sample under this ingest_id, and the resulting pedigree must have
+    no self-parent, no cycle and no parent in another family. A father
+    recorded as female (or a mother as male) is only warned about.
     """
     from ingest._arrow import PEDIGREE_ARROW_SCHEMA
     from storage import (
@@ -85,9 +141,12 @@ def load_pedigree(ingest_id: str, ped_path: str | Path) -> int:
         sql_quote_str,
         validate_ingest_id,
     )
+    from storage.pedigree_graph import Pedigree
+    from storage.sql import str_list
 
     validate_ingest_id(ingest_id)
-    rows = parse_ped(ped_path)
+    if not rows:
+        raise ValueError("no pedigree rows to load")
 
     sess = get_session()
     # Which sample_ids actually exist in this cohort?
@@ -120,8 +179,24 @@ def load_pedigree(ingest_id: str, ped_path: str | Path) -> int:
                     f"but it is not a sample under ingest_id={ingest_id!r}."
                 )
 
-    # Idempotent replace: clear prior pedigree for this ingest_id first.
-    sess.query(delete_where_sql("pedigree", f"ingest_id = '{ingest_id}'"))
+    result = Pedigree.from_rows(resulting_rows(rows, existing, merge=merge))
+    errors = result.errors()
+    if errors:
+        raise ValueError(
+            "the pedigree has errors, so nothing was changed: "
+            + "; ".join(q.message for q in errors)
+        )
+    families = {r["family_id"] for r in rows}
+    for q in result.validate():
+        if q.code == "parent_sex" and q.family_id in families:
+            log.warning("warning: %s", q.message)
+
+    # Replace: clear the prior pedigree (or only the families being
+    # written) first.
+    where = f"ingest_id = {sql_quote_str(ingest_id)}"
+    if merge:
+        where += f" AND family_id IN ({str_list(sorted(families))})"
+    sess.query(delete_where_sql("pedigree", where))
 
     insert_via_parquet(
         "pedigree",

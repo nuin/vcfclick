@@ -1,8 +1,9 @@
-"""`vcfclick db ped` + `db trio` — family-based analysis.
+"""`vcfclick db trio` — family-based analysis.
 
-A PED file declares parents among already-ingested samples.
-Load it, then `db trio` resolves a proband's parents and reports
-candidate variants under each Mendelian inheritance model.
+A PED file (or `db ped` flags, see cli/db_ped.py) declares parents among
+already-ingested samples. Load it, then `db trio` resolves a proband's
+parents and reports candidate variants under each Mendelian inheritance
+model.
 
     vcfclick db ped  fam1 fam1.ped
     vcfclick db trio fam1 --proband CHILD
@@ -30,7 +31,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from pathlib import Path
 
 import click
 from click.core import ParameterSource
@@ -56,17 +56,6 @@ from cli.trio_output import _trio_json, trio_text
 
 
 @dataclass(frozen=True)
-class PedigreeOptions:
-    name: str
-    ped_path: str | None
-    ingest_id: str | None
-    proband: tuple[str, ...]
-    father: str | None
-    mother: str | None
-    proband_sex: str
-
-
-@dataclass(frozen=True)
 class TrioOptions:
     name: str
     proband: str | None
@@ -83,113 +72,6 @@ class TrioOptions:
     @property
     def gates(self) -> Gates:
         return Gates(self.min_gq, self.min_dp, self.max_af, self.min_ab, self.max_ab)
-
-
-@db.command(name="ped")
-@click.argument("name")
-@click.argument(
-    "ped_path", required=False, type=click.Path(exists=True, dir_okay=False)
-)
-@click.option(
-    "--ingest-id",
-    default=None,
-    help="Ingest_id the pedigree's samples belong to. Inferred when the "
-    "database has exactly one ingestion.",
-)
-@click.option(
-    "--proband",
-    multiple=True,
-    help="Without a PED file: an affected child's sample id. Repeat it for "
-    "siblings who share the same parents.",
-)
-@click.option(
-    "--father", default=None, help="Without a PED file: the father's sample id."
-)
-@click.option(
-    "--mother", default=None, help="Without a PED file: the mother's sample id."
-)
-@click.option(
-    "--proband-sex",
-    type=click.Choice(["male", "female", "unknown"]),
-    default="unknown",
-    show_default=True,
-    help="Without a PED file: the proband's sex (a single --proband only; "
-    "give each sibling's sex in a PED file).",
-)
-@command_options(PedigreeOptions)
-def db_ped(options: PedigreeOptions) -> None:
-    """Load family relationships into NAME, from a PED/FAM file or as a
-    family given by sample ids (--proband, repeatable for siblings,
-    with --father and --mother).
-
-    The individual ids must match sample ids already ingested under the
-    target ingest_id (v1 assumes a joint-called trio, so all members share
-    one ingest_id). Re-loading replaces the prior pedigree for that
-    ingest_id.
-    """
-    name, ped_path, ingest_id = options.name, options.ped_path, options.ingest_id
-    probands, father, mother = options.proband, options.father, options.mother
-    proband_sex = options.proband_sex
-    from storage import db_path
-
-    if not db_path(name).exists():
-        raise click.ClickException(f"db {name!r} does not exist.")
-
-    _set_db(name)
-
-    if ingest_id is None:
-        ingest_id = _sole_ingest_id(name)
-        if ingest_id is None:
-            raise click.ClickException(
-                "database has multiple ingestion; pass --ingest-id to say "
-                "which cohort the pedigree applies to."
-            )
-
-    from ingest.pedigree import load_pedigree
-
-    names = {"--proband": probands, "--father": father, "--mother": mother}
-    if ped_path is None:
-        missing = [k for k, v in names.items() if not v]
-        if missing:
-            raise click.ClickException(
-                "give a PED file, or all of --proband, --father and --mother "
-                f"(missing: {', '.join(missing)})"
-            )
-        if len(set(probands)) != len(probands):
-            raise click.ClickException("--proband lists the same sample twice")
-        if father in probands or mother in probands or father == mother:
-            raise click.ClickException(
-                "the probands, father and mother must be different samples"
-            )
-        if proband_sex != "unknown" and len(probands) > 1:
-            raise click.ClickException(
-                "--proband-sex applies to a single --proband; give each "
-                "sibling's sex in a PED file"
-            )
-    elif any(names.values()):
-        raise click.ClickException(
-            "give either a PED file or --proband/--father/--mother, not both"
-        )
-
-    import tempfile
-
-    tmp = None
-    try:
-        if ped_path is None:
-            sex = {"male": "1", "female": "2", "unknown": "0"}[proband_sex]
-            tmp = tempfile.NamedTemporaryFile("w", suffix=".ped", delete=False)
-            tmp.write(f"fam1\t{father}\t0\t0\t1\t1\nfam1\t{mother}\t0\t0\t2\t1\n")
-            for child in probands:
-                tmp.write(f"fam1\t{child}\t{father}\t{mother}\t{sex}\t2\n")
-            tmp.close()
-            ped_path = tmp.name
-        n = load_pedigree(ingest_id, ped_path)
-    except ValueError as e:
-        raise click.ClickException(str(e)) from e
-    finally:
-        if tmp is not None:
-            Path(tmp.name).unlink(missing_ok=True)
-    click.echo(f"loaded pedigree: {n} individuals under ingest_id={ingest_id}")
 
 
 @db.command(name="trio")
