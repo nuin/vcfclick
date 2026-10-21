@@ -1,0 +1,7 @@
+trio: proband=HG002 father=HG003 mother=HG004
+
+denovo candidates: 4
+  chr20:2202238 C>T  proband_gt=1 father_gt=0 mother_gt=0  AF=NA
+  chr20:5739093 A>G  proband_gt=1 father_gt=0 mother_gt=0  AF=NA
+  chr20:5864738 G>A  proband_gt=1 father_gt=0 mother_gt=0  AF=NA
+  chr20:5893991 G>C  proband_gt=1 father_gt=0 mother_gt=0  AF=NA

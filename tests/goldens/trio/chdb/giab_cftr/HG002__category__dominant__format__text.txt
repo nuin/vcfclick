@@ -1,0 +1,6 @@
+trio: proband=HG002 father=HG003 mother=HG004
+
+dominant candidates: 3
+  chr7:117480471 A>G  proband_gt=1 father_gt=0 mother_gt=1  AF=NA
+  chr7:117486347 G>A  proband_gt=1 father_gt=0 mother_gt=1  AF=NA
+  chr7:117489437 A>G  proband_gt=1 father_gt=1 mother_gt=0  AF=NA

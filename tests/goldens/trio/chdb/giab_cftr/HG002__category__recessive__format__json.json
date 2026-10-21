@@ -1,0 +1,61 @@
+{
+  "trio": {
+    "ingest_id": "g1",
+    "proband": "HG002",
+    "father": "HG003",
+    "mother": "HG004"
+  },
+  "keep_reference": true,
+  "gates": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_af": 0.01,
+    "min_ab": 0.25,
+    "max_ab": 0.75,
+    "gnomad_max_af": null
+  },
+  "annotations": {
+    "genes": true,
+    "clinvar": false,
+    "gnomad": true
+  },
+  "models": {
+    "recessive": {
+      "count": 2,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr7",
+          "pos": 117488888,
+          "ref": "A",
+          "alt": "C",
+          "proband_gt": 2,
+          "father_gt": 1,
+          "mother_gt": 1,
+          "af": null,
+          "genes": [
+            "CFTR"
+          ],
+          "gnomad_popmax": 0.8277699947357178,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr7",
+          "pos": 117507446,
+          "ref": "C",
+          "alt": "G",
+          "proband_gt": 2,
+          "father_gt": 1,
+          "mother_gt": 1,
+          "af": null,
+          "genes": [
+            "CFTR"
+          ],
+          "gnomad_popmax": 0.8848469853401184,
+          "clinvar": null
+        }
+      ]
+    }
+  }
+}

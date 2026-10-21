@@ -1,0 +1,7 @@
+trio: proband=HG002 father=HG003 mother=HG004
+
+comphet candidate genes: 1
+  CFTR
+    paternal chr7:117489437 A>G  AF=NA
+    maternal chr7:117480471 A>G  AF=NA
+    maternal chr7:117486347 G>A  AF=NA

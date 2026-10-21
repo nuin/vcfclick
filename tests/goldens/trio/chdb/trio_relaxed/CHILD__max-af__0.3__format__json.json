@@ -1,0 +1,134 @@
+{
+  "trio": {
+    "ingest_id": "fam1",
+    "proband": "CHILD",
+    "father": "FATHER",
+    "mother": "MOTHER"
+  },
+  "keep_reference": true,
+  "gates": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_af": 0.3,
+    "min_ab": 0.25,
+    "max_ab": 0.75,
+    "gnomad_max_af": null
+  },
+  "annotations": {
+    "genes": true,
+    "clinvar": false,
+    "gnomad": false
+  },
+  "models": {
+    "denovo": {
+      "count": 1,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr1",
+          "pos": 100,
+          "ref": "A",
+          "alt": "G",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 0,
+          "af": 0.01,
+          "genes": [
+            "GENEX"
+          ],
+          "gnomad_popmax": null,
+          "clinvar": null
+        }
+      ]
+    },
+    "recessive": {
+      "count": 1,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr1",
+          "pos": 200,
+          "ref": "C",
+          "alt": "T",
+          "proband_gt": 2,
+          "father_gt": 1,
+          "mother_gt": 1,
+          "af": 0.2,
+          "genes": [
+            "GENEX"
+          ],
+          "gnomad_popmax": null,
+          "clinvar": null
+        }
+      ]
+    },
+    "dominant": {
+      "count": 2,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr1",
+          "pos": 300,
+          "ref": "G",
+          "alt": "A",
+          "proband_gt": 1,
+          "father_gt": 1,
+          "mother_gt": 0,
+          "af": 0.05,
+          "genes": [
+            "GENEX"
+          ],
+          "gnomad_popmax": null,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr1",
+          "pos": 400,
+          "ref": "T",
+          "alt": "C",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 1,
+          "af": 0.05,
+          "genes": [
+            "GENEX"
+          ],
+          "gnomad_popmax": null,
+          "clinvar": null
+        }
+      ]
+    },
+    "comphet": {
+      "count": 1,
+      "blocked": false,
+      "needs_genes": false,
+      "truncated": false,
+      "genes": [
+        {
+          "gene": "GENEX",
+          "paternal": [
+            {
+              "chrom": "chr1",
+              "pos": 300,
+              "ref": "G",
+              "alt": "A",
+              "af": 0.05
+            }
+          ],
+          "maternal": [
+            {
+              "chrom": "chr1",
+              "pos": 400,
+              "ref": "T",
+              "alt": "C",
+              "af": 0.05
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

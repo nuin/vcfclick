@@ -1,0 +1,4 @@
+trio: proband=CHILD father=FATHER mother=MOTHER
+
+denovo candidates: 1
+  chr1:100 A>G  proband_gt=1 father_gt=0 mother_gt=0  AF=0.009999999776482582

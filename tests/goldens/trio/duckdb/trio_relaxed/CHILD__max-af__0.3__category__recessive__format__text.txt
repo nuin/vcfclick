@@ -1,0 +1,4 @@
+trio: proband=CHILD father=FATHER mother=MOTHER
+
+recessive candidates: 1
+  chr1:200 C>T  proband_gt=2 father_gt=1 mother_gt=1  AF=0.20000000298023224

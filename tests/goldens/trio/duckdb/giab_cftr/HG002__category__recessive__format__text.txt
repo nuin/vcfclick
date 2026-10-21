@@ -1,0 +1,5 @@
+trio: proband=HG002 father=HG003 mother=HG004
+
+recessive candidates: 2
+  chr7:117488888 A>C  proband_gt=2 father_gt=1 mother_gt=1  AF=NA
+  chr7:117507446 C>G  proband_gt=2 father_gt=1 mother_gt=1  AF=NA

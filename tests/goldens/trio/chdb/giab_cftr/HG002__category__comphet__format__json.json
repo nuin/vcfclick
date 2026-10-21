@@ -1,0 +1,60 @@
+{
+  "trio": {
+    "ingest_id": "g1",
+    "proband": "HG002",
+    "father": "HG003",
+    "mother": "HG004"
+  },
+  "keep_reference": true,
+  "gates": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_af": 0.01,
+    "min_ab": 0.25,
+    "max_ab": 0.75,
+    "gnomad_max_af": null
+  },
+  "annotations": {
+    "genes": true,
+    "clinvar": false,
+    "gnomad": true
+  },
+  "models": {
+    "comphet": {
+      "count": 1,
+      "blocked": false,
+      "needs_genes": false,
+      "truncated": false,
+      "genes": [
+        {
+          "gene": "CFTR",
+          "paternal": [
+            {
+              "chrom": "chr7",
+              "pos": 117489437,
+              "ref": "A",
+              "alt": "G",
+              "af": null
+            }
+          ],
+          "maternal": [
+            {
+              "chrom": "chr7",
+              "pos": 117480471,
+              "ref": "A",
+              "alt": "G",
+              "af": null
+            },
+            {
+              "chrom": "chr7",
+              "pos": 117486347,
+              "ref": "G",
+              "alt": "A",
+              "af": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+trio: proband=HG002 father=HG003 mother=HG004
+
+denovo candidates: 0

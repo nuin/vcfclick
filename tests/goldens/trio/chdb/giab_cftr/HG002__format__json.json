@@ -1,0 +1,155 @@
+{
+  "trio": {
+    "ingest_id": "g1",
+    "proband": "HG002",
+    "father": "HG003",
+    "mother": "HG004"
+  },
+  "keep_reference": true,
+  "gates": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_af": 0.01,
+    "min_ab": 0.25,
+    "max_ab": 0.75,
+    "gnomad_max_af": null
+  },
+  "annotations": {
+    "genes": true,
+    "clinvar": false,
+    "gnomad": true
+  },
+  "models": {
+    "denovo": {
+      "count": 0,
+      "blocked": false,
+      "truncated": false,
+      "candidates": []
+    },
+    "recessive": {
+      "count": 2,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr7",
+          "pos": 117488888,
+          "ref": "A",
+          "alt": "C",
+          "proband_gt": 2,
+          "father_gt": 1,
+          "mother_gt": 1,
+          "af": null,
+          "genes": [
+            "CFTR"
+          ],
+          "gnomad_popmax": 0.8277699947357178,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr7",
+          "pos": 117507446,
+          "ref": "C",
+          "alt": "G",
+          "proband_gt": 2,
+          "father_gt": 1,
+          "mother_gt": 1,
+          "af": null,
+          "genes": [
+            "CFTR"
+          ],
+          "gnomad_popmax": 0.8848469853401184,
+          "clinvar": null
+        }
+      ]
+    },
+    "dominant": {
+      "count": 3,
+      "blocked": false,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr7",
+          "pos": 117480471,
+          "ref": "A",
+          "alt": "G",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 1,
+          "af": null,
+          "genes": [
+            "CFTR"
+          ],
+          "gnomad_popmax": 0.009072200395166874,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr7",
+          "pos": 117486347,
+          "ref": "G",
+          "alt": "A",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 1,
+          "af": null,
+          "genes": [
+            "CFTR"
+          ],
+          "gnomad_popmax": 0.4614039957523346,
+          "clinvar": null
+        },
+        {
+          "chrom": "chr7",
+          "pos": 117489437,
+          "ref": "A",
+          "alt": "G",
+          "proband_gt": 1,
+          "father_gt": 1,
+          "mother_gt": 0,
+          "af": null,
+          "genes": [
+            "CFTR"
+          ],
+          "gnomad_popmax": 0.5474830269813538,
+          "clinvar": null
+        }
+      ]
+    },
+    "comphet": {
+      "count": 1,
+      "blocked": false,
+      "needs_genes": false,
+      "truncated": false,
+      "genes": [
+        {
+          "gene": "CFTR",
+          "paternal": [
+            {
+              "chrom": "chr7",
+              "pos": 117489437,
+              "ref": "A",
+              "alt": "G",
+              "af": null
+            }
+          ],
+          "maternal": [
+            {
+              "chrom": "chr7",
+              "pos": 117480471,
+              "ref": "A",
+              "alt": "G",
+              "af": null
+            },
+            {
+              "chrom": "chr7",
+              "pos": 117486347,
+              "ref": "G",
+              "alt": "A",
+              "af": null
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

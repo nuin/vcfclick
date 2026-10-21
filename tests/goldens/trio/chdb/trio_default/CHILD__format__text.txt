@@ -1,0 +1,5 @@
+trio: proband=CHILD father=FATHER mother=MOTHER
+  denovo          1
+  recessive       0
+  dominant        0
+  comphet         0  genes
