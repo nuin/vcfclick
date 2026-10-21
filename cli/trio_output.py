@@ -376,6 +376,9 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
             "proband": trio.proband,
             "father": trio.father,
             "mother": trio.mother,
+            "family_id": trio.family_id,
+            "kind": trio.kind,
+            "siblings": [{"sample": s, "kind": k} for s, k in analysis.siblings],
         },
         "keep_reference": analysis.has_reference,
         "gates": {

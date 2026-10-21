@@ -71,6 +71,7 @@ SCRIPT = textwrap.dedent(
     out["families_missing_text"] = run("db", "families", "t")
     out["families_missing_json"] = run("db", "families", "t", "--format", "json")
     out["trio_missing"] = run("db", "trio", "t", "--proband", "CHILD")
+    out["trio_missing_all"] = run("db", "trio", "t")
     for key, call in (
         ("missing_rows", lambda: pedigree_rows(sess, "fam1")),
         ("missing_graph", lambda: load_pedigree_graph(sess, "fam1")),
@@ -129,5 +130,6 @@ def test_loader_reads_collapses_duplicates_and_reports_no_pedigree(
         assert out[key]["rc"] == 0, key
         assert json.loads(out[key]["out"]) == empty
         assert "no pedigree loaded" in out[key]["err"]
-    assert out["trio_missing"]["rc"] != 0
-    assert "no pedigree loaded" in out["trio_missing"]["err"]
+    for key in ("trio_missing", "trio_missing_all"):
+        assert out[key]["rc"] != 0, key
+        assert "no pedigree loaded" in out[key]["err"], key

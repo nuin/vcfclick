@@ -46,19 +46,21 @@ from cli.trio_analysis import (
 )
 from cli.trio_analysis import _comphet_genes as _comphet_genes
 from cli.trio_analysis import (
-    _children,
     _has_reference_rows,
     _resolve_parents,
     _sole_ingest_id,
 )
 from cli.trio_analysis import trio_sql as trio_sql
 from cli.trio_output import _trio_json, trio_text
+from cli.trio_select import make_pick, select_trios
 
 
 @dataclass(frozen=True)
 class TrioOptions:
     name: str
     proband: str | None
+    family: str | None
+    all_trios: bool
     category: str
     min_gq: int
     min_dp: int
@@ -79,8 +81,23 @@ class TrioOptions:
 @click.option(
     "--proband",
     default=None,
-    help="Sample id of the affected child. Omitted: every child in the "
-    "pedigree with both parents declared, one report each.",
+    help="Sample id of the affected child. Omitted: every proband in the "
+    "pedigree, one report each. A proband is a child with both parents "
+    "declared who is not marked unaffected and who either has no children "
+    "of their own or is affected (`db families` lists them).",
+)
+@click.option(
+    "--family",
+    default=None,
+    help="Analyse every proband of this family (see `db families`). Not "
+    "with --proband.",
+)
+@click.option(
+    "--all-trios",
+    is_flag=True,
+    help="Without --proband: analyse every child with both parents "
+    "declared, including children marked unaffected and parents who have "
+    "children of their own (the rule before probands were defined).",
 )
 @click.option(
     "--category",
@@ -119,7 +136,7 @@ class TrioOptions:
     show_default=True,
     help="json: every model's count and candidates (with gene, gnomAD and "
     "ClinVar when loaded) in one document; without --proband, a `trios` "
-    "list with one document per child.",
+    "list with one document per proband, and the `families` they are in.",
 )
 @click.option(
     "--limit",
@@ -132,11 +149,18 @@ class TrioOptions:
 def db_trio(options: TrioOptions) -> None:
     """Report candidate variants under Mendelian inheritance models for
     a trio, with genotype quality gates and an AF rarity filter. Without
-    --proband, every child in the pedigree is analysed in turn."""
+    --proband, every proband in the pedigree is analysed in turn (--family
+    limits that to one family, --all-trios widens it to every child)."""
+    from cli.pedigree_load import load_pedigree_graph
     from storage import db_path, get_session
 
     if not db_path(options.name).exists():
         raise click.ClickException(f"db {options.name!r} does not exist.")
+    if options.proband is not None and (options.family or options.all_trios):
+        raise click.UsageError(
+            "--family and --all-trios choose which children to analyse; "
+            "they cannot be combined with --proband."
+        )
     _set_db(options.name)
     sess = get_session(options.name)
 
@@ -148,15 +172,20 @@ def db_trio(options: TrioOptions) -> None:
             "(see `vcfclick merge`)."
         )
     if options.proband is not None:
+        # The proband's own row decides the parents, as it always has; the
+        # graph (read tolerantly) only adds the family and the siblings.
         father, mother = _resolve_parents(sess, ingest_id, options.proband)
-        families = [(options.proband, father, mother)]
+        graph = load_pedigree_graph(sess, ingest_id)
+        picks = [make_pick(graph, options.proband, father, mother)]
+        notes: list[str] = []
     else:
-        families = _children(sess, ingest_id)
-        if not families:
-            raise click.ClickException(
-                "no child with both parents in the pedigree. Load one with "
-                "`vcfclick db ped`, or name the proband with --proband."
-            )
+        graph = load_pedigree_graph(sess, ingest_id)
+        selection = select_trios(
+            graph, family=options.family, all_trios=options.all_trios
+        )
+        picks, notes = selection.picks, selection.notes
+    for note in notes:
+        click.echo(f"note: {note}", err=True)
     has_ref = _has_reference_rows(sess)
     # Is INFO/AF this cohort's own frequency? Then --max-af would remove
     # every private candidate: say so, and skip the gate unless --max-af was
@@ -174,19 +203,29 @@ def db_trio(options: TrioOptions) -> None:
     analyses = [
         TrioAnalysis(
             session=sess,
-            trio=Trio(ingest_id, child, father, mother),
+            trio=Trio(ingest_id, p.child, p.father, p.mother, p.family_id),
             gates=gates,
             has_reference=has_ref,
             gnomad_max_af=options.gnomad_max_af,
+            siblings=p.siblings,
         )
-        for child, father, mother in families
+        for p in picks
     ]
     if options.out_format == "json":
         docs = [_trio_json(a, options.category, options.limit) for a in analyses]
-        result = docs[0] if options.proband is not None else {"trios": docs}
+        if options.proband is not None:
+            result = docs[0]
+        else:
+            result = {
+                "trios": docs,
+                "families": list(dict.fromkeys(p.family_id for p in picks)),
+            }
         click.echo(json.dumps(result, indent=2))
         return
-    for i, analysis in enumerate(analyses):
+    several = len({p.family_id for p in picks}) > 1
+    for i, (pick, analysis) in enumerate(zip(picks, analyses, strict=True)):
         if i:
             click.echo()
+        if several:
+            click.echo(f"family: {pick.family_id}")
         trio_text(analysis, options.category)

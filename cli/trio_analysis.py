@@ -81,6 +81,9 @@ class Trio(NamedTuple):
     proband: str
     father: str | None
     mother: str | None
+    # The proband's family in the pedigree (None when not looked up). It
+    # only labels the report; no query reads it.
+    family_id: str | None = None
 
     @property
     def parents(self) -> tuple[str, ...]:
@@ -369,6 +372,9 @@ class TrioAnalysis:
     gates: Gates
     has_reference: bool
     gnomad_max_af: float | None
+    # The proband's siblings as (sample, kind) pairs, kind being `full`,
+    # `half_paternal` or `half_maternal`. Reported, never queried.
+    siblings: tuple[tuple[str, str], ...] = ()
 
     def _gnomad(self, rows: list) -> list:
         if self.gnomad_max_af is None:

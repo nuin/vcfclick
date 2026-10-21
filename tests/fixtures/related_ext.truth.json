@@ -160,7 +160,7 @@
   "trios_not_probands": {
     "C2": "explicitly unaffected",
     "UF": "explicitly unaffected",
-    "F": "has children and is not affected",
+    "F": "explicitly unaffected, and has children",
     "M": "has children and is not affected"
   },
   "siblings": {

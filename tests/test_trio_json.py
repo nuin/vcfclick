@@ -102,12 +102,13 @@ def test_ped_needs_a_file_or_all_three_names(vcfclick_home):
 def test_json_reports_every_model(vcfclick_home):
     _setup(vcfclick_home)
     res = _trio(vcfclick_home)
-    assert res["trio"] == {
-        "ingest_id": "i1",
-        "proband": "C1",
-        "father": "F",
-        "mother": "M",
-    }
+    # The four original keys, unchanged. Later steps add keys to this block
+    # (family_id, kind and siblings now), so this is a subset check; the full
+    # document is pinned by tests/test_pedigree_multifamily.py.
+    old = {"ingest_id": "i1", "proband": "C1", "father": "F", "mother": "M"}
+    assert {k: res["trio"][k] for k in old} == old
+    assert list(res["trio"])[: len(old)] == list(old)
+    assert res["trio"]["family_id"] == "fam1" and res["trio"]["kind"] == "trio"
     assert res["keep_reference"] is True
     assert set(res["models"]) == {"denovo", "recessive", "dominant", "comphet"}
 

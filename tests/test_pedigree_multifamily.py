@@ -273,6 +273,25 @@ def test_zero_declares_a_duo(ext_home, backend, mutable):
     )  # fmt: skip
     assert "cannot both be 0" in r.stderr
 
+    # A duo is listed (with an info), is not a proband, and `db trio` skips
+    # it with a note; naming it is still the old error until duos are analysed.
+    doc = families_json(ext_home, backend)
+    fam_a = next(f for f in doc["families"] if f["family_id"] == "famA")
+    assert [(t["child"], t["kind"], t["is_proband"]) for t in fam_a["trios"]] == [
+        ("H1", "duo", False)
+    ]
+    assert fam_a["probands"] == []
+    assert ("info", "duo", "famA") in {
+        (q["level"], q["code"], q["family_id"]) for q in doc["problems"]
+    }
+    r = db(ext_home, backend, "trio", "t", "--category", "denovo", "--format", "json")
+    assert "skipping H1: one declared parent (a duo)" in r.stderr
+    assert [t["trio"]["proband"] for t in json.loads(r.stdout)["trios"]] == [
+        "K1", "K2", "XB",
+    ]  # fmt: skip
+    r = db(ext_home, backend, "trio", "t", "--proband", "H1", ok=False)
+    assert "missing a parent" in r.stderr
+
 
 # ───────────────────────────────── db families ─────────────────────────────────
 
@@ -354,3 +373,163 @@ def test_families_reads_a_pedigree_that_would_not_load(ext_home, backend, mutabl
         ).stdout
     )  # fmt: skip
     assert trio["trio"]["father"] == "F" and trio["models"]["denovo"]["count"] == 1
+
+
+# ─────────────────────────────────── db trio ───────────────────────────────────
+
+GOLDEN_TRIO = Path(__file__).parent / "goldens" / "trio_full" / "related_ext_C1.json"
+PROBANDS = [p for fam in ("famA", "famB") for p in TRUTH["probands"][fam]]
+
+
+def trio_json(home, backend, *args) -> dict:
+    r = db(home, backend, "trio", "t", "--format", "json", *args)
+    return json.loads(r.stdout)
+
+
+def planted_counts(model: str, *, include_non_probands=False) -> dict[str, int]:
+    """Candidates per sample under `model`, from the fixture's truth."""
+    out: dict[str, int] = {}
+    sites = [s["candidate_for"] for s in TRUTH["planted"].values()]
+    if include_non_probands:
+        sites += list(TRUTH["candidates_for_non_probands"].values())
+    for candidate_for in sites:
+        for sample in candidate_for.get(model, []):
+            out[sample] = out.get(sample, 0) + 1
+    return out
+
+
+def test_trio_without_a_proband_runs_the_probands_of_every_family(ext_home, backend):
+    doc = trio_json(ext_home, backend)
+    assert doc["families"] == ["famA", "famB"]
+    got = [t["trio"] for t in doc["trios"]]
+    assert [t["proband"] for t in got] == PROBANDS
+    assert [t["family_id"] for t in got] == ["famA"] * 4 + ["famB"] * 3
+    assert all(t["kind"] == "trio" for t in got)
+    for t in got:
+        want = TRUTH["siblings"].get(t["proband"])
+        if want is not None:
+            assert {s["sample"]: s["kind"] for s in t["siblings"]} == want
+
+    # the planted sites land on exactly the probands the truth names
+    for model in ("denovo", "dominant", "recessive"):
+        want = planted_counts(model)
+        counts = {
+            d["trio"]["proband"]: d["models"][model]["count"] for d in doc["trios"]
+        }
+        assert counts == {p: want.get(p, 0) for p in PROBANDS}, model
+    # F and M are trios too, but not probands: no report for them
+    assert not {"F", "M", "C2", "UF"} & {t["proband"] for t in got}
+
+
+def test_all_trios_also_runs_unaffected_children_and_parents_with_children(
+    ext_home, backend
+):
+    doc = trio_json(ext_home, backend, "--all-trios", "--category", "dominant")
+    got = [t["trio"]["proband"] for t in doc["trios"]]
+    assert got == ["C1", "C2", "C2T", "F", "H1", "H2", "M", "UF", "K1", "K2", "XB"]
+    counts = {
+        d["trio"]["proband"]: d["models"]["dominant"]["count"] for d in doc["trios"]
+    }
+    want = planted_counts("dominant", include_non_probands=True)
+    assert counts == {p: want.get(p, 0) for p in got}
+    assert counts["F"] == 1  # PGF's variant, passed to F and on to H1
+
+
+def test_trio_family_and_its_errors(ext_home, backend):
+    doc = trio_json(ext_home, backend, "--family", "famB", "--category", "denovo")
+    assert doc["families"] == ["famB"]
+    assert [t["trio"]["proband"] for t in doc["trios"]] == ["K1", "K2", "XB"]
+    r = db(ext_home, backend, "trio", "t", "--family", "nope", ok=False)
+    assert "famA, famB" in r.stderr
+    for extra in ("--family", "famA"), ("--all-trios",):
+        r = db(ext_home, backend, "trio", "t", "--proband", "C1", *extra, ok=False)
+        assert "cannot be combined with --proband" in r.stderr
+
+
+def test_trio_text_labels_families_and_says_what_it_left_out(ext_home, backend):
+    r = db(ext_home, backend, "trio", "t", "--category", "denovo")
+    lines = r.stdout.splitlines()
+    assert lines.count("family: famA") == 4 and lines.count("family: famB") == 3
+    assert lines.index("family: famA") < lines.index(
+        "trio: proband=C1 father=F mother=M"
+    )
+    assert "trio: proband=K1 father=FB mother=MB" in lines
+    assert "note: not analysed as probands: " in r.stderr
+    assert "C2, F, UF (unaffected)" in r.stderr  # F is marked unaffected in the PED
+    assert "M (has children and is not affected)" in r.stderr
+    # one family: no label line
+    one = db(ext_home, backend, "trio", "t", "--family", "famB", "--category", "denovo")
+    assert "family:" not in one.stdout
+
+
+def _normalised(doc):
+    """Floats in `af` rounded to 6 places: Float32 on chDB, double on DuckDB
+    (the one known backend difference, see tests/test_trio_goldens.py)."""
+    if isinstance(doc, dict):
+        return {
+            k: round(v, 6) if k == "af" and isinstance(v, float) else _normalised(v)
+            for k, v in doc.items()
+        }
+    if isinstance(doc, list):
+        return [_normalised(v) for v in doc]
+    return doc
+
+
+def test_the_whole_trio_document_is_pinned(ext_home, backend):
+    """The full document of one proband, new keys included: the golden of
+    the OLD keys (tests/test_trio_goldens.py) strips them, this one does not."""
+    doc = _normalised(trio_json(ext_home, backend, "--proband", "C1"))
+    if os.environ.get("VCFCLICK_UPDATE_GOLDENS") == "1":
+        GOLDEN_TRIO.parent.mkdir(parents=True, exist_ok=True)
+        GOLDEN_TRIO.write_text(json.dumps(doc, indent=2) + "\n")
+    assert doc == json.loads(GOLDEN_TRIO.read_text())
+    assert list(doc["trio"]) == [
+        "ingest_id", "proband", "father", "mother", "family_id", "kind", "siblings",
+    ]  # fmt: skip
+
+
+def test_probands_follow_the_phenotypes_in_the_ped(
+    ext_home, backend, mutable, tmp_path
+):
+    lines = EXT_PED.read_text().splitlines()
+
+    def with_phenotypes(**by_sample: str) -> str:
+        out = []
+        for line in lines:
+            f = line.split("\t")
+            if f[1] in by_sample:
+                f[5] = by_sample[f[1]]
+            out.append("\t".join(f))
+        return "\n".join(out) + "\n"
+
+    # every child unaffected: no proband, and the message says what to do
+    kids = ("C1", "C2", "C2T", "H1", "H2", "K1", "K2", "XB", "UF", "F", "M")
+    db(
+        ext_home,
+        backend,
+        "ped",
+        "t",
+        str(ped_file(tmp_path, with_phenotypes(**dict.fromkeys(kids, "1")))),
+    )
+    r = db(ext_home, backend, "trio", "t", ok=False)
+    assert "no proband in the pedigree" in r.stderr and "--all-trios" in r.stderr
+    r = db(ext_home, backend, "trio", "t", "--family", "famB", ok=False)
+    assert "no proband in family 'famB'" in r.stderr
+    doc = trio_json(ext_home, backend, "--all-trios", "--category", "denovo")
+    assert len(doc["trios"]) == len(kids)
+
+    # F affected: a parent with children is a proband once it is affected
+    db(
+        ext_home,
+        backend,
+        "ped",
+        "t",
+        str(ped_file(tmp_path, with_phenotypes(F="2"), "f.ped")),
+    )
+    fam_a = next(
+        f
+        for f in families_json(ext_home, backend)["families"]
+        if f["family_id"] == "famA"
+    )
+    assert "F" in fam_a["probands"]
+    assert next(t for t in fam_a["trios"] if t["child"] == "F")["is_proband"] is True
