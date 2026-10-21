@@ -214,6 +214,14 @@ class GeneIndex:
         return hits
 
 
+# The point lookups below cast the position parameter to the column's type:
+# DuckDB binds a Python int as BIGINT and then casts the UINTEGER `pos` column
+# to match, which stops it skipping row groups by their min/max. Cast the
+# parameter instead and a lookup reads one row group, not the whole table (4.5
+# ms against 0.3 ms on 5 million rows). TRY_CAST keeps "no such position"
+# (negative, or past 2^32) a miss, not an error.
+
+
 def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | None:
     """Look up ClinVar significance for a specific allele.
 
@@ -226,7 +234,7 @@ def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | 
         SELECT chrom, pos, ref, alt, clin_sig, review_status,
                clinvar_id, condition
         FROM clinvar_variants
-        WHERE chrom = ? AND pos = ? AND ref = ? AND alt = ?
+        WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?
         """,
         [chrom, pos, ref, alt],
     ).fetchone()
@@ -243,7 +251,7 @@ def gnomad_af(chrom: str, pos: int, ref: str, alt: str) -> GnomadAF | None:
     conn = get_connection()
     row = conn.execute(
         "SELECT chrom, pos, ref, alt, af, af_grpmax FROM gnomad_af "
-        "WHERE chrom = ? AND pos = ? AND ref = ? AND alt = ?",
+        "WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?",
         [chrom, pos, ref, alt],
     ).fetchone()
     return GnomadAF(*row) if row else None

@@ -41,7 +41,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   the per-candidate lookups cost 6 s (JSON) to 40 s (text listing) at 5,000
   sites, minutes at WGS size, whether or not gnomAD was loaded. The same
   trio now takes about 1 s and 0.4 s. Which candidates are kept is
-  unchanged.
+  unchanged. `annotations.gnomad_af` and `clinvar_lookup` also pass the
+  position as the column's own type, so DuckDB skips row groups by position:
+  a lookup is about 15 times faster on a table of millions of rows.
 - The `--max-af` gate keeps a site whose AF equals the threshold on both
   backends. `variants.info_AF` is a 32-bit float on chDB, so a site at
   exactly `--max-af 0.001` was dropped there but kept on DuckDB; the gate

@@ -118,3 +118,17 @@ def test_gnomad_af_many_leaves_a_given_connection_open(tmp_path, monkeypatch):
         assert got[("chr1", 10, "A", "C")].popmax == 0.2
     assert conn.execute("SELECT count(*) FROM gnomad_af").fetchone()[0] == 1
     conn.close()
+
+
+def test_point_lookups_miss_on_an_impossible_position(tmp_path, monkeypatch):
+    """`gnomad_af` and `clinvar_lookup` cast the position to the column's
+    UINTEGER so DuckDB can skip row groups. A position that is no UINTEGER
+    (the MCP tools take any int) is a miss, not a conversion error."""
+    from annotations import clinvar_lookup, gnomad_af
+
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    _seed_gnomad([("chr1", 10, "A", "C", 0.1, 0.2)])
+    assert gnomad_af("chr1", 10, "A", "C").popmax == 0.2
+    for pos in (-1, 2**32, 2**40):
+        assert gnomad_af("chr1", pos, "A", "C") is None
+        assert clinvar_lookup("chr1", pos, "A", "C") is None
