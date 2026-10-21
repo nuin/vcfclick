@@ -104,6 +104,27 @@ def test_grandparents_and_half_siblings_come_from_parents():
     assert half["M2"]["sex"] == "female"
 
 
+def test_the_documented_example_builds_what_the_docs_say():
+    """docs/TRIO.md: grandparents, an unaffected sibling and an affected half
+    sibling in a named family."""
+    rows = rows_by_id(
+        probands=("C1",),
+        father="F",
+        mother="M",
+        family="famA",
+        parents=("F=PGF,PGM", "C2=F,M", "H1=F,M2"),
+        unaffected=("C2",),
+        affected=("H1",),
+        sex=("C1=male",),
+    )
+    assert set(rows) == {"C1", "C2", "H1", "F", "M", "M2", "PGF", "PGM"}
+    assert {r["family_id"] for r in rows.values()} == {"famA"}
+    assert (rows["C1"]["sex"], rows["C1"]["affected"]) == ("male", "affected")
+    assert rows["C2"]["affected"] == "unaffected" and rows["C2"]["father_id"] == "F"
+    assert rows["H1"]["affected"] == "affected" and rows["H1"]["mother_id"] == "M2"
+    assert rows["F"]["father_id"] == "PGF" and rows["F"]["affected"] is None
+
+
 def test_a_parent_may_be_zero_in_parents_too():
     rows = rows_by_id(**trio(parents=("D=0,M",)))
     assert rows["D"]["father_id"] == "0" and rows["D"]["mother_id"] == "M"

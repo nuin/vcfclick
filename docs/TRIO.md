@@ -233,10 +233,11 @@ candidates have to be read across the reports.
 # a trio, or siblings who share the same parents
 vcfclick db ped fam1 --proband SIB1 --proband SIB2 --father DAD --mother MUM
 
-# grandparents and a half sibling, in a named family
-vcfclick db ped fam1 --family famA --proband C1 --proband H1 \
-    --father F --mother M --parents F=PGF,PGM --parents H1=F,M2 \
-    --unaffected C2 --sex C1=male
+# grandparents, an unaffected sibling and an affected half sibling, in a
+# named family
+vcfclick db ped fam1 --family famA --proband C1 --father F --mother M \
+    --parents F=PGF,PGM --parents C2=F,M --parents H1=F,M2 \
+    --unaffected C2 --affected H1 --sex C1=male
 ```
 
 | Flag | Meaning |
