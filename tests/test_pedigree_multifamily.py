@@ -2,19 +2,23 @@
 
 Fixture: tests/fixtures/related_ext.* (18 samples, famA with three
 generations and famB; see make_related_ext.py). The store is ingested once
-per backend for the module; a test that changes the pedigree starts by
-reloading the base PED, which is one cheap command.
+per backend for the module. A test that changes the pedigree asks for the
+`mutable` fixture, which reloads the base PED afterwards (one cheap
+command), so every other test can read the base pedigree.
 
-`db ped` is the subject of this part: the flag surface, `--merge` (a partial
-delete of the pedigree table, which chDB runs as a mutation on a
+`db ped` is the subject of the first half: the flag surface, `--merge` (a
+partial delete of the pedigree table, which chDB runs as a mutation on a
 ReplacingMergeTree), and the rule that every check happens before anything
-is deleted.
+is deleted. The second half reads the families back (`db families`,
+`db trio`).
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
+from pathlib import Path
 
 import pytest
 
@@ -54,9 +58,11 @@ def db(home, backend, *args, ok=True):
     return run_cli(home, backend, "db", *args, ok=ok)
 
 
-def reset(home, backend):
-    """Back to the base pedigree: the whole PED replaces whatever is stored."""
-    db(home, backend, "ped", "t", str(EXT_PED))
+@pytest.fixture
+def mutable(ext_home, backend):
+    """For a test that changes the pedigree: put the base one back after."""
+    yield
+    db(ext_home, backend, "ped", "t", str(EXT_PED))
 
 
 def stored(home, backend) -> dict[str, list]:
@@ -104,8 +110,7 @@ def test_the_original_related_fixture_was_not_touched():
 # ─────────────────────────── --merge replaces whole families ───────────────────────────
 
 
-def test_merge_replaces_only_the_family_it_names(ext_home, backend, tmp_path):
-    reset(ext_home, backend)
+def test_merge_replaces_only_the_family_it_names(ext_home, backend, mutable, tmp_path):
     assert by_family(stored(ext_home, backend)) == {"famA": 13, "famB": 5}
 
     # flags: famB shrinks to K1 and its parents; famA is untouched
@@ -134,11 +139,12 @@ def test_merge_replaces_only_the_family_it_names(ext_home, backend, tmp_path):
     assert by_family(stored(ext_home, backend)) == {"famB": 5}
 
 
-def test_a_flag_call_that_would_delete_others_fails_and_names_merge(ext_home, backend):
+def test_a_flag_call_that_would_delete_others_fails_and_names_merge(
+    ext_home, backend, mutable
+):
     """The exact argument shape the desktop apps send: no --family, no
     --merge. They show nothing from a call that succeeds, so a replace that
     would drop a family has to fail, with a message they can show."""
-    reset(ext_home, backend)
     r = db(
         ext_home, backend, "ped", "t",
         "--proband", "C1", "--father", "F", "--mother", "M", ok=False,
@@ -165,7 +171,6 @@ CROSS_PED = "famA\tF\t0\t0\t1\t0\nfamB\tMB\t0\t0\t2\t0\nfamB\tK1\tF\tMB\t1\t2\n"
 
 
 def test_nothing_is_deleted_when_a_check_fails(ext_home, backend, tmp_path):
-    reset(ext_home, backend)
     before = stored(ext_home, backend)
     assert len(before) == 18
 
@@ -203,7 +208,9 @@ def test_nothing_is_deleted_when_a_check_fails(ext_home, backend, tmp_path):
     assert stored(ext_home, backend) == before
 
 
-def test_a_father_recorded_as_female_loads_with_a_warning(ext_home, backend, tmp_path):
+def test_a_father_recorded_as_female_loads_with_a_warning(
+    ext_home, backend, mutable, tmp_path
+):
     lines = EXT_PED.read_text().splitlines()
     swapped = "\n".join(
         line.replace("famA\tF\tPGF\tPGM\t1", "famA\tF\tPGF\tPGM\t2") for line in lines
@@ -218,7 +225,7 @@ def test_a_father_recorded_as_female_loads_with_a_warning(ext_home, backend, tmp
 
 
 def test_flags_declare_a_pedigree_with_unknown_parents_and_explicit_status(
-    ext_home, backend, tmp_path
+    ext_home, backend, mutable, tmp_path
 ):
     # start from one stored person, so a flag call is allowed to replace it
     one = ped_file(tmp_path, "famA\tPGF\t0\t0\t1\t0\n")
@@ -252,8 +259,7 @@ def test_flags_declare_a_pedigree_with_unknown_parents_and_explicit_status(
     assert stored(ext_home, backend)["C2"][4] == "affected"
 
 
-def test_zero_declares_a_duo(ext_home, backend):
-    reset(ext_home, backend)
+def test_zero_declares_a_duo(ext_home, backend, mutable):
     r = db(
         ext_home, backend, "ped", "t", "--family", "famA", "--merge",
         "--proband", "H1", "--father", "0", "--mother", "M2",
@@ -266,3 +272,85 @@ def test_zero_declares_a_duo(ext_home, backend):
         "--mother", "0", ok=False,
     )  # fmt: skip
     assert "cannot both be 0" in r.stderr
+
+
+# ───────────────────────────────── db families ─────────────────────────────────
+
+GOLDEN_FAMILIES = Path(__file__).parent / "goldens" / "families" / "related_ext.json"
+
+
+def families_json(home, backend) -> dict:
+    return json.loads(db(home, backend, "families", "t", "--format", "json").stdout)
+
+
+def test_families_lists_the_two_families_as_the_fixture_says(ext_home, backend):
+    doc = families_json(ext_home, backend)
+    assert doc["ingest_id"] == "i1" and doc["problems"] == []
+    fams = {f["family_id"]: f for f in doc["families"]}
+    assert list(fams) == ["famA", "famB"]
+    for fam, probands in TRUTH["probands"].items():
+        assert fams[fam]["probands"] == probands
+    assert {m["sample_id"] for m in fams["famB"]["members"]} == set(
+        TRUTH["families"]["famB"]
+    )
+
+    trios = {t["child"]: t for f in fams.values() for t in f["trios"]}
+    # F and M are trios with children, C2 and UF are unaffected: none is a proband
+    assert {c for c, t in trios.items() if not t["is_proband"]} == set(
+        TRUTH["trios_not_probands"]
+    )
+    assert all(t["kind"] == "trio" for t in trios.values())
+    for child, sibs in TRUTH["siblings"].items():
+        got = {s["sample"]: s["kind"] for s in trios[child]["siblings"]}
+        assert got == sibs, child
+    assert trios["C1"]["father"] == "F" and trios["C1"]["mother"] == "M"
+
+    members = {m["sample_id"]: m for f in fams.values() for m in f["members"]}
+    assert {s: m["generation"] for s, m in members.items()} == TRUTH["generation"]
+    assert members["F"]["affected"] == "unaffected" and members["F"]["sex"] == "male"
+    assert members["PGF"]["affected"] is None and members["PGF"]["father"] is None
+    assert all(m["genotyped"] for m in members.values())
+
+
+def test_families_json_is_pinned_and_the_same_on_both_backends(ext_home, backend):
+    text = json.dumps(families_json(ext_home, backend), indent=2) + "\n"
+    if os.environ.get("VCFCLICK_UPDATE_GOLDENS") == "1":
+        GOLDEN_FAMILIES.parent.mkdir(parents=True, exist_ok=True)
+        GOLDEN_FAMILIES.write_text(text)
+    assert text == GOLDEN_FAMILIES.read_text()
+
+
+def test_families_text_reads_like_a_pedigree(ext_home, backend):
+    out = db(ext_home, backend, "families", "t").stdout
+    assert out.startswith("ingest_id i1: 2 families, 18 individuals")
+    assert "family famA: 13 individuals" in out and "family famB: 5 individuals" in out
+    assert "  probands: C1, C2T, H1, H2" in out
+    assert "trio C1: father F, mother M [proband]; siblings C2 (full)" in out
+    assert "[not a proband: unaffected]" in out
+    assert "problems:" not in out
+
+
+def test_families_reads_a_pedigree_that_would_not_load(ext_home, backend, mutable):
+    """A cycle and a cross-family parent that got into the table (an older
+    vcfclick, a script) are reported, not fatal: `db families` exits 0 and
+    `db trio --proband` still resolves its trio."""
+    db(
+        ext_home, backend, "query", "t",
+        "INSERT INTO pedigree (ingest_id, sample_id, family_id, father_id, "
+        "mother_id, sex, affected) VALUES "
+        "('i1', 'PGF', 'famA', 'F', '0', 'male', NULL), "
+        "('i1', 'K2', 'famB', 'F', 'MB', 'female', NULL)",
+    )  # fmt: skip
+    doc = families_json(ext_home, backend)
+    problems = {(q["code"], q["family_id"]) for q in doc["problems"]}
+    assert ("cycle", "famA") in problems and ("cross_family_parent", "famB") in problems
+    members = {m["sample_id"]: m for f in doc["families"] for m in f["members"]}
+    assert members["PGF"]["generation"] is None and members["F"]["generation"] is None
+    assert members["FB"]["generation"] == 0  # the rest still has one
+    trio = json.loads(
+        db(
+            ext_home, backend, "trio", "t", "--proband", "C1",
+            "--category", "denovo", "--format", "json",
+        ).stdout
+    )  # fmt: skip
+    assert trio["trio"]["father"] == "F" and trio["models"]["denovo"]["count"] == 1

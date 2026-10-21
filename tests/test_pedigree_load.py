@@ -56,7 +56,21 @@ SCRIPT = textwrap.dedent(
         out["empty_required"] = None
     except NoPedigree as e:
         out["empty_required"] = e.message
+
+    # The commands say so too, in one sentence, and `db families` exits 0.
+    from click.testing import CliRunner
+    from cli.main import cli
+
+    def run(*args):
+        r = CliRunner().invoke(cli, list(args))
+        return {"rc": r.exit_code, "out": r.stdout, "err": r.stderr}
+
+    out["families_empty_text"] = run("db", "families", "t")
+    out["families_empty_json"] = run("db", "families", "t", "--format", "json")
     sess.query("DROP TABLE pedigree")
+    out["families_missing_text"] = run("db", "families", "t")
+    out["families_missing_json"] = run("db", "families", "t", "--format", "json")
+    out["trio_missing"] = run("db", "trio", "t", "--proband", "CHILD")
     for key, call in (
         ("missing_rows", lambda: pedigree_rows(sess, "fam1")),
         ("missing_graph", lambda: load_pedigree_graph(sess, "fam1")),
@@ -107,3 +121,13 @@ def test_loader_reads_collapses_duplicates_and_reports_no_pedigree(
     for key in ("empty_required", "missing_rows", "missing_graph", "missing_resolve"):
         assert out[key] == out["constant"], key
     assert "no pedigree loaded" in out["constant"]
+
+    for key in ("families_empty_text", "families_missing_text"):
+        assert out[key]["rc"] == 0 and "no pedigree loaded" in out[key]["out"], key
+    empty = {"ingest_id": "fam1", "families": [], "problems": []}
+    for key in ("families_empty_json", "families_missing_json"):
+        assert out[key]["rc"] == 0, key
+        assert json.loads(out[key]["out"]) == empty
+        assert "no pedigree loaded" in out[key]["err"]
+    assert out["trio_missing"]["rc"] != 0
+    assert "no pedigree loaded" in out["trio_missing"]["err"]
