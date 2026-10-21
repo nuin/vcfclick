@@ -147,6 +147,19 @@ def test_briefing_includes_non_obvious_invariants():
     assert "populations" in text and "super_population" in text
 
 
+def test_briefing_states_how_haploid_calls_are_stored():
+    """A model writing SQL for chrX must know there is no hemizygous code:
+    a haploid ALT is stored as gt=2 (pinned in tests/test_haploid_encoding.py),
+    and `gt` is never negative."""
+    from vcfclick_mcp.server import SCHEMA_DESCRIPTION
+
+    assert "A HAPLOID call" in SCHEMA_DESCRIPTION
+    assert "stored as gt=2 with phased=1" in SCHEMA_DESCRIPTION
+    assert "never negative" in SCHEMA_DESCRIPTION
+    assert "no hemizygous code" in SCHEMA_DESCRIPTION
+    assert "gt=-1" not in SCHEMA_DESCRIPTION
+
+
 # ─────────────────────── DuckDB-backed tools ───────────────────────
 
 
