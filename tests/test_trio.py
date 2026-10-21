@@ -344,6 +344,57 @@ def test_giab_trio_gnomad_filter(vcfclick_home, tmp_path, monkeypatch):
     assert "comphet         0" in out
 
 
+def test_gnomad_filter_is_the_per_row_rule(tmp_path, monkeypatch):
+    """The batched --gnomad-max-af filter keeps exactly the rows the rule
+    does row by row: popmax at or below the cut, popmax unknown, and alleles
+    absent from the slice (absence is rare, never AF 0). Row order, repeated
+    rows and a position given as a string are untouched, and the comphet
+    rows' sixth column is carried through."""
+    from annotations import gnomad_af
+    from cli.trio_analysis import _gnomad_filter
+
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    rows_in_store = [
+        ("chr1", 1, "A", "C", 0.001, 0.002),  # rare: kept
+        ("chr1", 2, "A", "C", 0.5, 0.9),  # common: dropped
+        ("chr1", 3, "A", "C", 0.01, 0.01),  # exactly the cut: kept
+        ("chr1", 4, "A", "C", 0.02, None),  # popmax falls back to AF: dropped
+        ("chr1", 5, "A", "C", None, None),  # popmax unknown: kept
+        ("chr1", 6, "A", "C", 0.9, 0.001),  # popmax 0.001 beats AF 0.9: kept
+    ]
+    from annotations.db import get_connection
+
+    conn = get_connection()
+    conn.executemany("INSERT INTO gnomad_af VALUES (?, ?, ?, ?, ?, ?)", rows_in_store)
+    conn.close()
+
+    candidates = [
+        ["chr1", 2, "A", "C", 0.1, "paternal"],
+        ["chr1", 1, "A", "C", 0.1, "maternal"],
+        ["chr1", "3", "A", "C", 0.1, None],  # position as a string
+        ["chr1", 4, "A", "C", 0.1, None],
+        ["chr1", 5, "A", "C", 0.1, None],
+        ["chr1", 6, "A", "C", 0.1, None],
+        ["chr1", 7, "A", "C", 0.1, None],  # absent from the slice: kept
+        ["chr1", 1, "A", "G", 0.1, None],  # same locus, absent allele: kept
+        ["chr2", 2, "A", "C", 0.1, None],  # other chromosome: kept
+        ["chr1", 1, "A", "C", 0.1, "maternal"],  # repeated row
+    ]
+
+    def per_row(row):
+        g = gnomad_af(row[0], int(row[1]), row[2], row[3])
+        return g is None or g.popmax is None or g.popmax <= 0.01
+
+    want = [r for r in candidates if per_row(r)]
+    assert _gnomad_filter(candidates, 0.01) == want
+    assert [r[1] for r in want] == [1, "3", 5, 6, 7, 1, 2, 1]  # the expectation
+    assert _gnomad_filter([], 0.01) == []
+    # no gnomAD at all: every row is kept, in a list of its own
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "empty.duckdb"))
+    kept = _gnomad_filter(candidates, 0.01)
+    assert kept == candidates and kept is not candidates
+
+
 # ───────── de-novo VALIDATION: GIAB benchmark BED as ground truth ─────────
 #
 # denovo_trio.vcf.gz holds 7 chr20 sites where HG002 carries a variant

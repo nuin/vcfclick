@@ -14,6 +14,7 @@ from annotations.db import (
     gene_at,
     clinvar_lookup,
     gnomad_af,
+    gnomad_af_many,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "gene_at",
     "clinvar_lookup",
     "gnomad_af",
+    "gnomad_af_many",
 ]

@@ -35,6 +35,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   family VCF can have hundreds of thousands of candidates: a 200,000-site
   trio takes about 3 s where the per-candidate opens would have taken
   minutes. Output is unchanged.
+- `db trio --gnomad-max-af` looks every candidate up in gnomAD with one
+  query per model instead of one store open and query per candidate. With
+  the AF gate skipped on a family VCF a trio has thousands of candidates, and
+  the per-candidate lookups cost 6 s (JSON) to 40 s (text listing) at 5,000
+  sites, minutes at WGS size, whether or not gnomAD was loaded. The same
+  trio now takes about 1 s and 0.4 s. Which candidates are kept is
+  unchanged.
 - The `--max-af` gate keeps a site whose AF equals the threshold on both
   backends. `variants.info_AF` is a 32-bit float on chDB, so a site at
   exactly `--max-af 0.001` was dropped there but kept on DuckDB; the gate

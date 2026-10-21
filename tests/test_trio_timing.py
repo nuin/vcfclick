@@ -43,13 +43,37 @@ Ingesting the 200,000-site store takes about 8 s. The budget is
 `VCFCLICK_TIMING_SITES=N` sets the number of sites and
 `VCFCLICK_TIMING_BUDGET_S` replaces the budget.
 
+`--gnomad-max-af 0.01` (`test_gnomad_filter_on_a_synthetic_wgs_store`) is
+timed on the cohort store, where nearly every inherited het is a candidate
+that the filter has to look up, as a JSON document and as the text summary.
+`none` has no gnomAD loaded (the case that was measured when the filter
+looked candidates up one by one); `slice` has gnomAD for every other site, a
+quarter of them common, so the batched join runs and drops sites. JSON /
+text, best of two:
+
+                      20,000 sites                200,000 sites
+                      DuckDB        chDB          DuckDB        chDB
+    none              1.5 / 0.3 s   1.6 / 0.4 s   3.3 / 1.0 s   3.2 / 0.8 s
+    slice             2.4 / 0.5 s   2.5 / 0.6 s   5.6 / 1.4 s   5.5 / 1.3 s
+
+The JSON document with a slice costs more than without one because it
+renders up to 1,000 candidates per model, each with a gene and a gnomAD
+lookup (about 1 ms apiece, 3,000 of them at the largest size); the filter
+itself, one join for all candidates of a model, takes 0.1 to 0.2 s per
+170,000 candidates.
+
 What it has caught: the cohort row at 20,000 sites took 90 s while each
 candidate opened the annotation store (4 ms apiece) and the rows of the
 document did the same (7 ms per lookup, 1,600 lookups). The first is fixed by
 `annotations.db.GeneIndex`, which reads the gene table once, the second by
-keeping one store connection open while the document is built. A lookup
-that costs 0.1 ms per candidate would add 17 s at 200,000 sites and show up
-only there, which is why that size is worth running before a release.
+keeping one store connection open while the document is built. The gnomAD
+filter then did the same per candidate (0.65 ms on a held connection, 4.6 ms
+when not): on a 5,000-site cohort store JSON took 6.5 s and the text listing
+40 s against 1.2 s and 0.4 s now, which is 4 and 25 minutes at 200,000 sites.
+It is fixed by `annotations.gnomad_af_many`, which looks every candidate up
+in one query. A lookup that costs 0.1 ms per candidate would add 17 s at
+200,000 sites and show up only there, which is why that size is worth running
+before a release.
 """
 
 from __future__ import annotations
@@ -163,16 +187,18 @@ def _seed_genes(n_sites: int) -> int:
     return len(genes)
 
 
-@pytest.mark.parametrize("backend", BACKENDS)
-@pytest.mark.parametrize("af", ("population", "cohort"))
-def test_default_db_trio_on_a_synthetic_wgs_store(
-    af, backend, vcfclick_home, tmp_path, monkeypatch
-):
-    n = SYNTHETIC_SITES
-    budget = float(
+def _synthetic_budget(n: int) -> float:
+    return float(
         os.environ.get("VCFCLICK_TIMING_BUDGET_S")
         or SYNTHETIC_BASE_S + SYNTHETIC_PER_SITE_S * n
     )
+
+
+def _wgs_store(af, backend, home, tmp_path, monkeypatch):
+    """Ingest `SYNTHETIC_SITES` synthetic trio sites into db `t` and point
+    the annotation store at a file of its own with genes seeded. Returns
+    (sites, genes)."""
+    n = SYNTHETIC_SITES
     # an annotation store of its own: never the repo's, which another process
     # may hold open, and the same genes on every machine
     monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
@@ -185,12 +211,22 @@ def test_default_db_trio_on_a_synthetic_wgs_store(
     )
     ped = tmp_path / "trio.ped"
     ped.write_text(TRIO_PED)
-    run_cli(vcfclick_home, backend, "db", "create", "t")
+    run_cli(home, backend, "db", "create", "t")
     run_cli(
-        vcfclick_home, backend, "db", "ingest", "t", str(vcf),
+        home, backend, "db", "ingest", "t", str(vcf),
         "--ingest-id", "g1", "--serial", "--keep-reference",
     )  # fmt: skip
-    run_cli(vcfclick_home, backend, "db", "ped", "t", str(ped))
+    run_cli(home, backend, "db", "ped", "t", str(ped))
+    return n, n_genes
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("af", ("population", "cohort"))
+def test_default_db_trio_on_a_synthetic_wgs_store(
+    af, backend, vcfclick_home, tmp_path, monkeypatch
+):
+    n, n_genes = _wgs_store(af, backend, vcfclick_home, tmp_path, monkeypatch)
+    budget = _synthetic_budget(n)
 
     took, result = _best_of_two(
         vcfclick_home,
@@ -219,3 +255,74 @@ def test_default_db_trio_on_a_synthetic_wgs_store(
         f"budget {budget:.1f}s. A per-candidate query or a second pass over the "
         "genotype table shows up here."
     )
+
+
+def _seed_gnomad(n_sites: int) -> int:
+    """Load gnomAD popmax for every other synthetic site: common (0.2) for
+    one in four of all sites, rare (0.001) for another one in four, nothing
+    for the rest. Returns the number of rows."""
+    from annotations.db import get_connection
+
+    rows = [
+        ("chr1", 1000 + i * SITE_STEP, "A", "G", 0.001, 0.2 if i % 4 == 0 else 0.001)
+        for i in range(0, n_sites, 2)
+    ]
+    conn = get_connection()
+    conn.executemany("INSERT INTO gnomad_af VALUES (?, ?, ?, ?, ?, ?)", rows)
+    conn.close()
+    return len(rows)
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+@pytest.mark.parametrize("gnomad", ("none", "slice"))
+def test_gnomad_filter_on_a_synthetic_wgs_store(
+    gnomad, backend, vcfclick_home, tmp_path, monkeypatch
+):
+    """`--gnomad-max-af` on the cohort-AF store, where the AF gate is
+    skipped and nearly every inherited het is a candidate that the filter has
+    to look up. The text listing and the JSON document are both timed: the
+    first once spent 4.6 ms per candidate (25 minutes for a 200,000-site
+    family), the second 0.65 ms (4 minutes), because each candidate went to
+    the annotation store on its own. `none` is no gnomAD loaded, the case
+    that was measured; `slice` has gnomAD for half the sites, so the batched
+    join runs and drops the common ones."""
+    n, n_genes = _wgs_store("cohort", backend, vcfclick_home, tmp_path, monkeypatch)
+    n_rows = _seed_gnomad(n) if gnomad == "slice" else 0
+    budget = _synthetic_budget(n)
+    trio = ("db", "trio", "t", "--proband", "CHILD")
+
+    base = json.loads(run_cli(vcfclick_home, backend, *trio, "--format", "json").stdout)
+    base_counts = {m: base["models"][m]["count"] for m in base["models"]}
+    assert base["gates"]["af_gate"] == "skipped_cohort_derived"
+    assert base_counts["dominant"] > 0.4 * n
+
+    for fmt in ("json", "text"):
+        took, result = _best_of_two(
+            vcfclick_home, backend, *trio, "--gnomad-max-af", "0.01", "--format", fmt
+        )
+        print(
+            f"\n[timing] {n} sites, {n_genes} genes, {n_rows} gnomAD rows, "
+            f"--gnomad-max-af 0.01 {fmt}, {backend}: {took:.2f}s "
+            f"(budget {budget:.1f}s)"
+        )
+        assert took < budget, (
+            f"`db trio --gnomad-max-af 0.01 --format {fmt}` on {n} synthetic "
+            f"sites ({gnomad} gnomAD, {backend}) took {took:.1f}s, budget "
+            f"{budget:.1f}s. A gnomAD lookup per candidate shows up here."
+        )
+        if fmt == "json":
+            doc = json.loads(result.stdout)
+            counts = {m: doc["models"][m]["count"] for m in doc["models"]}
+        else:  # `all` lists a count per model, comphet in genes
+            counts = {
+                line.split()[0]: int(line.split()[1])
+                for line in result.stdout.splitlines()[1:]
+            }
+        # the filter did what the scenario says: nothing without gnomAD, and
+        # with the slice the sites it calls common (one in four) are gone
+        if gnomad == "none":
+            assert counts == base_counts
+        else:
+            assert 0.6 * base_counts["dominant"] < counts["dominant"]
+            assert counts["dominant"] < 0.9 * base_counts["dominant"]
+            assert counts["recessive"] < base_counts["recessive"]

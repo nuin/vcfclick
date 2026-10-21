@@ -335,14 +335,23 @@ def _has_reference_rows(sess) -> bool:
     return int(json.loads(raw)["data"][0][0]) > 0
 
 
-def _gnomad_keep(chrom: str, pos, ref: str, alt: str, max_af: float) -> bool:
-    """Keep a candidate whose gnomAD popmax AF is <= max_af, or that is
-    absent from the loaded gnomAD slice — absence is treated as rare
-    (the slice may simply not cover the locus), never as AF 0."""
-    from annotations import gnomad_af
+def _gnomad_filter(rows: list, max_af: float) -> list:
+    """The rows (chrom, pos, ref, alt, ...) whose gnomAD popmax AF is
+    <= max_af, or that are absent from the loaded gnomAD slice: absence is
+    treated as rare (the slice may simply not cover the locus), never as
+    AF 0. One batched lookup for all rows, not one per row: with the AF
+    gate skipped on a family VCF, a trio has thousands of candidates."""
+    from annotations import gnomad_af_many
 
-    g = gnomad_af(chrom, int(pos), ref, alt)
-    return g is None or g.popmax is None or g.popmax <= max_af
+    found = gnomad_af_many((row[0], row[1], row[2], row[3]) for row in rows)
+    if not found:
+        return list(rows)  # nothing loaded, or none of the candidates in it
+    keep = []
+    for row in rows:
+        g = found.get((row[0], int(row[1]), row[2], row[3]))
+        if g is None or g.popmax is None or g.popmax <= max_af:
+            keep.append(row)
+    return keep
 
 
 @dataclass(frozen=True)
@@ -358,7 +367,7 @@ class TrioAnalysis:
     def _gnomad(self, rows: list) -> list:
         if self.gnomad_max_af is None:
             return rows
-        return [row for row in rows if _gnomad_keep(*row[:4], self.gnomad_max_af)]
+        return _gnomad_filter(rows, self.gnomad_max_af)
 
     def detail_rows(self, category: str) -> list:
         sql = trio_sql(category, self.trio, self.gates, count_only=False)

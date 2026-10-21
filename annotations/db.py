@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import os
 from bisect import bisect_right
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -246,3 +247,57 @@ def gnomad_af(chrom: str, pos: int, ref: str, alt: str) -> GnomadAF | None:
         [chrom, pos, ref, alt],
     ).fetchone()
     return GnomadAF(*row) if row else None
+
+
+def gnomad_af_many(
+    alleles: Iterable[tuple[str, int, str, str]],
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> dict[tuple[str, int, str, str], GnomadAF]:
+    """`gnomad_af` for many alleles in one query: {(chrom, pos, ref, alt):
+    GnomadAF} for those present in the loaded slice. An allele absent from
+    the slice has no entry, exactly as `gnomad_af` returns None for it.
+
+    A caller that filters every candidate of a trio (thousands of alleles)
+    must use this, not `gnomad_af` in a loop: a lookup costs 0.1 to 1.5 ms
+    on an open connection, growing with the table, and about 5 ms when it
+    has to open the store, so 9,000 candidates took 6 s to 40 s. Here the
+    alleles are joined to the table as one Arrow batch (a few ms for 9,000
+    against a million-row table). `conn` is the caller's open connection; with
+    none, the store is opened and closed here."""
+    keys = list(dict.fromkeys((c, int(p), r, a) for c, p, r, a in alleles))
+    if not keys:
+        return {}
+    own = conn is None
+    if conn is None:
+        conn = get_connection()
+    try:
+        # the common case: no gnomAD loaded, nothing to look up
+        if conn.execute("SELECT 1 FROM gnomad_af LIMIT 1").fetchone() is None:
+            return {}
+        import pyarrow as pa
+
+        batch = pa.table(
+            {
+                "chrom": pa.array([k[0] for k in keys], pa.string()),
+                "pos": pa.array([k[1] for k in keys], pa.int64()),
+                "ref": pa.array([k[2] for k in keys], pa.string()),
+                "alt": pa.array([k[3] for k in keys], pa.string()),
+            }
+        )
+        name = "_vcfclick_gnomad_alleles"
+        conn.register(name, batch)
+        try:
+            rows = conn.execute(
+                "SELECT g.chrom, g.pos, g.ref, g.alt, g.af, g.af_grpmax "
+                f"FROM gnomad_af g JOIN {name} c ON g.chrom = c.chrom "
+                "AND g.pos = c.pos AND g.ref = c.ref AND g.alt = c.alt"
+            ).fetchall()
+        finally:
+            conn.unregister(name)
+    finally:
+        if own:
+            conn.close()
+    found: dict[tuple[str, int, str, str], GnomadAF] = {}
+    for row in rows:
+        found.setdefault((row[0], int(row[1]), row[2], row[3]), GnomadAF(*row))
+    return found
