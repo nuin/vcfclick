@@ -255,7 +255,7 @@ def test_sparse_ingest_blocks_with_keep_reference_reason(
 
 
 def test_blocked_reason_enum_is_closed_and_complete():
-    """The vocabulary the plan fixes for every model of the program."""
+    """The closed vocabulary, fixed once for every model that reports it."""
     assert BLOCKED_REASONS == (
         "needs_keep_reference",
         "needs_genes",

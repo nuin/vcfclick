@@ -1,9 +1,9 @@
 """Timing gate for a default `db trio`.
 
 The desktop apps run `db trio --format json` (category all) on every
-proband selection, and the family program adds work to that call (parentage,
-lineage, X models). This gate fails if the default call gets slower than a
-stated budget, so a later step has to say so when it spends time.
+proband selection, and every model added to that call (parentage, lineage,
+X-linked, ...) spends time there. This gate fails if the default call gets
+slower than a stated budget, so a change has to say so when it spends time.
 
 Budgets are wall-clock seconds for the whole CLI process (interpreter start,
 store open, every model, JSON), best of two runs, on the fixtures below.

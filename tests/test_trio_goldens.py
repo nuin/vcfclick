@@ -1,12 +1,12 @@
 """Byte-for-byte goldens of `db trio` output, on both backends.
 
 The goldens under tests/goldens/trio/<backend>/<store>/ were captured from
-the CLI BEFORE the trio-output refactor (family program step F0). They pin
-what the desktop apps, scripts and the MCP briefing read:
+the CLI at v0.14.3, BEFORE the trio-output refactor. They pin what the
+desktop apps, scripts and the MCP briefing read:
 
   * text output (stdout and stderr) is compared verbatim;
-  * JSON output is compared after removing the keys this program adds
-    additively (see ADDED_KEYS). Everything else must be byte-identical:
+  * JSON output is compared after removing the keys added since, additively
+    (see ADDED_KEYS). Everything else must be byte-identical:
     same keys, same order, same values, same indent.
 
 The JSON compatibility policy (docs/TRIO.md) is "additive only": a new
@@ -40,7 +40,7 @@ GOLDENS = Path(__file__).parent / "goldens" / "trio"
 UPDATE = os.environ.get("VCFCLICK_UPDATE_GOLDENS") == "1"
 BACKENDS = ("chdb", "duckdb")
 
-# Keys the program may add to a trio document, by location. Anything else
+# Keys that may be added to a trio document, by location. Anything else
 # that is not in the pre-refactor golden fails the comparison.
 ADDED_KEYS = {
     "model": {"blocked_reason"},  # models.<name>.blocked_reason

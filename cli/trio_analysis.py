@@ -29,7 +29,7 @@ DEFAULT_MAX_AF = 0.01
 # vocabulary of the JSON `blocked_reason` key (null when not blocked).
 # Defined once here; each desktop app mirrors it in one reason -> text map.
 # The four classic models use the first two; the rest are reserved for the
-# models that land later in the family program.
+# family models that are not implemented yet (phasing, X-linked, ...).
 BLOCKED_REASONS: tuple[str, ...] = (
     "needs_keep_reference",  # no stored hom-ref rows to prove a 0/0 parent
     "needs_genes",  # gene annotations not loaded (comphet)

@@ -1,7 +1,7 @@
 """The legacy trio SQL, pinned as text.
 
 The four classic models (denovo, recessive, dominant, comphet) must keep
-producing exactly the SQL they produced before the family program: the
+producing exactly the SQL they produced at v0.14.3: the
 refactors that route them through shared helpers (`sample_join`, the
 registry) are only allowed to change how the text is assembled, never the
 text. The AF epsilon is the one deliberate change, made in its own commit
