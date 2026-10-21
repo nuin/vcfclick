@@ -13,12 +13,19 @@ CREATE TABLE genotypes (
     alt          VARCHAR NOT NULL,
     sample_id    VARCHAR NOT NULL,
 
-    -- Genotype encoding: alt-allele count (TINYINT, signed).
-    --   1  = heterozygous (0/1, 1/0)
-    --   2  = homozygous alt (1/1)
-    --   -1 = hemizygous or mixed-missing
-    -- 0/0 and ./. are NOT stored — absence is the signal (a no-call
-    -- has a row in missing_genotypes instead).
+    -- Genotype encoding: alt-allele count (TINYINT, signed), as
+    -- ingest/vcf_rows.py writes it. The encoder never writes a negative
+    -- value.
+    --   1  = heterozygous (0/1, 1/0), or a partial call with one ALT
+    --        allele (./1)
+    --   2  = homozygous alt (1/1), or a haploid ALT call (a lone `1`,
+    --        e.g. a male on chrX/chrY or chrM; phased = 1): a haploid
+    --        call is stored as 1/1, there is no hemizygous code
+    --   0  = homozygous reference (0/0, or a haploid `0`); stored ONLY
+    --        when ingested with --keep-reference
+    -- Without --keep-reference 0/0 is not stored, and ./. never is —
+    -- absence is the signal (a no-call has a row in missing_genotypes
+    -- instead).
     gt           TINYINT NOT NULL,
     phased       UTINYINT DEFAULT 0,
 
