@@ -276,8 +276,14 @@ def _comphet_genes(candidate_rows: list) -> dict:
 
 
 def _resolve_parents(sess, ingest_id: str, proband: str) -> tuple[str, str]:
-    from storage import sql_quote_str
+    """The proband's declared parents. Deliberately its own narrow query
+    (not the Pedigree graph): it keeps resolving a proband whatever else is
+    wrong with the pedigree, such as a cycle that loaded years ago."""
+    from cli.pedigree_load import NO_PEDIGREE, NoPedigree
+    from storage import sql_quote_str, table_exists
 
+    if not table_exists("pedigree"):
+        raise NoPedigree(NO_PEDIGREE)
     raw = (
         sess.query(
             f"SELECT father_id, mother_id FROM pedigree WHERE ingest_id = "
