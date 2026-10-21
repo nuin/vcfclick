@@ -31,27 +31,41 @@ from cli.trio_analysis import (
 )
 
 
-def _annotation_status() -> dict:
-    """Which annotation sources hold data (each lookup is skipped if not)."""
+def _annotation_store() -> tuple[dict, object | None]:
+    """(which annotation sources hold data, the open store connection).
+
+    Each lookup is skipped when its source is empty. The connection is
+    returned so the caller can keep it open: DuckDB shares an open database
+    between connections, so every later `get_connection()` is about ten
+    times cheaper (0.7 ms against 7 ms with genes loaded) than when the
+    last connection has been closed and the file has to be opened again.
+    """
+    none = {"genes": False, "clinvar": False, "gnomad": False}
     try:
         from annotations.db import get_connection
 
         conn = get_connection()
-        have = {}
-        for key, table in (
-            ("genes", "refseq_genes"),
-            ("clinvar", "clinvar_variants"),
-            ("gnomad", "gnomad_af"),
-        ):
-            try:
-                have[key] = (
-                    conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] > 0
-                )
-            except Exception:  # noqa: BLE001 - table absent in older stores
-                have[key] = False
-        return have
     except Exception:  # noqa: BLE001 - no annotation store at all
-        return {"genes": False, "clinvar": False, "gnomad": False}
+        return none, None
+    have = {}
+    for key, table in (
+        ("genes", "refseq_genes"),
+        ("clinvar", "clinvar_variants"),
+        ("gnomad", "gnomad_af"),
+    ):
+        try:
+            have[key] = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0] > 0
+        except Exception:  # noqa: BLE001 - table absent in older stores
+            have[key] = False
+    return have, conn
+
+
+def _annotation_status() -> dict:
+    """Which annotation sources hold data (each lookup is skipped if not)."""
+    have, conn = _annotation_store()
+    if conn is not None:
+        conn.close()
+    return have
 
 
 def _enrich(chrom: str, pos, ref: str, alt: str, have: dict) -> dict:
@@ -83,6 +97,7 @@ class Render:
     analysis: TrioAnalysis
     limit: int
     have: dict  # annotation sources that hold data
+    store: object | None = None  # open annotation connection, kept alive only
 
 
 # A decorator receives the candidate dict built so far, the source row and
@@ -300,8 +315,15 @@ def _applicable(analysis: TrioAnalysis, category: str) -> list[ModelSpec]:
 
 def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
     trio, gates = analysis.trio, analysis.gates
-    render = Render(analysis, limit, _annotation_status())
-    models = {spec.name: spec.build(render) for spec in _applicable(analysis, category)}
+    have, store = _annotation_store()
+    render = Render(analysis, limit, have, store)
+    try:
+        models = {
+            spec.name: spec.build(render) for spec in _applicable(analysis, category)
+        }
+    finally:
+        if store is not None:
+            store.close()
     return {
         "trio": {
             "ingest_id": trio.ingest_id,
