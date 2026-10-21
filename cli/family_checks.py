@@ -129,8 +129,9 @@ def resolve_af_gate(probe: CohortAfProbe, *, explicit: bool) -> str:
     return "cohort_derived_suspected" if explicit else "skipped_cohort_derived"
 
 
-def af_gate_note(probe: CohortAfProbe, state: str, max_af: float) -> str | None:
-    """The stderr / `note` line for a suspected cohort-derived AF, or None."""
+def af_gate_message(probe: CohortAfProbe, state: str, max_af: float) -> str | None:
+    """One sentence for a suspected cohort-derived AF (None for the other
+    states): what the probe saw, what the gate did, what to do about it."""
     if state not in ("cohort_derived_suspected", "skipped_cohort_derived"):
         return None
     seen = (
@@ -140,13 +141,26 @@ def af_gate_note(probe: CohortAfProbe, state: str, max_af: float) -> str | None:
     )
     if state == "skipped_cohort_derived":
         return (
-            f"note: {seen}: a private het in a small cohort has a high "
+            f"{seen}: a private het in a small cohort has a high "
             f"AF, so the --max-af {max_af:g} gate was skipped. Pass --max-af "
             "to apply it anyway, or --gnomad-max-af for a population "
             "frequency."
         )
     return (
-        f"note: {seen}; --max-af {max_af:g} is applied as requested and may "
+        f"{seen}; --max-af {max_af:g} is applied as requested and may "
         "remove real candidates (a private het in a small cohort has a high "
         "AF). Use --gnomad-max-af for a population frequency."
     )
+
+
+def trio_af_gate(
+    sess, ingest_id: str, max_af: float, *, explicit: bool
+) -> tuple[str, str | None]:
+    """Run the probe and resolve it: the `gates.af_gate` value for a trio
+    analysis of `ingest_id`, and the sentence to show the user (None when
+    there is nothing to say). `explicit` is True when the caller passed
+    --max-af (`db trio`) or max_af (the web API); the CLI and the web UI
+    both resolve the gate here so they cannot drift."""
+    probe = cohort_af_probe(sess, ingest_id)
+    state = resolve_af_gate(probe, explicit=explicit)
+    return state, af_gate_message(probe, state, max_af)

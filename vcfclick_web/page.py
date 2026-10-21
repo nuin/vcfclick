@@ -2,7 +2,14 @@
 with no static-file packaging or JS build step. Vanilla JS talks to the
 /api endpoints in app.py."""
 
-INDEX_HTML = r"""<!doctype html>
+from cli.trio_analysis import CATEGORIES
+
+# The Trio tab's category list is the CLI's: one definition
+# (cli.trio_analysis.CATEGORIES), rendered into the page here so the two
+# cannot drift. tests/test_trio_categories.py ties them together.
+_TRIO_CATEGORY_OPTIONS = "".join(f"<option>{c}</option>" for c in CATEGORIES)
+
+_PAGE = r"""<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
@@ -91,10 +98,10 @@ INDEX_HTML = r"""<!doctype html>
       <div class="row">
         <div style="max-width:220px"><label>proband</label><select id="t-proband"></select></div>
         <div style="max-width:150px"><label>category</label>
-          <select id="t-cat"><option>denovo</option><option>recessive</option><option>dominant</option></select></div>
+          <select id="t-cat">__TRIO_CATEGORY_OPTIONS__</select></div>
         <div style="max-width:90px"><label>min GQ</label><input id="t-gq" type="number" value="20" /></div>
         <div style="max-width:90px"><label>min DP</label><input id="t-dp" type="number" value="10" /></div>
-        <div style="max-width:90px"><label>max AF</label><input id="t-af" type="number" step="0.01" value="0.01" /></div>
+        <div style="max-width:110px"><label>max AF</label><input id="t-af" type="number" step="0.01" placeholder="0.01 (auto)" /></div>
       </div>
       <div style="margin:8px 0"><button class="run" onclick="runTrio()">Run</button></div>
       <div id="t-out"></div>
@@ -166,8 +173,12 @@ async function askNl(){
     question:$('a-q').value, provider:$('a-provider').value, key, model:$('a-model').value }));
 }
 async function runTrio(){
-  const p = new URLSearchParams({proband:$('t-proband').value, category:$('t-cat').value,
-    min_gq:$('t-gq').value, min_dp:$('t-dp').value, max_af:$('t-af').value});
+  const q = {proband:$('t-proband').value, category:$('t-cat').value,
+    min_gq:$('t-gq').value, min_dp:$('t-dp').value};
+  // Left blank, max AF is the default 0.01 and is skipped when INFO/AF is
+  // this cohort's own frequency; a value is always applied.
+  if($('t-af').value !== '') q.max_af = $('t-af').value;
+  const p = new URLSearchParams(q);
   showResult($('t-out'), await (await fetch('/api/trio?'+p)).json());
 }
 async function runCombine(){
@@ -190,3 +201,5 @@ loadMeta();
 </body>
 </html>
 """
+
+INDEX_HTML = _PAGE.replace("__TRIO_CATEGORY_OPTIONS__", _TRIO_CATEGORY_OPTIONS)

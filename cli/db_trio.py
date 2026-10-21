@@ -35,10 +35,10 @@ from pathlib import Path
 import click
 from click.core import ParameterSource
 
-from cli.family_checks import af_gate_note, cohort_af_probe, resolve_af_gate
+from cli.family_checks import trio_af_gate
 from cli.main import _set_db, db
 from cli.options import command_options
-from cli.trio_analysis import CATEGORY_CHOICES
+from cli.trio_analysis import CATEGORY_CHOICES, DEFAULT_MAX_AF
 from cli.trio_analysis import Gates as Gates
 from cli.trio_analysis import Trio as Trio
 from cli.trio_analysis import (
@@ -211,10 +211,13 @@ def db_ped(options: PedigreeOptions) -> None:
 @click.option("--min-dp", default=10, show_default=True, type=int)
 @click.option(
     "--max-af",
-    default=0.01,
+    default=DEFAULT_MAX_AF,
     show_default=True,
     type=float,
-    help="Keep variants with population info_AF <= this (rarity filter).",
+    help="Keep variants with population info_AF <= this (rarity filter). "
+    "If INFO/AF turns out to be this cohort's own frequency (GATK-style "
+    "family VCFs), the filter is skipped with a note unless this option is "
+    "given explicitly.",
 )
 @click.option("--min-ab", default=0.25, show_default=True, type=float)
 @click.option("--max-ab", default=0.75, show_default=True, type=float)
@@ -276,15 +279,15 @@ def db_trio(options: TrioOptions) -> None:
     # Is INFO/AF this cohort's own frequency? Then --max-af would remove
     # every private candidate: say so, and skip the gate unless --max-af was
     # given on the command line (an explicit threshold is always honoured).
-    probe = cohort_af_probe(sess, ingest_id)
     explicit_af = (
         click.get_current_context().get_parameter_source("max_af")
         != ParameterSource.DEFAULT
     )
-    af_gate = resolve_af_gate(probe, explicit=explicit_af)
-    note = af_gate_note(probe, af_gate, options.max_af)
-    if note:
-        click.echo(note, err=True)
+    af_gate, af_message = trio_af_gate(
+        sess, ingest_id, options.max_af, explicit=explicit_af
+    )
+    if af_message:
+        click.echo(f"note: {af_message}", err=True)
     gates = options.gates._replace(af_gate=af_gate)
     analyses = [
         TrioAnalysis(

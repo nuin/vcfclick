@@ -10,9 +10,11 @@ presentation code. A candidate row passes through a chain of decorators
 registering another, after the existing ones.
 
 JSON compatibility policy (docs/TRIO.md): additive only. A key that is
-already emitted is never removed, renamed, retyped or reordered among its
-siblings; new keys are snake_case and go after the existing ones of their
-object. tests/test_trio_goldens.py pins this byte-for-byte.
+already emitted is never removed, renamed or retyped, and the relative
+order of the existing keys never changes; new keys are snake_case and are
+either appended or placed directly after the key they qualify
+(`blocked_reason` follows `blocked`). tests/test_trio_goldens.py pins this
+byte-for-byte once the whitelisted new keys are removed.
 """
 
 from __future__ import annotations

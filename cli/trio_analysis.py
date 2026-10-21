@@ -22,6 +22,9 @@ GENE_CATEGORIES: tuple[str, ...] = ("comphet",)  # reported per gene
 CATEGORIES: tuple[str, ...] = ROW_CATEGORIES + GENE_CATEGORIES
 CATEGORY_CHOICES: tuple[str, ...] = CATEGORIES + ("all",)
 
+# The default for `db trio --max-af` (and the web API's max_af).
+DEFAULT_MAX_AF = 0.01
+
 # Why a model reports `blocked_reason` instead of results: the closed
 # vocabulary of the JSON `blocked_reason` key (null when not blocked).
 # Defined once here; each desktop app mirrors it in one reason -> text map.

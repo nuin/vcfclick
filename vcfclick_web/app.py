@@ -35,6 +35,7 @@ from ingest._arrow import (
 )
 from ingest.combine import CombineError, combine_vcfs
 from storage import get_session, table_columns, table_exists
+from cli.trio_analysis import CATEGORIES, DEFAULT_MAX_AF
 from storage.sql_guard import is_read_only
 from vcfclick_web.page import INDEX_HTML
 
@@ -183,17 +184,67 @@ def nl(body: NlBody) -> dict:
         return out
 
 
+_KEEP_REFERENCE_NOTE = (
+    "No stored hom-reference rows: re-ingest with --keep-reference "
+    "for defensible de-novo / dominant results."
+)
+
+
+def _comphet_result(
+    sess, trio_ctx, gates, has_reference: bool
+) -> tuple[dict, list[str]]:
+    """The compound-het model in the same envelope as the row models: one
+    table row per candidate variant, grouped under its gene. The model is
+    reported per gene (cli.trio_output), so the SQL that ran is the
+    candidate query and the rows come from the gene grouping. Returns the
+    result and any notes for the user."""
+    from cli.trio_analysis import TrioAnalysis, _comphet_sql
+    from cli.trio_output import _annotation_status
+
+    analysis = TrioAnalysis(
+        session=sess,
+        trio=trio_ctx,
+        gates=gates,
+        has_reference=has_reference,
+        gnomad_max_af=None,
+    )
+    genes = analysis.comphet_genes()
+    rows = [
+        [sym, origin, chrom, int(pos), ref, alt, af]
+        for sym in sorted(genes)
+        for origin in ("paternal", "maternal")
+        for chrom, pos, ref, alt, af in genes[sym][origin]
+    ]
+    result = {
+        "sql": _comphet_sql(trio_ctx, gates),
+        "columns": ["gene", "origin", "chrom", "pos", "ref", "alt", "af"],
+        "rows": rows,
+        "row_count": len(rows),
+        "genes": len(genes),
+    }
+    notes = []
+    if not _annotation_status()["genes"]:
+        notes.append(
+            "No gene annotations are loaded, so compound hets cannot be "
+            "grouped by gene: run `vcfclick annotations load`."
+        )
+    return result, notes
+
+
 @app.get("/api/trio")
 def trio(
     proband: str,
     category: str = "denovo",
     min_gq: int = 20,
     min_dp: int = 10,
-    max_af: float = 0.01,
+    max_af: float | None = None,
     min_ab: float = 0.25,
     max_ab: float = 0.75,
 ) -> dict:
-    if category not in ("denovo", "recessive", "dominant"):
+    # `max_af` omitted means the default 0.01 *and* that the cohort-derived
+    # AF auto-skip may apply (as for `db trio` without --max-af); a value
+    # is always honoured.
+    if category not in CATEGORIES:
         return {"error": f"unknown category {category!r}"}
     try:
         from cli.db_trio import (
@@ -204,6 +255,8 @@ def trio(
             _sole_ingest_id,
             trio_sql,
         )
+        from cli.family_checks import trio_af_gate
+        from cli.trio_output import MODELS
 
         name = _db_name()
         ingest_id = _sole_ingest_id(name)
@@ -215,16 +268,30 @@ def trio(
         sess = get_session()
         father, mother = _resolve_parents(sess, ingest_id, proband)
         trio_ctx = Trio(ingest_id, proband, father, mother)
-        gates = Gates(min_gq, min_dp, max_af, min_ab, max_ab)
-        sql = trio_sql(category, trio_ctx, gates, count_only=False)
-        result = _run_sql(sql)
+        threshold = DEFAULT_MAX_AF if max_af is None else max_af
+        af_gate, af_message = trio_af_gate(
+            sess, ingest_id, threshold, explicit=max_af is not None
+        )
+        gates = Gates(min_gq, min_dp, threshold, min_ab, max_ab)._replace(
+            af_gate=af_gate
+        )
+        needs_reference = MODELS[category].needs_reference
+        has_reference = _has_reference_rows(sess) if needs_reference else True
+        notes: list[str] = []
+        if needs_reference and not has_reference:
+            notes.append(_KEEP_REFERENCE_NOTE)
+        if category == "comphet":
+            result, extra = _comphet_result(sess, trio_ctx, gates, has_reference)
+            notes += extra
+        else:
+            result = _run_sql(trio_sql(category, trio_ctx, gates, count_only=False))
         result["father"] = father
         result["mother"] = mother
-        if category in ("denovo", "dominant") and not _has_reference_rows(sess):
-            result["note"] = (
-                "No stored hom-reference rows: re-ingest with --keep-reference "
-                "for defensible de-novo / dominant results."
-            )
+        result["af_gate"] = af_gate
+        if af_message:
+            notes.append(af_message)
+        if notes:
+            result["note"] = " ".join(notes)
         return result
     except click.ClickException as e:
         # Written for the user (e.g. "no pedigree entry for proband ...").
