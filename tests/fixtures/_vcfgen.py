@@ -183,6 +183,79 @@ def cohort_denovo_sites(
     ]
 
 
+def wgs_trio_sites(
+    n: int,
+    *,
+    seed: int = 7,
+    af: str = "population",
+    denovo_frac: float = 0.01,
+    start: int = 1000,
+    step: int = 10,
+    chrom: str = "chr1",
+) -> list[Site]:
+    """`n` sites with the mix of a real WGS trio, in CHILD / FATHER / MOTHER
+    order. Most sites are inherited or carry nothing for the child:
+
+      about `denovo_frac`  de novo het (child 0/1, parents 0/0): the candidates
+      of the rest, 44%     het inherited from the father
+                      44%  het inherited from the mother
+                      10%  child hom-ref, one parent het (not a candidate)
+                       2%  child hom-alt, both parents het (recessive)
+
+    The site kinds are the same for a given `seed` whatever `af` is.
+
+    `af` sets INFO/AF:
+      "population"  a rare frequency (0.0001 to 0.001) on de novo sites and a
+                    common one (0.05 to 0.45) on the others, as an annotated
+                    VCF has: the default --max-af 0.01 keeps only the de novo
+                    sites, so about `denovo_frac` of the store are candidates;
+      "cohort"      the callset's own ac/an, as GATK joint calling writes it
+                    (1/6 on a de novo or lone-parent het, 1/3 inherited,
+                    2/3 hom-alt): the rarity gate is skipped and every
+                    inherited het becomes a candidate.
+    """
+    rng = random.Random(seed)
+    freqs = random.Random(seed + 1)  # own stream: the kinds do not depend on af
+    ref_gt, het_gt, alt_gt = "0/0:30,0:99:30", "0/1:15,15:99:30", "1/1:0,30:99:30"
+    # kind -> (child, father, mother, ac of 6 alleles)
+    layout = {
+        "denovo": (het_gt, ref_gt, ref_gt, 1),
+        "pat": (het_gt, het_gt, ref_gt, 2),
+        "mat": (het_gt, ref_gt, het_gt, 2),
+        "parent": (ref_gt, het_gt, ref_gt, 1),
+        "rec": (alt_gt, het_gt, het_gt, 4),
+    }
+    if af not in ("population", "cohort"):
+        raise ValueError(af)
+    sites = []
+    for i in range(n):
+        if rng.random() < denovo_frac:
+            kind = "denovo"
+        else:
+            kind = rng.choices(
+                ("pat", "mat", "parent", "rec"), weights=(44, 44, 10, 2)
+            )[0]
+        *gts, ac = layout[kind]
+        if af == "cohort":
+            freq = ac / 6
+        elif kind == "denovo":
+            freq = freqs.uniform(0.0001, 0.001)
+        else:
+            freq = freqs.uniform(0.05, 0.45)
+        sites.append(
+            Site(
+                chrom,
+                start + i * step,
+                "A",
+                "G",
+                tuple(gts),
+                info=f"AF={freq:.6g}",
+                fmt="GT:AD:GQ:DP",
+            )
+        )
+    return sites
+
+
 TRIO_SAMPLES = ["CHILD", "FATHER", "MOTHER"]
 TRIO_PED = (
     "FAM1\tCHILD\tFATHER\tMOTHER\t1\t2\n"
