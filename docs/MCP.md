@@ -163,9 +163,21 @@ correct cohort queries:
   often leave them null.
 - Use annotation tools before writing SQL when the user asks about a
   gene symbol or ClinVar significance.
+- A haploid call (a male's non-PAR chrX/chrY, chrM) is stored as `gt = 2`
+  with `phased = 1`: there is no hemizygous code and `gt` is never
+  negative, so `gt` alone cannot tell a haploid ALT from a diploid
+  hom-alt; `an_called` counts one allele for it.
+- Family questions: the `pedigree` table, the inheritance models
+  (the same names `db trio --category` takes, including `comphet`), the
+  sparse de-novo caveat, and that `db trio` applies its GQ/DP/AB/AF gates
+  NULL-tolerantly (a missing value passes) where the generic
+  `gq >= 20 AND dp >= 10` rule drops those rows. It also warns that a
+  family VCF's `INFO/AF` is often the callset's own frequency, which makes
+  `info_AF <= 0.01` remove every private candidate (`db trio` detects this
+  and skips the gate, reporting `gates.af_gate`).
 
 See [Schema reference](SCHEMA.md) for the SQL patterns behind those
-rules.
+rules, and [Trio](TRIO.md) for the gates.
 
 ## Example Prompt
 
