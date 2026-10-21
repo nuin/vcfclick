@@ -36,6 +36,7 @@ import click
 
 from cli.main import _set_db, db
 from cli.options import command_options
+from cli.trio_analysis import CATEGORY_CHOICES
 from cli.trio_analysis import Gates as Gates
 from cli.trio_analysis import Trio as Trio
 from cli.trio_analysis import (
@@ -199,7 +200,7 @@ def db_ped(options: PedigreeOptions) -> None:
 )
 @click.option(
     "--category",
-    type=click.Choice(["denovo", "recessive", "dominant", "comphet", "all"]),
+    type=click.Choice(CATEGORY_CHOICES),
     default="all",
     show_default=True,
     help="Inheritance model. 'all' prints per-model candidate counts.",

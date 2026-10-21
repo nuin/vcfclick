@@ -9,23 +9,84 @@ from typing import Any, NamedTuple
 import click
 
 
+# The inheritance models, in the order a trio document lists them. This is
+# the one definition: the CLI's --category choices, the web UI's category
+# list and the MCP briefing all derive from it (tests/test_trio_categories.py
+# ties them together).
+ROW_CATEGORIES: tuple[str, ...] = (
+    "denovo",
+    "recessive",
+    "dominant",
+)  # one row per variant
+GENE_CATEGORIES: tuple[str, ...] = ("comphet",)  # reported per gene
+CATEGORIES: tuple[str, ...] = ROW_CATEGORIES + GENE_CATEGORIES
+CATEGORY_CHOICES: tuple[str, ...] = CATEGORIES + ("all",)
+
+# Why a model reports `blocked_reason` instead of results: the closed
+# vocabulary of the JSON `blocked_reason` key (null when not blocked).
+# Defined once here; each desktop app mirrors it in one reason -> text map.
+# The four classic models use the first two; the rest are reserved for the
+# models that land later in the family program.
+BLOCKED_REASONS: tuple[str, ...] = (
+    "needs_keep_reference",  # no stored hom-ref rows to prove a 0/0 parent
+    "needs_genes",  # gene annotations not loaded (comphet)
+    "needs_phase",
+    "needs_parents",
+    "needs_sex",
+    "needs_ad",
+    "needs_parent_ad",
+    "no_autosomes",
+    "no_x_data",
+    "parent_sex_conflict",
+    "build_conflict",
+)
+
+
+def check_blocked_reason(reason: str | None) -> str | None:
+    """Return `reason` if it is null or in the closed enum, else raise."""
+    if reason is not None and reason not in BLOCKED_REASONS:
+        raise ValueError(f"unknown blocked_reason {reason!r}")
+    return reason
+
+
 class Trio(NamedTuple):
-    """A resolved family: the cohort and the three sample ids."""
+    """A resolved family: the cohort, the proband and the declared parents.
+
+    A parent is None when the pedigree declares none (a duo has one parent
+    and only the analyses written for it accept that). The classic models
+    need both and refuse a trio without them."""
 
     ingest_id: str
     proband: str
-    father: str
-    mother: str
+    father: str | None
+    mother: str | None
+
+    @property
+    def parents(self) -> tuple[str, ...]:
+        """The declared parents, father first."""
+        return tuple(p for p in (self.father, self.mother) if p is not None)
+
+    @property
+    def kind(self) -> str:
+        """`trio` (both parents), `duo` (one) or `none`."""
+        return {2: "trio", 1: "duo"}.get(len(self.parents), "none")
 
 
 class Gates(NamedTuple):
-    """The tunable quality / rarity thresholds, passed together."""
+    """The tunable quality / rarity thresholds, passed together.
+
+    Only ever gains trailing defaulted fields, so positional construction
+    (cli/db_trio.py, vcfclick_web/app.py) keeps working."""
 
     min_gq: int
     min_dp: int
     max_af: float
     min_ab: float
     max_ab: float
+    # A parent's stored 0/0 row is trusted as "parent does not carry it" only
+    # when its allele balance stays under this (see parent_ref_ok). The four
+    # classic models do not read it.
+    max_parent_alt_frac: float = 0.05
 
 
 def _sole_ingest_id(name: str) -> str | None:
@@ -61,8 +122,14 @@ def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
     )
 
 
-def _parent_joins(father: str, mother: str) -> str:
+def _parent_joins(father: str | None, mother: str | None) -> str:
     from storage import sql_quote_str
+
+    if father is None or mother is None:
+        raise ValueError(
+            "this model needs both parents declared (father="
+            f"{father!r}, mother={mother!r})"
+        )
 
     key = "f.ingest_id = g.ingest_id AND f.chrom = g.chrom AND f.pos = g.pos AND f.ref = g.ref AND f.alt = g.alt"
     mkey = key.replace("f.", "m.")

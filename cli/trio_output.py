@@ -1,12 +1,32 @@
-"""Text and JSON presentation of trio inheritance candidates."""
+"""Text and JSON presentation of trio inheritance candidates.
+
+Each inheritance model is a `ModelSpec` in a registry: how it appears in a
+trio document (`build`), as a count line (`summary`) and as a listing
+(`detail`). `_trio_json` and `trio_text` only walk the registry, so a new
+model is one `register_model` call and never an edit to the shared
+presentation code. A candidate row passes through a chain of decorators
+(`register_candidate_decorator`); the first one adds the annotation columns
+(genes, gnomAD popmax, ClinVar) and a later feature appends its own keys by
+registering another, after the existing ones.
+
+JSON compatibility policy (docs/TRIO.md): additive only. A key that is
+already emitted is never removed, renamed, retyped or reordered among its
+siblings; new keys are snake_case and go after the existing ones of their
+object. tests/test_trio_goldens.py pins this byte-for-byte.
+"""
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 import click
 
-from cli.trio_analysis import TrioAnalysis
-
-_NEEDS_REF = {"denovo", "dominant", "comphet"}
+from cli.trio_analysis import (
+    CATEGORIES,
+    TrioAnalysis,
+    check_blocked_reason,
+)
 
 
 def _annotation_status() -> dict:
@@ -54,54 +74,232 @@ def _num(v):
     return int(f) if f.is_integer() else f
 
 
+@dataclass(frozen=True)
+class Render:
+    """What building one trio document shares across its models."""
+
+    analysis: TrioAnalysis
+    limit: int
+    have: dict  # annotation sources that hold data
+
+
+# A decorator receives the candidate dict built so far, the source row and
+# the model name, and returns the dict to emit (usually the same one with
+# keys appended).
+CandidateDecorator = Callable[[dict, list, str, Render], dict]
+_CANDIDATE_DECORATORS: list[tuple[CandidateDecorator, frozenset[str] | None]] = []
+
+
+def register_candidate_decorator(
+    fn: CandidateDecorator, models: frozenset[str] | None = None
+) -> CandidateDecorator:
+    """Append `fn` to the candidate chain (all models, or only `models`).
+    Order of registration is the order keys appear in the output."""
+    _CANDIDATE_DECORATORS.append((fn, models))
+    return fn
+
+
+def _candidate(row: list, model: str, render: Render) -> dict:
+    """One 8-column detail row as the JSON candidate object."""
+    chrom, pos, ref, alt, pgt, fgt, mgt, af = row
+    out: dict = {
+        "chrom": chrom,
+        "pos": int(pos),
+        "ref": ref,
+        "alt": alt,
+        "proband_gt": int(pgt),
+        "father_gt": int(fgt),
+        "mother_gt": int(mgt),
+        "af": _num(af),
+    }
+    for fn, models in _CANDIDATE_DECORATORS:
+        if models is None or model in models:
+            out = fn(out, row, model, render)
+    return out
+
+
+@register_candidate_decorator
+def _annotation_columns(out: dict, row: list, model: str, render: Render) -> dict:
+    chrom, pos, ref, alt = row[:4]
+    out.update(_enrich(chrom, pos, ref, alt, render.have))
+    return out
+
+
+@dataclass(frozen=True)
+class ModelSpec:
+    """One inheritance model's place in a trio document and in text output."""
+
+    name: str
+    # Does the model exist for this trio? (Later models are conditional.)
+    applies: Callable[[object], bool]
+    # The JSON object for `models.<name>`.
+    build: Callable[[Render], dict]
+    # One line for `--category all`, and the listing for `--category <name>`.
+    summary: Callable[[TrioAnalysis], str]
+    detail: Callable[[TrioAnalysis], None]
+    # Needs stored hom-reference calls to prove a parent is 0/0 (the
+    # `--keep-reference` note, and the `blocked` flag, key off this).
+    needs_reference: bool = False
+
+
+MODELS: dict[str, ModelSpec] = {}
+
+
+def register_model(spec: ModelSpec) -> ModelSpec:
+    """Add a model after the existing ones: registration order is the order
+    of `models` in the document and of the lines in the `all` summary."""
+    if spec.name in MODELS:
+        raise ValueError(f"model {spec.name!r} is already registered")
+    MODELS[spec.name] = spec
+    return spec
+
+
+def _legacy_blocked(needs_reference: bool, analysis: TrioAnalysis) -> bool:
+    """The `blocked` flag of the four classic models: no stored hom-ref rows
+    anywhere in the database (cli/trio_analysis._has_reference_rows)."""
+    return needs_reference and not analysis.has_reference
+
+
+def _model_reason(blocked: bool, extra: str | None = None) -> str | None:
+    """`blocked_reason` for a classic model: the reference requirement when
+    the flag says blocked, else whatever other requirement is unmet."""
+    return check_blocked_reason("needs_keep_reference" if blocked else extra)
+
+
+# ───────────────────── de novo / recessive / dominant ─────────────────────
+
+
+def _row_model(name: str, *, needs_reference: bool) -> ModelSpec:
+    def build(render: Render) -> dict:
+        analysis, limit = render.analysis, render.limit
+        rows = analysis.detail_rows(name)
+        blocked = _legacy_blocked(needs_reference, analysis)
+        return {
+            "count": len(rows),
+            "blocked": blocked,
+            "blocked_reason": _model_reason(blocked),
+            "truncated": len(rows) > limit,
+            "candidates": [_candidate(r, name, render) for r in rows[:limit]],
+        }
+
+    def summary(analysis: TrioAnalysis) -> str:
+        n = analysis.count(name)
+        note = (
+            ""
+            if analysis.has_reference or not needs_reference
+            else "  (needs --keep-reference)"
+        )
+        return f"  {name:10s} {n:>6}{note}"
+
+    def detail(analysis: TrioAnalysis) -> None:
+        data = analysis.detail_rows(name)
+        click.echo(f"\n{name} candidates: {len(data)}")
+        for row in data:
+            chrom, pos, ref, alt, pgt, fgt, mgt, af = row
+            af_s = "NA" if af is None else f"{af}"
+            click.echo(
+                f"  {chrom}:{pos} {ref}>{alt}  proband_gt={pgt} "
+                f"father_gt={fgt} mother_gt={mgt}  AF={af_s}"
+            )
+
+    return ModelSpec(
+        name,
+        lambda trio: True,
+        build,
+        summary,
+        detail,
+        needs_reference=needs_reference,
+    )
+
+
+# ───────────────────────────── compound het ─────────────────────────────
+
+
+def _comphet_entry(sym: str, sides: dict) -> dict:
+    """One gene of the comphet model. `paternal` and `maternal` are emitted
+    for the sides present; a consumer must treat each as optional (a model
+    that cannot tell parent of origin omits them)."""
+    entry: dict = {"gene": sym}
+    for origin in ("paternal", "maternal"):
+        if sides.get(origin) is None:
+            continue
+        entry[origin] = [
+            {"chrom": c, "pos": int(p), "ref": r, "alt": a, "af": _num(af)}
+            for c, p, r, a, af in sides[origin]
+        ]
+    return entry
+
+
+def _build_comphet(render: Render) -> dict:
+    analysis, limit = render.analysis, render.limit
+    genes = analysis.comphet_genes()
+    entries = [_comphet_entry(sym, genes[sym]) for sym in sorted(genes)[:limit]]
+    blocked = _legacy_blocked(True, analysis)
+    needs_genes = not render.have["genes"]
+    return {
+        "count": len(genes),
+        "blocked": blocked,
+        "blocked_reason": _model_reason(
+            blocked, "needs_genes" if needs_genes else None
+        ),
+        "needs_genes": needs_genes,
+        "truncated": len(genes) > limit,
+        "genes": entries,
+    }
+
+
+def _summary_comphet(analysis: TrioAnalysis) -> str:
+    genes = analysis.comphet_genes()
+    note = "" if analysis.has_reference else "  (needs --keep-reference)"
+    return f"  {'comphet':10s} {len(genes):>6}{note}  genes"
+
+
+def _detail_comphet(analysis: TrioAnalysis) -> None:
+    genes = analysis.comphet_genes()
+    click.echo(f"\ncomphet candidate genes: {len(genes)}")
+    for sym in sorted(genes):
+        entry = genes[sym]
+        click.echo(f"  {sym}")
+        for origin in ("paternal", "maternal"):
+            for chrom, pos, ref, alt, af in entry[origin]:
+                af_s = "NA" if af is None else f"{af}"
+                click.echo(f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}")
+
+
+register_model(_row_model("denovo", needs_reference=True))
+register_model(_row_model("recessive", needs_reference=False))
+register_model(_row_model("dominant", needs_reference=True))
+register_model(
+    ModelSpec(
+        "comphet",
+        lambda trio: True,
+        _build_comphet,
+        _summary_comphet,
+        _detail_comphet,
+        needs_reference=True,
+    )
+)
+
+# The registry and the shared CATEGORIES constant describe the same models.
+if tuple(MODELS) != CATEGORIES:
+    raise RuntimeError(f"model registry {tuple(MODELS)} != CATEGORIES {CATEGORIES}")
+
+
+# ───────────────────────────── the document ─────────────────────────────
+
+
+def _applicable(analysis: TrioAnalysis, category: str) -> list[ModelSpec]:
+    return [
+        spec
+        for spec in MODELS.values()
+        if category in ("all", spec.name) and spec.applies(analysis.trio)
+    ]
+
+
 def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
     trio, gates = analysis.trio, analysis.gates
-    has_ref = analysis.has_reference
-    have = _annotation_status()
-
-    def candidate(row: list) -> dict:
-        chrom, pos, ref, alt, pgt, fgt, mgt, af = row
-        return {
-            "chrom": chrom,
-            "pos": int(pos),
-            "ref": ref,
-            "alt": alt,
-            "proband_gt": int(pgt),
-            "father_gt": int(fgt),
-            "mother_gt": int(mgt),
-            "af": _num(af),
-            **_enrich(chrom, pos, ref, alt, have),
-        }
-
-    models = {}
-    for cat in ("denovo", "recessive", "dominant"):
-        if category not in ("all", cat):
-            continue
-        rows = analysis.detail_rows(cat)
-        models[cat] = {
-            "count": len(rows),
-            "blocked": cat in _NEEDS_REF and not has_ref,
-            "truncated": len(rows) > limit,
-            "candidates": [candidate(r) for r in rows[:limit]],
-        }
-    if category in ("all", "comphet"):
-        genes = analysis.comphet_genes()
-        entries = []
-        for sym in sorted(genes)[:limit]:
-            entry = {"gene": sym}
-            for origin in ("paternal", "maternal"):
-                entry[origin] = [
-                    {"chrom": c, "pos": int(p), "ref": r, "alt": a, "af": _num(af)}
-                    for c, p, r, a, af in genes[sym][origin]
-                ]
-            entries.append(entry)
-        models["comphet"] = {
-            "count": len(genes),
-            "blocked": not has_ref,
-            "needs_genes": not have["genes"],
-            "truncated": len(genes) > limit,
-            "genes": entries,
-        }
+    render = Render(analysis, limit, _annotation_status())
+    models = {spec.name: spec.build(render) for spec in _applicable(analysis, category)}
     return {
         "trio": {
             "ingest_id": trio.ingest_id,
@@ -109,7 +307,7 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
             "father": trio.father,
             "mother": trio.mother,
         },
-        "keep_reference": has_ref,
+        "keep_reference": analysis.has_reference,
         "gates": {
             "min_gq": gates.min_gq,
             "min_dp": gates.min_dp,
@@ -118,7 +316,7 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
             "max_ab": gates.max_ab,
             "gnomad_max_af": analysis.gnomad_max_af,
         },
-        "annotations": have,
+        "annotations": render.have,
         "models": models,
     }
 
@@ -126,9 +324,11 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
 def trio_text(analysis: TrioAnalysis, category: str) -> None:
     trio = analysis.trio
     proband, father, mother = trio.proband, trio.father, trio.mother
-    has_ref = analysis.has_reference
     click.echo(f"trio: proband={proband} father={father} mother={mother}")
-    if not has_ref and (category in _NEEDS_REF or category == "all"):
+    needs_reference = {s.name for s in MODELS.values() if s.needs_reference}
+    if not analysis.has_reference and (
+        category in needs_reference or category == "all"
+    ):
         click.echo(
             "  note: this database has no stored hom-reference calls, so "
             "de-novo/dominant/comphet cannot prove a parent is 0/0 (vs "
@@ -137,35 +337,7 @@ def trio_text(analysis: TrioAnalysis, category: str) -> None:
         )
 
     if category == "all":
-        for cat in ["denovo", "recessive", "dominant"]:
-            n = analysis.count(cat)
-            blocked = (
-                "" if has_ref or cat not in _NEEDS_REF else "  (needs --keep-reference)"
-            )
-            click.echo(f"  {cat:10s} {n:>6}{blocked}")
-        genes = analysis.comphet_genes()
-        blocked = "" if has_ref else "  (needs --keep-reference)"
-        click.echo(f"  {'comphet':10s} {len(genes):>6}{blocked}  genes")
+        for spec in _applicable(analysis, "all"):
+            click.echo(spec.summary(analysis))
         return
-
-    if category == "comphet":
-        genes = analysis.comphet_genes()
-        click.echo(f"\ncomphet candidate genes: {len(genes)}")
-        for sym in sorted(genes):
-            entry = genes[sym]
-            click.echo(f"  {sym}")
-            for origin in ("paternal", "maternal"):
-                for chrom, pos, ref, alt, af in entry[origin]:
-                    af_s = "NA" if af is None else f"{af}"
-                    click.echo(f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}")
-        return
-
-    data = analysis.detail_rows(category)
-    click.echo(f"\n{category} candidates: {len(data)}")
-    for row in data:
-        chrom, pos, ref, alt, pgt, fgt, mgt, af = row
-        af_s = "NA" if af is None else f"{af}"
-        click.echo(
-            f"  {chrom}:{pos} {ref}>{alt}  proband_gt={pgt} "
-            f"father_gt={fgt} mother_gt={mgt}  AF={af_s}"
-        )
+    MODELS[category].detail(analysis)
