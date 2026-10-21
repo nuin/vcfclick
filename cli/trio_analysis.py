@@ -191,6 +191,7 @@ def _where(trio: Trio, gates: Gates, model: str) -> str:
     """Shared WHERE clause: the genotype model plus the quality / rarity
     gates, scoped to this proband and ingest."""
     from storage import sql_quote_str
+    from storage.sql import af_gate_sql
 
     parts = [
         model,
@@ -200,7 +201,7 @@ def _where(trio: Trio, gates: Gates, model: str) -> str:
         _het_ab_gate("g", gates.min_ab, gates.max_ab),
     ]
     if gates.af_gate != AF_GATE_SKIPPED:
-        parts.append(f"(v.info_AF IS NULL OR v.info_AF <= {gates.max_af})")
+        parts.append(af_gate_sql("v.info_AF", gates.max_af))
     predicate = " AND ".join(parts)
     return (
         f"g.ingest_id = {sql_quote_str(trio.ingest_id)} "

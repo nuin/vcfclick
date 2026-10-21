@@ -229,3 +229,19 @@ def genotype_pivot_sql(
         f"AND sample_id IN ({str_list(samples.values())}) "
         "GROUP BY ingest_id, chrom, pos, ref, alt"
     )
+
+
+# `variants.info_AF` is Float32 on chDB and REAL on DuckDB. A site whose AF
+# is exactly the threshold (0.001) is stored as 0.0010000000474..., which is
+# greater than the double 0.001, so `info_AF <= 0.001` kept it on DuckDB and
+# dropped it on chDB. The rarity gate adds this much to the threshold: far
+# below any real frequency step, above float32 rounding for every AF a VCF
+# carries (relative error 6e-8), so a site AT --max-af is kept on both.
+AF_EPSILON = 1e-7
+
+
+def af_gate_sql(col: str, max_af: float) -> str:
+    """The rarity gate: NULL AF passes (absence is not rarity evidence
+    either way), otherwise AF <= max_af + AF_EPSILON."""
+    c = _ident(col)
+    return f"({c} IS NULL OR {c} <= {float(max_af)!r} + {AF_EPSILON!r})"
