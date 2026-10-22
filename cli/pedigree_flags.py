@@ -1,7 +1,7 @@
 """`db ped` without a PED file: the flags, turned into pedigree rows.
 
 Pure (no database, no click context), so every rule has a unit test. The
-command (cli/db_trio.py) reads the existing pedigree, hands the rows to
+command (cli/db_ped.py) reads the existing pedigree, hands the rows to
 `ingest.pedigree.load_rows` and decides what a replace may delete.
 
     db ped NAME --proband C1 --proband C2 --father F --mother M
@@ -27,6 +27,13 @@ unknown (stored as NULL), parents included. A parent's status is an
 assertion (it decides reduced penetrance), so only a PED file or an
 explicit --affected/--unaffected makes one. Sex: a father is male and a
 mother female unless --sex says otherwise (which is reported as a warning).
+
+--merge changes only what the flags state. `keep_stored` lays the rows the
+flags build over the stored ones: a person the flags name keeps their
+stored parents, sex and phenotype where the flags say nothing about them
+(a father named only as --father keeps his own parents), and everybody the
+flags do not name is not in the rows at all. Without --merge the rows
+replace the pedigree, so nothing is carried over.
 """
 
 from __future__ import annotations
@@ -34,6 +41,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 DEFAULT_FAMILY = "fam1"
+PARENTS, SEX, AFFECTED = "parents", "sex", "affected"
 SEX_CHOICES = ("male", "female", "unknown")
 NO_PARENT = "0"
 
@@ -67,6 +75,7 @@ class _Member:
     sex: str | None = None  # an explicit choice
     role_sex: str | None = None  # implied by being a father or a mother
     affected: str | None = None
+    affected_stated: bool = False  # a proband, or named by a phenotype flag
     parents_from: str = ""  # which flag set the parents, for messages
 
 
@@ -74,6 +83,9 @@ class _Member:
 class FlagResult:
     rows: list[dict]
     warnings: list[str] = field(default_factory=list)
+    # What the flags actually say about each sample: a subset of PARENTS,
+    # SEX, AFFECTED. The rest of its row is a default, not a statement.
+    stated: dict[str, frozenset[str]] = field(default_factory=dict)
 
     @property
     def samples(self) -> list[str]:
@@ -128,10 +140,14 @@ def check_core(flags: PedFlags) -> None:
         raise ValueError(MISSING_HINT.format(missing=", ".join(missing)))
 
 
-def build_rows(flags: PedFlags) -> FlagResult:
+def build_rows(flags: PedFlags, stored: list[dict] | None = None) -> FlagResult:
     """Pedigree rows (the shape of `ingest.pedigree.parse_ped`) for the
     family the flags declare. Raises ValueError on anything contradictory,
-    before the database is touched."""
+    before the database is touched.
+
+    `stored` is the stored pedigree, given only for a --merge call: then
+    --affected, --unaffected, --unknown and --sex may also name a person who
+    is stored but not otherwise in the call, to change just that."""
     check_core(flags)
     probands = flags.probands
     if len(set(probands)) != len(probands):
@@ -180,14 +196,19 @@ def build_rows(flags: PedFlags) -> FlagResult:
     for child in probands:
         set_parents(child, father, mother, "--father/--mother")
         members[child].affected = "affected"
+        members[child].affected_stated = True
     for spec in flags.parents:
         child, f, m = parse_parents(spec)
         set_parents(child, f, m, f"--parents {spec}")
 
     # Phenotype and sex overrides apply to listed samples only.
+    stored_ids = {r["sample_id"] for r in stored or ()}
+
     def listed(flag: str, samples: tuple[str, ...]) -> list[str]:
         for s in samples:
-            if s not in members:
+            if s in stored_ids:
+                member(s)  # stored: the flag changes this one thing about them
+            elif s not in members:
                 raise ValueError(
                     f"{flag} names {s!r}, who is not in the family being "
                     "declared (give them as --proband, --father, --mother or "
@@ -206,6 +227,7 @@ def build_rows(flags: PedFlags) -> FlagResult:
                 raise ValueError(f"{s} is named by both {seen[s]} and {flag}")
             seen[s] = flag
             members[s].affected = value
+            members[s].affected_stated = True
 
     explicit_sex: dict[str, str] = {}
     for spec in flags.sex:
@@ -227,7 +249,17 @@ def build_rows(flags: PedFlags) -> FlagResult:
 
     warnings = []
     rows = []
+    stated: dict[str, frozenset[str]] = {}
     for sample, me in members.items():
+        stated[sample] = frozenset(
+            name
+            for name, said in (
+                (PARENTS, bool(me.parents_from)),
+                (SEX, sample in explicit_sex),
+                (AFFECTED, me.affected_stated),
+            )
+            if said
+        )
         sex = me.sex if sample in explicit_sex else me.role_sex
         if me.role_sex and me.sex and me.sex != me.role_sex:
             warnings.append(
@@ -244,4 +276,28 @@ def build_rows(flags: PedFlags) -> FlagResult:
                 "affected": me.affected,
             }
         )
-    return FlagResult(rows, warnings)
+    return FlagResult(rows, warnings, stated)
+
+
+def keep_stored(result: FlagResult, stored: list[dict]) -> list[dict]:
+    """The rows a --merge call writes: `result.rows` with, for every person
+    already stored, whatever the flags do not state about them kept as
+    stored (their parents, sex and phenotype). A person who is not stored
+    yet is written as built. `stored` rows are not changed."""
+    old = {r["sample_id"]: r for r in stored}
+    out = []
+    for row in result.rows:
+        was = old.get(row["sample_id"])
+        said = result.stated.get(row["sample_id"], frozenset())
+        if was is not None:
+            row = dict(row)
+            if PARENTS not in said:
+                row["father_id"], row["mother_id"] = was["father_id"], was["mother_id"]
+            # a stored sex wins over the one a role implies (a father the PED
+            # file recorded as female stays female; the load warns about it)
+            if SEX not in said and was["sex"] is not None:
+                row["sex"] = was["sex"]
+            if AFFECTED not in said:
+                row["affected"] = was["affected"]
+        out.append(row)
+    return out

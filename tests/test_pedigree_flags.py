@@ -9,7 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from cli.pedigree_flags import PedFlags, build_rows, parse_parents, parse_sex
+from cli.pedigree_flags import (
+    PedFlags,
+    build_rows,
+    keep_stored,
+    parse_parents,
+    parse_sex,
+)
 
 
 def rows_by_id(**kw) -> dict[str, dict]:
@@ -192,3 +198,107 @@ def test_spec_parsers():
 
 def test_an_empty_family_id_is_refused():
     assert "--family" in error(**trio(family=" "))
+
+
+# ───────────────────────── --merge: only what the flags state ─────────────────────────
+
+
+def stored_row(sample, family="famA", father="0", mother="0", sex=None, affected=None):
+    """A row as cli/pedigree_load.pedigree_rows gives it."""
+    return {
+        "sample_id": sample,
+        "family_id": family,
+        "father_id": father,
+        "mother_id": mother,
+        "sex": sex,
+        "affected": affected,
+    }
+
+
+# a slice of tests/fixtures/related_ext.ped: grandparents above F, an
+# unaffected sibling C2 and a half sibling H1
+STORED = [
+    stored_row("PGF", sex="male"),
+    stored_row("PGM", sex="female"),
+    stored_row("MGF", sex="male"),
+    stored_row("MGM", sex="female"),
+    stored_row("M2", sex="female"),
+    stored_row("F", father="PGF", mother="PGM", sex="male", affected="unaffected"),
+    stored_row("M", father="MGF", mother="MGM", sex="female", affected="unaffected"),
+    stored_row("C1", father="F", mother="M", sex="male", affected="affected"),
+    stored_row("C2", father="F", mother="M", sex="female", affected="unaffected"),
+    stored_row("H1", father="F", mother="M2", sex="male", affected="affected"),
+]
+
+
+def merged(stored=STORED, **kw) -> dict[str, dict]:
+    """The rows a --merge call writes, by sample."""
+    flags = PedFlags(**{**trio(family="famA"), **kw})
+    result = build_rows(flags, stored)
+    return {r["sample_id"]: r for r in keep_stored(result, stored)}
+
+
+def test_merge_writes_only_the_people_the_flags_name():
+    rows = merged()
+    assert set(rows) == {"C1", "F", "M"}  # C2, H1, the grandparents: not touched
+
+
+def test_merge_keeps_what_the_flags_say_nothing_about():
+    """Restating a stored trio rewrites exactly what is stored: a father named
+    only by --father keeps his own parents, his sex and his phenotype."""
+    rows = merged()
+    by_id = {r["sample_id"]: r for r in STORED}
+    for sample in ("C1", "F", "M"):
+        assert rows[sample] == by_id[sample], sample
+    assert (rows["F"]["father_id"], rows["F"]["mother_id"]) == ("PGF", "PGM")
+    assert rows["F"]["affected"] == "unaffected"  # not reset to unknown
+
+
+def test_merge_changes_what_the_flags_state_and_only_that():
+    rows = merged(mother="M2")  # C1's mother is now M2; M is no longer named
+    assert set(rows) == {"C1", "F", "M2"}
+    assert (rows["C1"]["father_id"], rows["C1"]["mother_id"]) == ("F", "M2")
+    assert rows["C1"]["sex"] == "male"  # stored, the flags did not say
+    assert rows["F"] == {r["sample_id"]: r for r in STORED}["F"]
+
+    rows = merged(
+        parents=("F=X,PGM",), unknown=("M",), sex=("C1=unknown", "M=male"),
+    )  # fmt: skip
+    assert (rows["F"]["father_id"], rows["F"]["mother_id"]) == ("X", "PGM")
+    assert rows["M"]["affected"] is None  # --unknown is a statement
+    assert rows["M"]["sex"] == "male" and rows["C1"]["sex"] is None
+    assert rows["M"]["father_id"] == "MGF"  # still not stated
+
+
+def test_merge_a_stored_sex_wins_over_the_one_a_role_implies():
+    stored = [*STORED[:5], stored_row("F", sex="female"), *STORED[6:]]
+    assert merged(stored)["F"]["sex"] == "female"  # the load warns about it
+    # a stored person without a sex gets the role's
+    stored = [stored_row("F"), *[r for r in STORED if r["sample_id"] != "F"]]
+    assert merged(stored)["F"]["sex"] == "male"
+
+
+def test_merge_writes_a_new_person_as_built():
+    rows = merged(mother="NEWM")
+    assert rows["NEWM"] == stored_row("NEWM", sex="female")
+    assert merged(STORED[:0])["C1"]["sex"] is None  # nothing stored: as built
+
+
+def test_merge_can_name_a_stored_person_just_to_change_one_thing():
+    rows = merged(unaffected=("H1",), sex=("H1=female",))
+    assert set(rows) == {"C1", "F", "M", "H1"}
+    assert rows["H1"] == stored_row(
+        "H1", father="F", mother="M2", sex="female", affected="unaffected"
+    )
+    # without a merge there is no stored pedigree to take them from
+    assert "who is not in the family" in error(**trio(unaffected=("H1",)))
+    assert "who is not in the family" in error(**trio(unaffected=("Z",)))
+    with pytest.raises(ValueError, match="who is not in the family"):
+        build_rows(PedFlags(**trio(unaffected=("Z",))), STORED)  # not stored either
+
+
+def test_what_the_flags_state_is_recorded_per_sample():
+    result = build_rows(PedFlags(**trio(sex=("F=male",), unknown=("M",))))
+    assert result.stated["C1"] == {"parents", "affected"}  # a proband
+    assert result.stated["F"] == {"sex"}
+    assert result.stated["M"] == {"affected"}

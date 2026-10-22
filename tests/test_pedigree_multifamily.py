@@ -7,12 +7,12 @@ per backend for the module. A test that changes the pedigree asks for the
 command), so every other test can read the base pedigree.
 
 `db ped` is the subject of the first half: the flag surface, `--merge` (a
-partial delete of the pedigree table on chDB: a mutation that removes the
-rows of the named families, i.e. their sample_id list, from a
-ReplacingMergeTree, where every `db ped` so far deleted the whole
-ingestion's rows), and the rule that every check happens before anything is
-deleted. The second half reads the families back (`db families`,
-`db trio`).
+partial delete by sample_id list on chDB: a mutation that removes only the
+rows of the samples the flags name from a ReplacingMergeTree, where every
+`db ped` so far deleted the whole ingestion's rows; with a PED file it
+removes the rows of the families the file lists), and the rule that every
+check happens before anything is deleted. The second half reads the
+families back (`db families`, `db trio`).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ TRUTH = json.loads((FIXTURES / "related_ext.truth.json").read_text())
 
 STORED = (
     "SELECT sample_id, family_id, father_id, mother_id, sex, affected "
-    "FROM pedigree ORDER BY sample_id"
+    "FROM pedigree ORDER BY sample_id, ingested_at"  # a later duplicate wins
 )
 
 
@@ -124,36 +124,103 @@ def test_the_original_related_fixture_was_not_touched():
     }
 
 
-# ─────────────────────────── --merge replaces whole families ───────────────────────────
+# ───────────────────────── --merge: what it replaces and what it keeps ─────────────────────────
 
 
-def test_merge_replaces_only_the_family_it_names(ext_home, backend, mutable, tmp_path):
-    assert by_family(stored(ext_home, backend)) == {"famA": 13, "famB": 5}
+def changed(before: dict, after: dict) -> dict[str, tuple]:
+    """sample -> (row before, row after) for every sample that differs."""
+    return {
+        s: (before.get(s), after.get(s))
+        for s in sorted({*before, *after})
+        if before.get(s) != after.get(s)
+    }
 
-    # flags: famB shrinks to K1 and its parents; famA is untouched
-    r = db(
-        ext_home, backend, "ped", "t", "--family", "famB", "--merge",
-        "--proband", "K1", "--father", "FB", "--mother", "MB",
-    )  # fmt: skip
-    assert "loaded pedigree: 3 individuals under ingest_id=i1" in r.stdout
+
+def test_a_ped_file_with_merge_replaces_the_families_it_lists_as_wholes(
+    ext_home, backend, mutable, tmp_path
+):
+    base = stored(ext_home, backend)
+    assert by_family(base) == {"famA": 13, "famB": 5}
+    famb = [line for line in EXT_PED.read_text().splitlines() if "famB" in line]
+
+    # famB listed without K2 and XB: they are removed, and the call says so
+    small = ped_file(tmp_path, "\n".join(famb[:3]) + "\n", "small.ped")  # FB MB K1
+    r = db(ext_home, backend, "ped", "t", str(small), "--merge")
     assert "families: famA(13), famB(3)" in r.stdout
-    rows = stored(ext_home, backend)
-    assert by_family(rows) == {"famA": 13, "famB": 3}
-    assert "K2" not in rows and "XB" not in rows
-    assert rows["C1"] == ["famA", "F", "M", "male", "affected"]  # famA as loaded
+    assert "removed from famB: K2, XB" in r.stdout
+    assert by_family(stored(ext_home, backend)) == {"famA": 13, "famB": 3}
 
-    # a PED file with --merge puts famB back and still leaves famA alone
-    famb = "".join(
-        line + "\n" for line in EXT_PED.read_text().splitlines() if "famB" in line
-    )
-    r = db(ext_home, backend, "ped", "t", str(ped_file(tmp_path, famb)), "--merge")
-    assert "families: famA(13), famB(5)" in r.stdout
-    assert by_family(stored(ext_home, backend)) == {"famA": 13, "famB": 5}
+    # the whole famB again: nothing removed, famA never touched
+    whole = ped_file(tmp_path, "\n".join(famb) + "\n", "whole.ped")
+    r = db(ext_home, backend, "ped", "t", str(whole), "--merge")
+    assert "families: famA(13), famB(5)" in r.stdout and "removed" not in r.stdout
+    assert stored(ext_home, backend) == base
 
-    # without --merge the same PED file is the whole pedigree, as it always was
-    r = db(ext_home, backend, "ped", "t", str(ped_file(tmp_path, famb)))
+    # without --merge the same file is the whole pedigree, as it always was
+    r = db(ext_home, backend, "ped", "t", str(whole))
     assert "families: famB(5)" in r.stdout
     assert by_family(stored(ext_home, backend)) == {"famB": 5}
+
+
+def test_flag_merge_changes_only_the_people_it_names_and_what_it_states(
+    ext_home, backend, mutable
+):
+    """The first thing to try on a family of 13: `--merge` with flags edits
+    the people the flags name. The grandparents, the half siblings, the
+    other family and what is stored about the parents all stay."""
+    base = stored(ext_home, backend)
+
+    # restating a stored trio rewrites exactly what is stored: F keeps his
+    # parents, M hers, C1 his sex, and C2, H1, the grandparents are not touched
+    r = db(
+        ext_home, backend, "ped", "t", "--family", "famA", "--merge",
+        "--proband", "C1", "--father", "F", "--mother", "M",
+    )  # fmt: skip
+    assert "loaded pedigree: 3 individuals" in r.stdout
+    assert "families: famA(13), famB(5)" in r.stdout and "removed" not in r.stdout
+    assert stored(ext_home, backend) == base
+
+    # C1 gets another mother, C2 is marked affected: those two rows change
+    r = db(
+        ext_home, backend, "ped", "t", "--family", "famA", "--merge",
+        "--proband", "C1", "--father", "F", "--mother", "M2", "--affected", "C2",
+    )  # fmt: skip
+    assert "families: famA(13), famB(5)" in r.stdout and "removed" not in r.stdout
+    assert "replacing the stored phenotype" not in r.stderr  # C2 was asked for
+    now = stored(ext_home, backend)
+    assert changed(base, now) == {
+        "C1": (base["C1"], ["famA", "F", "M2", "male", "affected"]),
+        "C2": (base["C2"], ["famA", "F", "M", "female", "affected"]),
+    }
+    assert base["C2"][4] == "unaffected"
+
+    # the old-app call with one parent as 0 turns K1 into a duo; the rest of
+    # famB (MB, K2, XB) stays where it was
+    r = db(
+        ext_home, backend, "ped", "t", "--proband", "K1", "--father", "FB",
+        "--mother", "0", "--family", "famB", "--merge",
+    )  # fmt: skip
+    assert "families: famA(13), famB(5)" in r.stdout and "removed" not in r.stdout
+    after = stored(ext_home, backend)
+    assert changed(now, after) == {
+        "K1": (now["K1"], ["famB", "FB", "0", "male", "affected"])
+    }
+
+
+def test_flag_merge_can_change_one_thing_about_a_stored_person(
+    ext_home, backend, mutable
+):
+    base = stored(ext_home, backend)
+    db(
+        ext_home, backend, "ped", "t", "--family", "famB", "--merge",
+        "--proband", "K1", "--father", "FB", "--mother", "MB",
+        "--unaffected", "K2", "--sex", "XB=female",
+    )  # fmt: skip
+    got = changed(base, stored(ext_home, backend))
+    assert got == {
+        "K2": (base["K2"], ["famB", "FB", "MB", "female", "unaffected"]),
+        "XB": (base["XB"], ["famB", "FB", "MB", "female", None]),
+    }
 
 
 def test_a_flag_call_that_would_delete_others_fails_and_names_merge(
@@ -161,7 +228,9 @@ def test_a_flag_call_that_would_delete_others_fails_and_names_merge(
 ):
     """The exact argument shape the desktop apps send: no --family, no
     --merge. They show nothing from a call that succeeds, so a replace that
-    would drop a family has to fail, with a message they can show."""
+    would drop a family has to fail, with a message they can show. The
+    remedy it names must keep the people it lists."""
+    base = stored(ext_home, backend)
     r = db(
         ext_home, backend, "ped", "t",
         "--proband", "C1", "--father", "F", "--mother", "M", ok=False,
@@ -169,15 +238,95 @@ def test_a_flag_call_that_would_delete_others_fails_and_names_merge(
     assert "--merge" in r.stderr
     assert "famB" in r.stderr and "K1" in r.stderr  # what would have been lost
     assert "`--family famA --merge`" in r.stderr  # where C1, F and M are stored
+    assert "keep everyone else as stored" in r.stderr
     assert "loaded pedigree" not in r.stdout
-    assert by_family(stored(ext_home, backend)) == {"famA": 13, "famB": 5}
+    assert stored(ext_home, backend) == base
 
-    # --merge is the way to do it on purpose: famA becomes the three, famB stays
-    db(
+    # the remedy, as printed: nobody is lost, not even the 10 other members
+    # of famA that the message listed
+    r = db(
         ext_home, backend, "ped", "t", "--family", "famA", "--merge",
         "--proband", "C1", "--father", "F", "--mother", "M",
     )  # fmt: skip
-    assert by_family(stored(ext_home, backend)) == {"famA": 3, "famB": 5}
+    assert "families: famA(13), famB(5)" in r.stdout
+    assert stored(ext_home, backend) == base
+
+
+def test_a_flag_call_without_merge_never_deletes_a_person_it_does_not_name(
+    ext_home, backend, mutable, tmp_path
+):
+    """No exception for a small family. The apps send the trio flags with no
+    --merge and show nothing from a call that succeeds, so a replace that
+    drops an unaffected sibling (evidence the flags cannot restate), or
+    swaps one proband for another, has to fail and leave the pedigree as
+    it was. A call that names everyone stored still replaces."""
+    fam1 = ped_file(
+        tmp_path,
+        "fam1\tF\t0\t0\t1\t0\nfam1\tM\t0\t0\t2\t0\n"
+        "fam1\tC1\tF\tM\t1\t2\nfam1\tC2\tF\tM\t2\t1\n",
+    )
+    db(ext_home, backend, "ped", "t", str(fam1))
+    base = stored(ext_home, backend)
+    assert by_family(base) == {"fam1": 4} and base["C2"][4] == "unaffected"
+
+    # the trio as the apps save it, over a family with an unaffected sibling
+    r = db(
+        ext_home, backend, "ped", "t", "--proband", "C1", "--father", "F",
+        "--mother", "M", ok=False,
+    )  # fmt: skip
+    assert "--merge" in r.stderr and "fam1: C2" in r.stderr
+    assert "loaded pedigree" not in r.stdout
+    # another proband over the stored one: C1 would go
+    r = db(
+        ext_home, backend, "ped", "t", "--proband", "C2", "--father", "F",
+        "--mother", "M", ok=False,
+    )  # fmt: skip
+    assert "--merge" in r.stderr and "fam1: C1" in r.stderr
+    # another mother: M would go
+    r = db(
+        ext_home, backend, "ped", "t", "--proband", "C1", "--proband", "C2",
+        "--father", "F", "--mother", "M2", ok=False,
+    )  # fmt: skip
+    assert "--merge" in r.stderr and "fam1: M" in r.stderr
+    assert stored(ext_home, backend) == base
+
+    # naming everybody stored deletes nobody and keeps what was asserted
+    r = db(
+        ext_home, backend, "ped", "t", "--proband", "C1", "--proband", "C2",
+        "--father", "F", "--mother", "M", "--unaffected", "C2",
+    )  # fmt: skip
+    assert "families: fam1(4)" in r.stdout and "removed" not in r.stdout
+    replaced = stored(ext_home, backend)
+    assert by_family(replaced) == {"fam1": 4} and replaced["C2"][4] == "unaffected"
+
+    # the remedy the message names keeps the sibling exactly as stored
+    r = db(
+        ext_home, backend, "ped", "t", "--merge", "--proband", "C1",
+        "--father", "F", "--mother", "M",
+    )  # fmt: skip
+    assert "families: fam1(4)" in r.stdout and "removed" not in r.stdout
+    assert stored(ext_home, backend) == replaced
+
+
+def test_a_flag_call_that_shares_nobody_with_the_stored_family_fails(
+    ext_home, backend, mutable, tmp_path
+):
+    """A stored family the call never names is not replaced just because it
+    is the only one: C1, F and M are not in famB."""
+    famb = [line for line in EXT_PED.read_text().splitlines() if "famB" in line]
+    db(ext_home, backend, "ped", "t", str(ped_file(tmp_path, "\n".join(famb) + "\n")))
+    base = stored(ext_home, backend)
+    assert by_family(base) == {"famB": 5}
+
+    r = db(
+        ext_home, backend, "ped", "t", "--proband", "C1", "--father", "F",
+        "--mother", "M", ok=False,
+    )  # fmt: skip
+    assert (
+        "--merge" in r.stderr and "famB: FB, K1, K2, MB" in r.stderr
+    )  # first four, then ...
+    assert "loaded pedigree" not in r.stdout
+    assert stored(ext_home, backend) == base
 
 
 # ───────────────────────── checks happen before any delete ─────────────────────────
@@ -202,7 +351,7 @@ def test_nothing_is_deleted_when_a_check_fails(ext_home, backend, tmp_path):
             "loops back",
         ),
         (
-            # C1 is stored in famA; --merge replaces families, it does not move people
+            # C1 is stored in famA; --merge keeps people in their family, it does not move them
             ["ped", "t", "--family", "famB", "--merge", "--proband", "C1",
              "--father", "FB", "--mother", "MB"],
             "already in family 'famA'",
@@ -223,6 +372,31 @@ def test_nothing_is_deleted_when_a_check_fails(ext_home, backend, tmp_path):
         assert expected in r.stderr, (args, r.stderr)
         assert "loaded pedigree" not in r.stdout
     assert stored(ext_home, backend) == before
+
+
+def test_a_problem_in_another_family_does_not_block_an_edit(ext_home, backend, mutable):
+    """A cycle in famB (an older vcfclick let such rows in) is reported when
+    famA is edited, not made the reason that famA cannot be edited. A cycle
+    the call itself would make is still refused. (The inserted row carries a
+    later ingested_at: that column has one-second resolution, so a row
+    inserted in the same second as the stored one would tie with it.)"""
+    db(
+        ext_home, backend, "query", "t",
+        "INSERT INTO pedigree (ingest_id, sample_id, family_id, father_id, "
+        "mother_id, sex, affected, ingested_at) VALUES "
+        "('i1', 'FB', 'famB', 'K1', '0', 'male', NULL, '2030-01-01 00:00:00')",
+    )  # fmt: skip
+    before = stored(ext_home, backend)
+    edit = ["ped", "t", "--family", "famA", "--merge", "--proband", "C1",
+            "--father", "F", "--mother", "M"]  # fmt: skip
+    r = db(ext_home, backend, *edit, "--affected", "C2")
+    assert "already has a problem" in r.stderr
+    assert "loops back on itself among FB, K1 (family famB)" in r.stderr
+    assert changed(before, stored(ext_home, backend)).keys() == {"C2"}
+
+    r = db(ext_home, backend, *edit, "--parents", "F=C1,PGM", ok=False)
+    assert "nothing was changed" in r.stderr and "(family famA)" in r.stderr
+    assert "famB" not in r.stderr
 
 
 def test_a_father_recorded_as_female_loads_with_a_warning(
@@ -283,7 +457,7 @@ def test_zero_declares_a_duo(ext_home, backend, mutable):
     )  # fmt: skip
     assert "loaded pedigree: 2 individuals" in r.stdout
     rows = stored(ext_home, backend)
-    assert rows["H1"][1:3] == ["0", "M2"] and "F" not in rows
+    assert rows["H1"][1:3] == ["0", "M2"] and by_family(rows) == {"famA": 13, "famB": 5}
     r = db(
         ext_home, backend, "ped", "t", "--proband", "H1", "--father", "0",
         "--mother", "0", ok=False,
@@ -294,17 +468,16 @@ def test_zero_declares_a_duo(ext_home, backend, mutable):
     # it with a note; naming it is still the old error until duos are analysed.
     doc = families_json(ext_home, backend)
     fam_a = next(f for f in doc["families"] if f["family_id"] == "famA")
-    assert [(t["child"], t["kind"], t["is_proband"]) for t in fam_a["trios"]] == [
-        ("H1", "duo", False)
-    ]
-    assert fam_a["probands"] == []
+    duos = [t for t in fam_a["trios"] if t["kind"] == "duo"]
+    assert [(t["child"], t["is_proband"]) for t in duos] == [("H1", False)]
+    assert fam_a["probands"] == ["C1", "C2T", "H2"]  # base: H1 was one too
     assert ("info", "duo", "famA") in {
         (q["level"], q["code"], q["family_id"]) for q in doc["problems"]
     }
     r = db(ext_home, backend, "trio", "t", "--category", "denovo", "--format", "json")
     assert "skipping H1: one declared parent (a duo)" in r.stderr
     assert [t["trio"]["proband"] for t in json.loads(r.stdout)["trios"]] == [
-        "K1", "K2", "XB",
+        "C1", "C2T", "H2", "K1", "K2", "XB",
     ]  # fmt: skip
     r = db(ext_home, backend, "trio", "t", "--proband", "H1", ok=False)
     assert "missing a parent" in r.stderr
@@ -373,9 +546,9 @@ def test_families_reads_a_pedigree_that_would_not_load(ext_home, backend, mutabl
     db(
         ext_home, backend, "query", "t",
         "INSERT INTO pedigree (ingest_id, sample_id, family_id, father_id, "
-        "mother_id, sex, affected) VALUES "
-        "('i1', 'PGF', 'famA', 'F', '0', 'male', NULL), "
-        "('i1', 'K2', 'famB', 'F', 'MB', 'female', NULL)",
+        "mother_id, sex, affected, ingested_at) VALUES "
+        "('i1', 'PGF', 'famA', 'F', '0', 'male', NULL, '2030-01-01 00:00:00'), "
+        "('i1', 'K2', 'famB', 'F', 'MB', 'female', NULL, '2030-01-01 00:00:00')",
     )  # fmt: skip
     doc = families_json(ext_home, backend)
     problems = {(q["code"], q["family_id"]) for q in doc["problems"]}

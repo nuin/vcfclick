@@ -5,11 +5,16 @@
 
 A pedigree may hold several families and several generations. A PED file
 describes the whole pedigree, so loading one replaces what is stored. The
-flags describe ONE family; to add or change a family without touching the
-others, pass --merge (it replaces only the family named by --family). A
-flag call that would delete individuals it does not name fails instead,
-and says so, because the programs that call `db ped` with flags (the
-desktop apps) show nothing from a call that succeeds.
+flags describe a few people of ONE family; to add or change them without
+touching anybody else, pass --merge: it rewrites only the people the flags
+name (and only what the flags say about them) and leaves every other
+individual as stored. With a PED file, --merge replaces the families the
+file lists as wholes and says who it removed. A flag call without --merge
+that would delete any individual it does not name fails instead, and says
+so, with no exception: the programs that call `db ped` with flags (the
+desktop apps) show nothing from a call that succeeds, and an unnamed person
+may be an unaffected sibling whose phenotype is evidence the flags cannot
+restate.
 
 The flag grammar and its rules are in cli/pedigree_flags.py; the write and
 its checks (all done before anything is deleted) are in ingest/pedigree.py.
@@ -23,7 +28,12 @@ import click
 
 from cli.main import _set_db, db
 from cli.options import command_options
-from cli.pedigree_flags import DEFAULT_FAMILY, PedFlags, build_rows
+from cli.pedigree_flags import (
+    DEFAULT_FAMILY,
+    PedFlags,
+    build_rows,
+    keep_stored,
+)
 from cli.pedigree_load import pedigree_rows
 from cli.trio_analysis import _sole_ingest_id
 
@@ -89,10 +99,21 @@ def _families_line(rows: list[dict]) -> str:
     )
 
 
+def _removed_lines(removed: list[dict]) -> list[str]:
+    """`removed from famB: K2, XB` for each family that lost individuals."""
+    return [
+        f"removed from {fam}: {', '.join(members)}"
+        for fam, members in _by_family(removed).items()
+    ]
+
+
 def _refuse_to_drop_others(existing: list[dict], rows: list[dict]) -> None:
     """A flag call without --merge replaces the whole pedigree of the
-    ingestion. If that would delete individuals the flags do not name, stop
-    and say how to do what was probably meant."""
+    ingestion. If that would delete any individual the flags do not name,
+    stop and say how to do what was probably meant. There is no exception
+    for a small or single-family pedigree: the callers that send flags show
+    nothing from a call that succeeds, and an unnamed sibling may carry an
+    asserted phenotype that the flags cannot say again."""
     named = {r["sample_id"] for r in rows}
     others = [e for e in existing if e["sample_id"] not in named]
     if not others:
@@ -108,19 +129,15 @@ def _refuse_to_drop_others(existing: list[dict], rows: list[dict]) -> None:
     homes = sorted({e["family_id"] for e in existing if e["sample_id"] in named})
     target = homes[0] if len(homes) == 1 else None
     if target is not None and declared != [target]:
-        advice = (
-            f"Add `--family {target} --merge` to replace only {target}, the "
-            "family these samples are stored in, and keep the others"
-        )
+        merge = f"`--family {target} --merge`"
     else:
-        advice = (
-            f"Add --merge to replace only the family you are declaring "
-            f"({', '.join(declared)}) and keep the others"
-        )
+        merge = "`--merge`"
     raise click.ClickException(
         f"the stored pedigree has {len(others)} individual(s) that this call "
         f"does not name ({'; '.join(shown)}), and replacing it would delete "
-        f"them. {advice}, or load a PED file to replace the whole pedigree."
+        f"them. Add {merge} to change only the people this call names and "
+        "keep everyone else as stored, or load a PED file to replace the "
+        "whole pedigree."
     )
 
 
@@ -195,10 +212,12 @@ def _warn_phenotype_changes(
 @click.option(
     "--merge",
     is_flag=True,
-    help="Replace only the families named in this call (the PED file's, or "
-    "--family) and keep every other family. Without it a PED file replaces "
-    "the whole pedigree, and a flag call that would delete individuals it "
-    "does not name fails.",
+    help="Keep what this call does not name. With flags: rewrite only the "
+    "people the flags name, and only what the flags say about them, and "
+    "leave everybody else as stored. With a PED file: replace the families "
+    "it lists as wholes (members it omits are removed, and listed) and keep "
+    "the other families. Without it a PED file replaces the whole pedigree, "
+    "and a flag call that would delete individuals it does not name fails.",
 )
 @click.option(
     "--affected",
@@ -239,9 +258,9 @@ def db_ped(options: PedigreeOptions) -> None:
 
     The individual ids must match sample ids already ingested under the
     target ingest_id, and all members share that one ingest_id. A PED file
-    replaces the stored pedigree for that ingest_id. Flags describe one
-    family; add --merge to replace just that family and keep the others.
-    Everything is checked before anything is deleted.
+    replaces the stored pedigree for that ingest_id. Flags describe some
+    people of one family; add --merge to change just them and keep everybody
+    else as stored. Everything is checked before anything is deleted.
     """
     name, ped_path, ingest_id = options.name, options.ped_path, options.ingest_id
     from storage import db_path
@@ -266,7 +285,7 @@ def db_ped(options: PedigreeOptions) -> None:
             f"--family, --parents and the like), not both (got {', '.join(given)})"
         )
 
-    from ingest.pedigree import load_rows, parse_ped, resulting_rows
+    from ingest.pedigree import load_rows, parse_ped, removed_rows, resulting_rows
     from storage import get_session, table_exists
 
     if not table_exists("pedigree"):
@@ -276,10 +295,14 @@ def db_ped(options: PedigreeOptions) -> None:
         )
     sess = get_session(name)
 
+    from_flags = ped_path is None
     try:
-        if ped_path is not None:
-            rows, warnings = parse_ped(ped_path), []
-        else:
+        # A PED file is the whole pedigree: only a merge or a flag call needs
+        # to know what is stored.
+        existing = (
+            pedigree_rows(sess, ingest_id) if options.merge or from_flags else None
+        )
+        if from_flags:
             built = build_rows(
                 PedFlags(
                     probands=options.proband,
@@ -292,24 +315,32 @@ def db_ped(options: PedigreeOptions) -> None:
                     unknown=options.unknown,
                     sex=options.sex,
                     proband_sex=options.proband_sex,
-                )
+                ),
+                stored=existing if options.merge else None,
             )
             rows, warnings = built.rows, built.warnings
-        # A PED file is the whole pedigree: only a merge or a flag call needs
-        # to know what is stored.
-        existing = (
-            pedigree_rows(sess, ingest_id)
-            if options.merge or ped_path is None
-            else None
-        )
-        if ped_path is None and not options.merge:
-            _refuse_to_drop_others(existing, rows)
+            if options.merge:
+                rows = keep_stored(built, existing)
+            else:
+                _refuse_to_drop_others(existing, rows)
             _warn_phenotype_changes(existing, rows, options)
+        else:
+            rows, warnings = parse_ped(ped_path), []
         for warning in warnings:
             click.echo(f"warning: {warning}", err=True)
-        n = load_rows(ingest_id, rows, merge=options.merge, existing=existing)
-        stored = resulting_rows(rows, existing, merge=options.merge)
+        n = load_rows(
+            ingest_id,
+            rows,
+            merge=options.merge,
+            existing=existing,
+            by_sample=from_flags,
+        )
+        stored = resulting_rows(
+            rows, existing, merge=options.merge, by_sample=from_flags
+        )
     except ValueError as e:
         raise click.ClickException(str(e)) from e
     click.echo(f"loaded pedigree: {n} individuals under ingest_id={ingest_id}")
     click.echo(_families_line(stored))
+    for line in _removed_lines(removed_rows(existing, stored)):
+        click.echo(line)
