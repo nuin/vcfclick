@@ -46,7 +46,8 @@ def test_the_document_has_exactly_the_documented_keys():
     fam = d["families"][0]
     assert list(fam) == ["family_id", "members", "probands", "trios"]
     assert list(fam["members"][0]) == [
-        "sample_id", "father", "mother", "sex", "affected", "genotyped", "generation",
+        "sample_id", "family_id", "father", "mother", "sex", "affected",
+        "genotyped", "generation",
     ]  # fmt: skip
     assert list(fam["trios"][0]) == [
         "child", "father", "mother", "kind", "is_proband", "siblings",
@@ -83,7 +84,8 @@ def test_members_probands_trios_and_duos():
     members = {m["sample_id"]: m for m in fam["members"]}
     assert [m["sample_id"] for m in fam["members"]][:2] == ["F", "M"]  # founders first
     assert members["C1"] == {
-        "sample_id": "C1", "father": "F", "mother": "M", "sex": "male",
+        "sample_id": "C1", "family_id": "famA", "father": "F", "mother": "M",
+        "sex": "male",
         "affected": "affected", "genotyped": True, "generation": 1,
     }  # fmt: skip
     assert members["GHOST"]["genotyped"] is False
