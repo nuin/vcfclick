@@ -249,7 +249,8 @@ the MCP tools.
 - Multi-allelic sites must be decomposed before ingest:
   `bcftools norm -m - input.vcf.gz`.
 - Pedigrees are loaded explicitly with `vcfclick db ped` (standard
-  PED/FAM); vcfclick does not infer relationships from the VCF.
+  PED/FAM, or flags; several families and generations); vcfclick does not
+  infer relationships from the VCF.
 - Trio analysis is candidate FILTERING, not variant calling; defensible
   de-novo needs `db ingest --keep-reference`. See [Trio](docs/TRIO.md).
 - `db popgen` analyses autosomes of one ingestion at a time; sex

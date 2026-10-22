@@ -48,7 +48,16 @@ def assert_trio_document(doc: dict) -> None:
     """Structural checks every trio document must pass, old keys and new."""
     assert list(doc)[: len(TOP_LEVEL)] == TOP_LEVEL
     trio = doc["trio"]
-    assert {"ingest_id", "proband", "father", "mother"} <= set(trio)
+    assert list(trio)[:4] == ["ingest_id", "proband", "father", "mother"]
+    # additive, after the original keys: where the proband sits in the pedigree
+    assert list(trio)[4:7] == ["family_id", "kind", "siblings"]
+    assert trio["family_id"] is None or isinstance(trio["family_id"], str)
+    assert trio["kind"] in ("trio", "duo")
+    assert isinstance(trio["siblings"], list)
+    for sib in trio["siblings"]:
+        assert list(sib) == ["sample", "kind"]
+        assert isinstance(sib["sample"], str)
+        assert sib["kind"] in ("full", "half_paternal", "half_maternal")
     assert isinstance(doc["keep_reference"], bool)
     gates = doc["gates"]
     assert list(gates)[: len(GATE_KEYS)] == GATE_KEYS
@@ -115,7 +124,15 @@ def test_contract_checker_rejects_what_would_blank_an_app():
     """The checker is not vacuous: each of these is a decode failure in at
     least one app."""
     good = {
-        "trio": {"ingest_id": "i", "proband": "C", "father": "F", "mother": "M"},
+        "trio": {
+            "ingest_id": "i",
+            "proband": "C",
+            "father": "F",
+            "mother": "M",
+            "family_id": "famA",
+            "kind": "trio",
+            "siblings": [{"sample": "S", "kind": "full"}],
+        },
         "keep_reference": True,
         "gates": dict.fromkeys(GATE_KEYS, 1)
         | {"gnomad_max_af": None, "af_gate": "applied"},
@@ -145,6 +162,10 @@ def test_contract_checker_rejects_what_would_blank_an_app():
     broken(lambda d: d["gates"].update(af_gate="maybe"))
     broken(lambda d: d["annotations"].update(genes="yes"))
     broken(lambda d: d["models"]["recessive"].update(blocked=True))
+    broken(lambda d: d["trio"].pop("siblings"))
+    broken(lambda d: d["trio"].update(kind="quad"))
+    broken(lambda d: d["trio"]["siblings"][0].update(kind="cousin"))
+    broken(lambda d: d["trio"]["siblings"][0].pop("kind"))
 
 
 @pytest.fixture

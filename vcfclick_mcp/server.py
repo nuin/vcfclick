@@ -43,6 +43,22 @@ _TRIO_PEDIGREE = """\
    (ingest_id, chrom, pos, ref, alt) aliasing the proband (g), father
    (f), mother (m). Genotype encoding: gt 0=hom-ref, 1=het, 2=hom-alt."""
 
+_TRIO_FAMILIES = """\
+   FAMILIES: `pedigree` can hold several families and several generations.
+   Scope pedigree queries by ingest_id AND family_id, never by sample_id
+   alone (family_id is a family's name; one ingest_id can carry many).
+   Grandparents are ordinary rows. A founder has father_id = mother_id =
+   '0'; a child with only one known parent has '0' on the other side.
+   `affected` is 'affected', 'unaffected' or NULL, and NULL means
+   UNKNOWN, not unaffected. A PROBAND is a child with both
+   parents declared who is not marked unaffected and who has no children
+   of their own or is affected: `vcfclick db families --format json` lists
+   them per family, and `db trio` without --proband analyses exactly
+   those (--family FID for one family, --all-trios for every child).
+   Siblings share a declared parent: full siblings both, half siblings
+   one. A half sibling is evidence about a variant only if it is a child
+   of the parent the variant came from."""
+
 _TRIO_MODELS = f"""\
    Inheritance models (gt comes from `genotypes`):
      - recessive:  g.gt=2 AND f.gt=1 AND m.gt=1
@@ -91,6 +107,7 @@ _TRIO_COHORT_AF = f"""\
 _TRIO_CONVENTION = "\n\n".join(
     [
         _TRIO_PEDIGREE,
+        _TRIO_FAMILIES,
         _TRIO_MODELS,
         _TRIO_DENOVO_CAVEAT,
         _TRIO_GATES,

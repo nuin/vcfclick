@@ -1,0 +1,264 @@
+{
+  "samples": [
+    "PGF",
+    "PGM",
+    "MGF",
+    "MGM",
+    "M2",
+    "UF",
+    "F",
+    "M",
+    "C1",
+    "C2",
+    "C2T",
+    "H1",
+    "H2",
+    "FB",
+    "MB",
+    "K1",
+    "K2",
+    "XB"
+  ],
+  "families": {
+    "famA": [
+      "PGF",
+      "PGM",
+      "MGF",
+      "MGM",
+      "M2",
+      "UF",
+      "F",
+      "M",
+      "C1",
+      "C2",
+      "C2T",
+      "H1",
+      "H2"
+    ],
+    "famB": [
+      "FB",
+      "MB",
+      "K1",
+      "K2",
+      "XB"
+    ]
+  },
+  "declared_parents": {
+    "UF": [
+      "PGF",
+      "PGM"
+    ],
+    "F": [
+      "PGF",
+      "PGM"
+    ],
+    "M": [
+      "MGF",
+      "MGM"
+    ],
+    "C1": [
+      "F",
+      "M"
+    ],
+    "C2": [
+      "F",
+      "M"
+    ],
+    "C2T": [
+      "F",
+      "M"
+    ],
+    "H1": [
+      "F",
+      "M2"
+    ],
+    "H2": [
+      "F",
+      "M2"
+    ],
+    "K1": [
+      "FB",
+      "MB"
+    ],
+    "K2": [
+      "FB",
+      "MB"
+    ],
+    "XB": [
+      "FB",
+      "MB"
+    ]
+  },
+  "true_parents": {
+    "UF": [
+      "PGF",
+      "PGM"
+    ],
+    "F": [
+      "PGF",
+      "PGM"
+    ],
+    "M": [
+      "MGF",
+      "MGM"
+    ],
+    "C1": [
+      "F",
+      "M"
+    ],
+    "C2": [
+      "F",
+      "M"
+    ],
+    "H1": [
+      "F",
+      "M2"
+    ],
+    "H2": [
+      "F",
+      "M"
+    ],
+    "K1": [
+      "FB",
+      "MB"
+    ],
+    "K2": [
+      "FB",
+      "MB"
+    ],
+    "XB": [
+      "F",
+      "M"
+    ]
+  },
+  "mz_twin_of": {
+    "C2T": "C2"
+  },
+  "affected": [
+    "C1",
+    "H1",
+    "K1"
+  ],
+  "unaffected": [
+    "UF",
+    "F",
+    "C2"
+  ],
+  "probands": {
+    "famA": [
+      "C1",
+      "C2T",
+      "H1",
+      "H2"
+    ],
+    "famB": [
+      "K1",
+      "K2",
+      "XB"
+    ]
+  },
+  "trios_not_probands": {
+    "C2": "explicitly unaffected",
+    "UF": "explicitly unaffected",
+    "F": "explicitly unaffected, and has children",
+    "M": "has children and is not affected"
+  },
+  "siblings": {
+    "C1": {
+      "C2": "full",
+      "C2T": "full",
+      "H1": "half_paternal",
+      "H2": "half_paternal"
+    },
+    "H1": {
+      "C1": "half_paternal",
+      "C2": "half_paternal",
+      "C2T": "half_paternal",
+      "H2": "full"
+    },
+    "K1": {
+      "K2": "full",
+      "XB": "full"
+    },
+    "F": {
+      "UF": "full"
+    }
+  },
+  "generation": {
+    "PGF": 0,
+    "PGM": 0,
+    "MGF": 0,
+    "MGM": 0,
+    "M2": 0,
+    "FB": 0,
+    "MB": 0,
+    "UF": 1,
+    "F": 1,
+    "M": 1,
+    "K1": 1,
+    "K2": 1,
+    "XB": 1,
+    "C1": 2,
+    "C2": 2,
+    "C2T": 2,
+    "H1": 2,
+    "H2": 2
+  },
+  "planted": {
+    "denovo_C1": {
+      "pos": 200000000,
+      "carriers": {
+        "C1": 1
+      },
+      "candidate_for": {
+        "denovo": [
+          "C1"
+        ]
+      }
+    },
+    "denovo_K1": {
+      "pos": 200100000,
+      "carriers": {
+        "K1": 1
+      },
+      "candidate_for": {
+        "denovo": [
+          "K1"
+        ]
+      }
+    },
+    "dominant_H1": {
+      "pos": 200200000,
+      "carriers": {
+        "PGF": 1,
+        "F": 1,
+        "H1": 1
+      },
+      "candidate_for": {
+        "dominant": [
+          "H1"
+        ]
+      }
+    },
+    "recessive_K1": {
+      "pos": 200300000,
+      "carriers": {
+        "FB": 1,
+        "MB": 1,
+        "K1": 2
+      },
+      "candidate_for": {
+        "recessive": [
+          "K1"
+        ]
+      }
+    }
+  },
+  "candidates_for_non_probands": {
+    "dominant_H1": {
+      "dominant": [
+        "F"
+      ]
+    }
+  }
+}

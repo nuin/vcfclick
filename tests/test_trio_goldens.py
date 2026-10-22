@@ -45,6 +45,8 @@ BACKENDS = ("chdb", "duckdb")
 ADDED_KEYS = {
     "model": {"blocked_reason"},  # models.<name>.blocked_reason
     "gates": {"af_gate"},  # gates.af_gate
+    "trio": {"family_id", "kind", "siblings"},  # trio.<key> (pedigree P1)
+    "top": {"families"},  # the families of a no-`--proband` {"trios": [...]}
 }
 
 GIAB = FIXTURES / "giab"
@@ -215,7 +217,12 @@ def _build(store: Store, home: Path, backend: str, monkeypatch, tmp_path) -> Non
 def _strip_added(doc: dict) -> dict:
     """Remove the additive keys from a trio document (or a `trios` list)."""
     docs = doc["trios"] if "trios" in doc else [doc]
+    if "trios" in doc:
+        for key in ADDED_KEYS["top"]:
+            doc.pop(key, None)
     for d in docs:
+        for key in ADDED_KEYS["trio"]:
+            d["trio"].pop(key, None)
         for key in ADDED_KEYS["gates"]:
             d["gates"].pop(key, None)
         for model in d["models"].values():

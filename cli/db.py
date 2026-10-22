@@ -15,6 +15,8 @@ for _module in (
     "cli.db_diff",
     "cli.db_batch",
     "cli.db_stats",
+    "cli.db_ped",
+    "cli.db_families",
     "cli.db_trio",
     "cli.db_qc",
     "cli.db_relatedness",

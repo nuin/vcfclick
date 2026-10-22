@@ -45,12 +45,19 @@ FAM1  FATHER  0       0       1  1
 FAM1  MOTHER  0       0       2  1
 ```
 
-- paternal/maternal `0` = founder (no parent in the file)
+- paternal/maternal `0` = no parent declared (a founder, or the unknown side
+  of a duo)
 - sex: 1 = male, 2 = female
-- phenotype: 1 = unaffected, 2 = affected
+- phenotype: 1 = unaffected, 2 = affected, `0` or `-9` = unknown (stored as
+  NULL, which is *unknown*, not unaffected)
 
 `db ped` validates that every individual and named parent is a real
-sample in the cohort, and re-loading replaces the prior pedigree.
+sample in the cohort, and that the pedigree has no cycle, no one who is
+their own parent and no parent in a different family, before it changes
+anything. Loading a PED file replaces the prior pedigree; the family column
+lets one file (or several `--merge` loads) hold more than one family, and a
+family can span generations. See [Families, generations and
+probands](#families-generations-and-probands).
 
 ## Inheritance models
 
@@ -209,22 +216,183 @@ the 4 confident sites and excludes the 3 sampled no-call sites, and
 `bcftools +mendelian2` independently flags the same 4. See
 [Validation](VALIDATION.md).
 
-## Families with several children
+## Families, generations and probands
 
-Every child in the pedigree with both parents declared can be a proband:
-a PED file with siblings needs nothing more, and without a file
-`--proband` repeats:
+A pedigree can hold several families, and a family can span generations:
+a child's parents may have parents of their own in the pedigree. Each
+individual is one row of `pedigree` (`family_id`, `father_id`, `mother_id`,
+`sex`, `affected`); `0` means no parent declared. Every individual and
+every named parent must be a sample ingested under the same `ingest_id`.
+Each proband is analysed as its own trio against its own parents, so a de
+novo call in one sibling and not the other is the expected picture; shared
+candidates have to be read across the reports.
+
+### Declaring a family without a PED file
 
 ```bash
+# a trio, or siblings who share the same parents
 vcfclick db ped fam1 --proband SIB1 --proband SIB2 --father DAD --mother MUM
-vcfclick db trio fam1                 # one report per child, in turn
-vcfclick db trio fam1 --proband SIB2  # just one
+
+# grandparents, an unaffected sibling and an affected half sibling, in a
+# named family
+vcfclick db ped fam1 --family famA --proband C1 --father F --mother M \
+    --parents F=PGF,PGM --parents C2=F,M --parents H1=F,M2 \
+    --unaffected C2 --affected H1 --sex C1=male
 ```
 
-`--proband-sex` applies to a single `--proband`; a PED file carries each
-sibling's sex. Each child is analysed as its own trio against the same
-parents, so a de novo call in one sibling and not the other is the
-expected picture; shared candidates have to be read across the reports.
+| Flag | Meaning |
+|---|---|
+| `--proband S` | an affected child of `--father` and `--mother` (repeatable) |
+| `--father F`, `--mother M` | the parents of the probands; `0` for a parent that is not known (a *duo*), never both |
+| `--family FID` | the family every listed sample joins (default `fam1`) |
+| `--parents CHILD=F,M` | the parents of any other member, for grandparents and half siblings (repeatable; `0` for an unknown side) |
+| `--affected S`, `--unaffected S`, `--unknown S` | set the phenotype of any listed sample (repeatable) |
+| `--sex ID=male\|female\|unknown` | set the sex of any listed sample (repeatable); `--proband-sex` does the same for a single proband |
+| `--merge` | change only the people this call names and keep everybody else as stored (see below) |
+
+Probands are stored as affected and **everyone else as unknown**, parents
+included: a parent's status is an assertion (it decides reduced
+penetrance), so only a PED file or an explicit `--affected`/`--unaffected`
+makes one. A father is stored male and a mother female unless `--sex` says
+otherwise (reported as a warning). A PED file carries each individual's sex
+and phenotype itself. (Under `--merge`, these are what a person who is not
+stored yet gets; someone already stored keeps what is stored unless a flag
+says otherwise.)
+
+Everything is checked before the stored pedigree is touched: a sample that is
+not in the cohort, an individual who is their own parent, a cycle of
+ancestors, a parent in a different family, or a sample moving to another
+family under `--merge` is refused, and nothing is changed. The error names
+the family it is in. Under `--merge` only a problem the call would *introduce*
+refuses it: a cycle that an earlier vcfclick let into another family (or
+into this one, somewhere the call does not touch) is reported as a `warning:`
+and left as it is, so one broken family does not make the rest unreadable
+to edit; `db families` lists what is wrong.
+
+### Replacing and merging
+
+A PED file is a whole pedigree: loading one replaces what is stored for the
+`ingest_id`. The flags describe **a few people** of one family, so `db ped`
+treats them more carefully:
+
+- `--merge` with flags rewrites **only the people the flags name**, and only
+  what the flags say about them. Everybody else, in the same family or
+  another, stays exactly as stored. A person the flags name without saying
+  more (a father given only by `--father`) keeps their own parents, sex and
+  phenotype, so `--family famA --merge --proband C1 --father F --mother M`
+  on a family of 13 rewrites C1, F and M as they were and changes nothing.
+  What the flags do say wins: the proband's parents, `--parents`,
+  `--affected`/`--unaffected`/`--unknown`, `--sex`. Those last flags may also
+  name a person who is stored but not otherwise in the call
+  (`--unaffected K2`), to change just that. A sample that is stored in one
+  family cannot join another this way; a person cannot be removed with flags
+  either (use a PED file).
+- `--merge` with a PED file replaces the families the file lists **as
+  wholes** and keeps every other family. A member of such a family that the
+  file does not list is removed, and `db ped` says so
+  (`removed from famB: K2, XB`).
+- Without `--merge`, a flag call that would delete individuals it does not
+  name **fails** and says which, and what to add (`--family FID --merge`
+  when the samples it names already live in one family). The desktop apps
+  show nothing from a call that succeeds, so a quiet replace would lose
+  people without anyone noticing. There is no exception for a small family:
+  an unaffected sibling the call does not name is as protected as a
+  grandparent, and so is the stored proband when a call names another one.
+  To change the people a call names, add `--merge`; to replace everything on
+  purpose, load a PED file. A call that names every stored individual
+  replaces them and removes nobody.
+- When a flag call does replace the stored phenotype of an individual that was
+  marked affected or unaffected with a different one it was not asked for
+  (probands default to affected, others to unknown), a `warning:` on stderr
+  names them.
+
+### Probands and `db families`
+
+A **proband** is an analysable child, that is a child with both parents
+declared and in the data (a trio), who is **not marked unaffected** and who
+**either has no children of their own or is affected**. Two consequences: in
+a three-generation family the parents in the middle are trios but not
+probands unless they are affected, and a child marked unaffected (a healthy
+sibling) is not a proband. One rule is used everywhere: `db families`,
+`db trio` without `--proband`, and the proband list of the web UI.
+
+```bash
+vcfclick db families fam1                  # text
+vcfclick db families fam1 --format json    # what other programs read
+```
+
+`db families` is read-only. It lists each family's members by generation
+(founders are generation 0), the probands, every trio with its siblings and
+why a child is not a proband, and any problem it finds in the pedigree: an
+error (a cycle, a parent in another family, an individual as their own
+parent), a warning (a father recorded as female, an individual that is not a
+sample in the data) or an info (a duo). It reads tolerantly, so a pedigree
+that an older vcfclick let in is described, not refused, and the command exits
+0 either way. JSON shape:
+
+```json
+{"ingest_id": "i1",
+ "families": [{"family_id": "famA",
+               "members": [{"sample_id": "C1", "family_id": "famA", "father": "F",
+                            "mother": "M", "sex": "male", "affected": "affected",
+                            "genotyped": true, "generation": 2}],
+               "probands": ["C1"],
+               "trios": [{"child": "C1", "father": "F", "mother": "M",
+                          "kind": "trio", "is_proband": true,
+                          "siblings": [{"sample": "C2", "kind": "full"}]}]}],
+ "problems": [{"family_id": "famA", "level": "info", "code": "duo",
+               "message": "..."}]}
+```
+
+`sex`, `affected`, `father`, `mother` and `generation` are `null` when unknown
+(a member on or below a cycle has no generation). `problems[].code` is one of
+`cycle`, `self_parent`, `same_parent`, `cross_family_parent`, `parent_sex`,
+`not_genotyped`, `parent_without_row` or `duo`.
+
+### Running `db trio` over a family
+
+```bash
+vcfclick db trio fam1                      # the probands of every family
+vcfclick db trio fam1 --family famB        # the probands of one family
+vcfclick db trio fam1 --all-trios          # every child with both parents declared
+vcfclick db trio fam1 --proband SIB2       # one
+```
+
+Reports are ordered by family and then sample id; with more than one family
+the text output names the family above each trio. A note on stderr lists the
+children that are not probands (and why) and the duos that were skipped, and
+points at `--all-trios`. `--family` and `--all-trios` cannot be combined with
+`--proband`. If a family has trios but no proband (every child is marked
+unaffected, say) the error says so and names `--all-trios`.
+
+Before probands were defined, `db trio` without `--proband` ran every child
+with both parents declared. A PED file with an unaffected sibling, or with a
+middle generation, now gets fewer reports by default, and `--all-trios`
+restores the old set. A one-generation family whose children are not marked
+unaffected gets exactly the output it always did.
+
+### Siblings
+
+Siblings share a declared parent: **full** siblings share both,
+**half** siblings one (`half_paternal` or `half_maternal`). Each trio of a
+`db trio --format json` document carries its siblings (see below), so a
+consumer reading shared candidates across reports knows who is related how.
+A half sibling is evidence about a variant only if it is a child of the
+parent the variant came from; a half sibling who lacks the allele says nothing
+about an allele from the other parent.
+
+### Duos
+
+A child with one parent declared (`--father 0`, or a PED row with a `0`
+parent) is a **duo**. It is stored, shown by `db families` (`kind: "duo"`, an
+`info` problem), and not offered as a proband: duo analysis is a separate
+feature. `db trio` skips duos without `--proband` and says so; naming one
+still gives the "missing a parent" error.
+
+### Older databases
+
+A database that predates the pedigree table says `no pedigree loaded` (from
+`db families`, `db trio` and the web UI) instead of failing in SQL.
 
 ## Natural language
 
@@ -240,18 +408,23 @@ document: per model the candidate count, whether it is blocked by a missing
 population AF and, when those annotations are loaded, gene, gnomAD popmax and
 ClinVar significance. Compound hets come grouped by gene with the paternal and
 maternal hits. `--limit` caps candidates per model (default 1000). The desktop
-apps use this. Without `--proband` the output is `{"trios": [...]}`, one such
-document per child in the pedigree.
+apps use this. Without `--proband` the output is
+`{"trios": [...], "families": [...]}`: one such document per proband (see
+[Probands](#probands-and-db-families)), ordered by family and sample id, and
+the ids of the families they belong to.
 
 A family can be declared without a PED file:
 `vcfclick db ped NAME --proband HG002 --father HG003 --mother HG004`
-(`--proband` repeats for siblings).
+(`--proband` repeats for siblings; see [Declaring a
+family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
 
 ### The document
 
 ```json
 {
-  "trio": {"ingest_id": "fam1", "proband": "CHILD", "father": "FATHER", "mother": "MOTHER"},
+  "trio": {"ingest_id": "fam1", "proband": "CHILD", "father": "FATHER", "mother": "MOTHER",
+           "family_id": "FAM1", "kind": "trio",
+           "siblings": [{"sample": "SIB", "kind": "full"}]},
   "keep_reference": true,
   "gates": {"min_gq": 20, "min_dp": 10, "max_af": 0.01, "min_ab": 0.25,
             "max_ab": 0.75, "gnomad_max_af": null, "af_gate": "applied"},
@@ -266,6 +439,12 @@ A family can be declared without a PED file:
 }
 ```
 
+- `trio.family_id` is the proband's family in the pedigree (`null` if the
+  proband has no row of its own), `trio.kind` is `trio` or `duo`, and
+  `trio.siblings` lists everyone who shares a declared parent, each as
+  `{"sample", "kind"}` with `kind` one of `full`, `half_paternal` or
+  `half_maternal` (an empty list for an only child). They come after the four
+  original keys, in that order.
 - `models` lists the models of `--category`, in the order `denovo`,
   `recessive`, `dominant`, `comphet`.
 - `blocked` is true when the model cannot be decided because the database has
@@ -306,9 +485,13 @@ missing or changes type. So:
 - **Old keys are byte-stable.** `tests/test_trio_goldens.py` captures the CLI
   output of the four classic models on `related.vcf`, `trio.vcf.gz` and the
   GIAB trios, text and JSON, on both backends; after removing the keys the test
-  whitelists as new (`blocked_reason`, `gates.af_gate`) it must match byte for
-  byte. A change that needs an old key to move has to say so in its commit and
-  regenerate those goldens deliberately.
+  whitelists as new (`blocked_reason`, `gates.af_gate`, `trio.family_id`,
+  `trio.kind`, `trio.siblings` and the top-level `families` of a no-`--proband`
+  list) it must match byte for byte. A change that needs an old key to move has
+  to say so in its commit and regenerate those goldens deliberately. The
+  complete document of one proband, new keys included, is pinned separately
+  (`tests/goldens/trio_full/`), and the `db families` document too
+  (`tests/goldens/families/`).
 - **Readers ignore keys they do not know,** and treat every field a model might
   one day leave out as optional.
 - Every model object has an integer `count`, a boolean `blocked` and a boolean
@@ -329,6 +512,9 @@ on it or write it into a VCF**; render it as `./.`.
 The Trio tab of `vcfclick web` offers the same four models (its list is
 generated from the CLI's, so the two cannot drift), `/api/trio` returns
 `af_gate` and a `note` for the keep-reference and cohort-AF cases, and the MCP
-briefing gives an LLM the same model names, the NULL-tolerant gate wording
-and the cohort-derived-AF warning. See [WEB](WEB.md) and [MCP](MCP.md).
+briefing gives an LLM the same model names, the NULL-tolerant gate wording,
+the cohort-derived-AF warning and how families, `affected = NULL` and
+probands work. `/api/meta` lists the probands by the same rule as `db trio`
+and a `families` list (per family its probands and its trios with siblings).
+See [WEB](WEB.md) and [MCP](MCP.md).
 

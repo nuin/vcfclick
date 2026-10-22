@@ -1,0 +1,421 @@
+{
+  "ingest_id": "i1",
+  "families": [
+    {
+      "family_id": "famA",
+      "members": [
+        {
+          "sample_id": "M2",
+          "family_id": "famA",
+          "father": null,
+          "mother": null,
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 0
+        },
+        {
+          "sample_id": "MGF",
+          "family_id": "famA",
+          "father": null,
+          "mother": null,
+          "sex": "male",
+          "affected": null,
+          "genotyped": true,
+          "generation": 0
+        },
+        {
+          "sample_id": "MGM",
+          "family_id": "famA",
+          "father": null,
+          "mother": null,
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 0
+        },
+        {
+          "sample_id": "PGF",
+          "family_id": "famA",
+          "father": null,
+          "mother": null,
+          "sex": "male",
+          "affected": null,
+          "genotyped": true,
+          "generation": 0
+        },
+        {
+          "sample_id": "PGM",
+          "family_id": "famA",
+          "father": null,
+          "mother": null,
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 0
+        },
+        {
+          "sample_id": "F",
+          "family_id": "famA",
+          "father": "PGF",
+          "mother": "PGM",
+          "sex": "male",
+          "affected": "unaffected",
+          "genotyped": true,
+          "generation": 1
+        },
+        {
+          "sample_id": "M",
+          "family_id": "famA",
+          "father": "MGF",
+          "mother": "MGM",
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 1
+        },
+        {
+          "sample_id": "UF",
+          "family_id": "famA",
+          "father": "PGF",
+          "mother": "PGM",
+          "sex": "male",
+          "affected": "unaffected",
+          "genotyped": true,
+          "generation": 1
+        },
+        {
+          "sample_id": "C1",
+          "family_id": "famA",
+          "father": "F",
+          "mother": "M",
+          "sex": "male",
+          "affected": "affected",
+          "genotyped": true,
+          "generation": 2
+        },
+        {
+          "sample_id": "C2",
+          "family_id": "famA",
+          "father": "F",
+          "mother": "M",
+          "sex": "female",
+          "affected": "unaffected",
+          "genotyped": true,
+          "generation": 2
+        },
+        {
+          "sample_id": "C2T",
+          "family_id": "famA",
+          "father": "F",
+          "mother": "M",
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 2
+        },
+        {
+          "sample_id": "H1",
+          "family_id": "famA",
+          "father": "F",
+          "mother": "M2",
+          "sex": "male",
+          "affected": "affected",
+          "genotyped": true,
+          "generation": 2
+        },
+        {
+          "sample_id": "H2",
+          "family_id": "famA",
+          "father": "F",
+          "mother": "M2",
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 2
+        }
+      ],
+      "probands": [
+        "C1",
+        "C2T",
+        "H1",
+        "H2"
+      ],
+      "trios": [
+        {
+          "child": "C1",
+          "father": "F",
+          "mother": "M",
+          "kind": "trio",
+          "is_proband": true,
+          "siblings": [
+            {
+              "sample": "C2",
+              "kind": "full"
+            },
+            {
+              "sample": "C2T",
+              "kind": "full"
+            },
+            {
+              "sample": "H1",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "H2",
+              "kind": "half_paternal"
+            }
+          ]
+        },
+        {
+          "child": "C2",
+          "father": "F",
+          "mother": "M",
+          "kind": "trio",
+          "is_proband": false,
+          "siblings": [
+            {
+              "sample": "C1",
+              "kind": "full"
+            },
+            {
+              "sample": "C2T",
+              "kind": "full"
+            },
+            {
+              "sample": "H1",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "H2",
+              "kind": "half_paternal"
+            }
+          ]
+        },
+        {
+          "child": "C2T",
+          "father": "F",
+          "mother": "M",
+          "kind": "trio",
+          "is_proband": true,
+          "siblings": [
+            {
+              "sample": "C1",
+              "kind": "full"
+            },
+            {
+              "sample": "C2",
+              "kind": "full"
+            },
+            {
+              "sample": "H1",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "H2",
+              "kind": "half_paternal"
+            }
+          ]
+        },
+        {
+          "child": "F",
+          "father": "PGF",
+          "mother": "PGM",
+          "kind": "trio",
+          "is_proband": false,
+          "siblings": [
+            {
+              "sample": "UF",
+              "kind": "full"
+            }
+          ]
+        },
+        {
+          "child": "H1",
+          "father": "F",
+          "mother": "M2",
+          "kind": "trio",
+          "is_proband": true,
+          "siblings": [
+            {
+              "sample": "C1",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "C2",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "C2T",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "H2",
+              "kind": "full"
+            }
+          ]
+        },
+        {
+          "child": "H2",
+          "father": "F",
+          "mother": "M2",
+          "kind": "trio",
+          "is_proband": true,
+          "siblings": [
+            {
+              "sample": "C1",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "C2",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "C2T",
+              "kind": "half_paternal"
+            },
+            {
+              "sample": "H1",
+              "kind": "full"
+            }
+          ]
+        },
+        {
+          "child": "M",
+          "father": "MGF",
+          "mother": "MGM",
+          "kind": "trio",
+          "is_proband": false,
+          "siblings": []
+        },
+        {
+          "child": "UF",
+          "father": "PGF",
+          "mother": "PGM",
+          "kind": "trio",
+          "is_proband": false,
+          "siblings": [
+            {
+              "sample": "F",
+              "kind": "full"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "family_id": "famB",
+      "members": [
+        {
+          "sample_id": "FB",
+          "family_id": "famB",
+          "father": null,
+          "mother": null,
+          "sex": "male",
+          "affected": null,
+          "genotyped": true,
+          "generation": 0
+        },
+        {
+          "sample_id": "MB",
+          "family_id": "famB",
+          "father": null,
+          "mother": null,
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 0
+        },
+        {
+          "sample_id": "K1",
+          "family_id": "famB",
+          "father": "FB",
+          "mother": "MB",
+          "sex": "male",
+          "affected": "affected",
+          "genotyped": true,
+          "generation": 1
+        },
+        {
+          "sample_id": "K2",
+          "family_id": "famB",
+          "father": "FB",
+          "mother": "MB",
+          "sex": "female",
+          "affected": null,
+          "genotyped": true,
+          "generation": 1
+        },
+        {
+          "sample_id": "XB",
+          "family_id": "famB",
+          "father": "FB",
+          "mother": "MB",
+          "sex": "male",
+          "affected": null,
+          "genotyped": true,
+          "generation": 1
+        }
+      ],
+      "probands": [
+        "K1",
+        "K2",
+        "XB"
+      ],
+      "trios": [
+        {
+          "child": "K1",
+          "father": "FB",
+          "mother": "MB",
+          "kind": "trio",
+          "is_proband": true,
+          "siblings": [
+            {
+              "sample": "K2",
+              "kind": "full"
+            },
+            {
+              "sample": "XB",
+              "kind": "full"
+            }
+          ]
+        },
+        {
+          "child": "K2",
+          "father": "FB",
+          "mother": "MB",
+          "kind": "trio",
+          "is_proband": true,
+          "siblings": [
+            {
+              "sample": "K1",
+              "kind": "full"
+            },
+            {
+              "sample": "XB",
+              "kind": "full"
+            }
+          ]
+        },
+        {
+          "child": "XB",
+          "father": "FB",
+          "mother": "MB",
+          "kind": "trio",
+          "is_proband": true,
+          "siblings": [
+            {
+              "sample": "K1",
+              "kind": "full"
+            },
+            {
+              "sample": "K2",
+              "kind": "full"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "problems": []
+}

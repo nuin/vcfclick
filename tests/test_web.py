@@ -183,6 +183,88 @@ def test_meta_lists_live_columns_of_an_older_database(duckdb_cohort):
     assert "an_called" in variants["columns"] and "chrom" in variants["columns"]
 
 
+def test_meta_without_a_pedigree_has_no_probands(duckdb_cohort):
+    m = client.get("/api/meta").json()
+    assert m["probands"] == [] and m["families"] == []
+
+
+def test_meta_of_a_database_with_no_pedigree_table(trio_web_store):
+    """An older database has no `pedigree` table at all: the picker is empty
+    and the schema list leaves the table out, instead of /api/meta failing."""
+    trio_web_store(FIX / "trio.vcf.gz")
+    _query("DROP TABLE pedigree")
+    m = client.get("/api/meta").json()
+    assert m["probands"] == [] and m["families"] == []
+    assert "pedigree" not in {t["name"] for t in m["tables"]}
+    # /api/trio says why, in the words `db trio` uses
+    d = client.get("/api/trio", params={"proband": "CHILD"}).json()
+    assert "no pedigree loaded" in d["error"]
+
+
+def _query(sql: str) -> None:
+    from storage import get_session
+
+    get_session().query(sql, "CSV")
+
+
+def test_meta_probands_follow_the_proband_rule_and_families_are_served(
+    trio_web_store,
+):
+    """Several families and generations: `probands` is the flat list by the
+    one rule `db trio` and `db families` use; `families` is the structure."""
+    trio_web_store(FIX / "related_ext.vcf", ped=FIX / "related_ext.ped")
+    m = client.get("/api/meta").json()
+    # C2, UF are unaffected, F and M have children: none is offered
+    assert m["probands"] == sorted(["C1", "C2T", "H1", "H2", "K1", "K2", "XB"])
+    assert [f["family_id"] for f in m["families"]] == ["famA", "famB"]
+    fam_a = m["families"][0]
+    assert list(fam_a) == ["family_id", "probands", "trios"]
+    assert fam_a["probands"] == ["C1", "C2T", "H1", "H2"]
+    trios = {t["child"]: t for t in fam_a["trios"]}
+    assert list(trios["C1"]) == [
+        "child", "father", "mother", "kind", "affected", "siblings",
+    ]  # fmt: skip
+    assert trios["C1"]["affected"] == "affected" and trios["C1"]["kind"] == "trio"
+    assert {s["sample"]: s["kind"] for s in trios["C1"]["siblings"]} == {
+        "C2": "full",
+        "C2T": "full",
+        "H1": "half_paternal",
+        "H2": "half_paternal",
+    }
+    assert trios["C2"]["affected"] == "unaffected"  # a trio, just not a proband
+
+
+def test_meta_reads_a_pedigree_the_loader_would_refuse(trio_web_store):
+    trio_web_store(FIX / "related_ext.vcf", ped=FIX / "related_ext.ped")
+    _query("DELETE FROM pedigree WHERE sample_id = 'PGF'")
+    _query(
+        "INSERT INTO pedigree (ingest_id, sample_id, family_id, father_id, "
+        "mother_id, sex, affected) VALUES ('i1', 'PGF', 'famA', 'F', '0', "
+        "'male', NULL)"  # PGF is F's father and F is PGF's: a cycle, and a duo
+    )
+    m = client.get("/api/meta").json()
+    assert m["probands"] == ["C1", "C2T", "H1", "H2", "K1", "K2", "XB"]
+    kinds = {t["child"]: t["kind"] for t in m["families"][0]["trios"]}
+    assert kinds["PGF"] == "duo"  # listed, but not offered as a proband
+    assert "PGF" not in m["probands"]
+
+
+def test_meta_with_several_ingestions_falls_back_to_the_flat_list(
+    trio_web_store, tmp_path
+):
+    trio_web_store(FIX / "related_ext.vcf", ped=FIX / "related_ext.ped")
+    name = os.environ["VCFCLICK_DB_NAME"]
+    subprocess.run(
+        [VCFCLICK_BIN, "db", "ingest", name, str(FIX / "trio.vcf.gz"),
+         "--ingest-id", "i2", "--serial"],
+        env=os.environ.copy(), check=True, capture_output=True,
+    )  # fmt: skip
+    m = client.get("/api/meta").json()
+    assert m["families"] == []
+    # the older rule: every individual with two declared parents
+    assert {"C1", "C2", "F", "M", "K1"} <= set(m["probands"])
+
+
 def test_query_runs_select(duckdb_cohort):
     d = client.post(
         "/api/query", json={"sql": "SELECT count(*) AS n FROM variants"}
@@ -235,7 +317,7 @@ def trio_web_store(tmp_path, monkeypatch):
 
     names: list[str] = []
 
-    def make(vcf, *, keep_reference=True) -> str:
+    def make(vcf, *, keep_reference=True, ped=None) -> str:
         name = f"triodb_{uuid.uuid4().hex[:8]}"
         names.append(name)
         env = os.environ.copy()
@@ -254,7 +336,7 @@ def trio_web_store(tmp_path, monkeypatch):
         if keep_reference:
             ingest.append("--keep-reference")
         run(*ingest)
-        run("db", "ped", name, str(FIX / "trio.ped"))
+        run("db", "ped", name, str(ped or FIX / "trio.ped"))
         for key, value in env.items():
             if key.startswith("VCFCLICK_"):
                 monkeypatch.setenv(key, value)

@@ -81,6 +81,9 @@ class Trio(NamedTuple):
     proband: str
     father: str | None
     mother: str | None
+    # The proband's family in the pedigree (None when not looked up). It
+    # only labels the report; no query reads it.
+    family_id: str | None = None
 
     @property
     def parents(self) -> tuple[str, ...]:
@@ -276,8 +279,14 @@ def _comphet_genes(candidate_rows: list) -> dict:
 
 
 def _resolve_parents(sess, ingest_id: str, proband: str) -> tuple[str, str]:
-    from storage import sql_quote_str
+    """The proband's declared parents. Deliberately its own narrow query
+    (not the Pedigree graph): it keeps resolving a proband whatever else is
+    wrong with the pedigree, such as a cycle that loaded years ago."""
+    from cli.pedigree_load import NO_PEDIGREE, NoPedigree
+    from storage import sql_quote_str, table_exists
 
+    if not table_exists("pedigree"):
+        raise NoPedigree(NO_PEDIGREE)
     raw = (
         sess.query(
             f"SELECT father_id, mother_id FROM pedigree WHERE ingest_id = "
@@ -363,6 +372,9 @@ class TrioAnalysis:
     gates: Gates
     has_reference: bool
     gnomad_max_af: float | None
+    # The proband's siblings as (sample, kind) pairs, kind being `full`,
+    # `half_paternal` or `half_maternal`. Reported, never queried.
+    siblings: tuple[tuple[str, str], ...] = ()
 
     def _gnomad(self, rows: list) -> list:
         if self.gnomad_max_af is None:

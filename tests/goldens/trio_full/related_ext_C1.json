@@ -1,0 +1,88 @@
+{
+  "trio": {
+    "ingest_id": "i1",
+    "proband": "C1",
+    "father": "F",
+    "mother": "M",
+    "family_id": "famA",
+    "kind": "trio",
+    "siblings": [
+      {
+        "sample": "C2",
+        "kind": "full"
+      },
+      {
+        "sample": "C2T",
+        "kind": "full"
+      },
+      {
+        "sample": "H1",
+        "kind": "half_paternal"
+      },
+      {
+        "sample": "H2",
+        "kind": "half_paternal"
+      }
+    ]
+  },
+  "keep_reference": true,
+  "gates": {
+    "min_gq": 20,
+    "min_dp": 10,
+    "max_af": 0.01,
+    "min_ab": 0.25,
+    "max_ab": 0.75,
+    "gnomad_max_af": null,
+    "af_gate": "applied"
+  },
+  "annotations": {
+    "genes": false,
+    "clinvar": false,
+    "gnomad": false
+  },
+  "models": {
+    "denovo": {
+      "count": 1,
+      "blocked": false,
+      "blocked_reason": null,
+      "truncated": false,
+      "candidates": [
+        {
+          "chrom": "chr1",
+          "pos": 200000000,
+          "ref": "A",
+          "alt": "G",
+          "proband_gt": 1,
+          "father_gt": 0,
+          "mother_gt": 0,
+          "af": 0.001,
+          "genes": [],
+          "gnomad_popmax": null,
+          "clinvar": null
+        }
+      ]
+    },
+    "recessive": {
+      "count": 0,
+      "blocked": false,
+      "blocked_reason": null,
+      "truncated": false,
+      "candidates": []
+    },
+    "dominant": {
+      "count": 0,
+      "blocked": false,
+      "blocked_reason": null,
+      "truncated": false,
+      "candidates": []
+    },
+    "comphet": {
+      "count": 0,
+      "blocked": false,
+      "blocked_reason": "needs_genes",
+      "needs_genes": true,
+      "truncated": false,
+      "genes": []
+    }
+  }
+}

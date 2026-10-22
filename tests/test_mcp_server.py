@@ -160,6 +160,24 @@ def test_briefing_states_how_haploid_calls_are_stored():
     assert "gt=-1" not in SCHEMA_DESCRIPTION
 
 
+def test_briefing_teaches_families_and_the_proband_rule():
+    """A pedigree can hold several families and generations: a model writing
+    SQL must scope by family_id, read NULL `affected` as unknown, and know
+    what `db trio` treats as a proband."""
+    from vcfclick_mcp.server import SCHEMA_DESCRIPTION
+
+    assert "FAMILIES:" in SCHEMA_DESCRIPTION
+    assert "ingest_id AND family_id" in SCHEMA_DESCRIPTION
+    assert "NULL means\n   UNKNOWN, not unaffected" in SCHEMA_DESCRIPTION
+    assert "A PROBAND is a child with both" in SCHEMA_DESCRIPTION
+    assert "--family FID" in SCHEMA_DESCRIPTION and "--all-trios" in SCHEMA_DESCRIPTION
+    assert "db families" in SCHEMA_DESCRIPTION
+    # it sits with the pedigree table, before the models
+    assert SCHEMA_DESCRIPTION.index("FAMILIES:") < SCHEMA_DESCRIPTION.index(
+        "Inheritance models"
+    )
+
+
 # ─────────────────────── DuckDB-backed tools ───────────────────────
 
 

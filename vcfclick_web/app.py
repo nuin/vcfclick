@@ -123,18 +123,75 @@ def meta() -> dict:
     samples = _scalar_list(
         "SELECT DISTINCT sample_id FROM samples ORDER BY sample_id LIMIT 1000 FORMAT JSONCompact"
     )
-    probands = _scalar_list(
-        "SELECT DISTINCT sample_id FROM pedigree "
-        "WHERE father_id NOT IN ('0', '') AND mother_id NOT IN ('0', '') "
-        "ORDER BY sample_id FORMAT JSONCompact"
-    )
+    probands, families = _pedigree_meta(ingest_ids)
     return {
         "db": _db_name(),
         "tables": tables,
         "ingest_ids": ingest_ids,
         "samples": samples,
         "probands": probands,
+        "families": families,
     }
+
+
+_noted: set[str] = set()
+
+
+def _note_once(key: str, message: str, *args) -> None:
+    """Log `message` the first time `key` comes up: /api/meta runs on every
+    page load, and the same note each time would bury the log."""
+    if key not in _noted:
+        _noted.add(key)
+        _log.info(message, *args)
+
+
+def _pedigree_meta(ingest_ids: list[str]) -> tuple[list[str], list[dict]]:
+    """(probands, families) for the proband picker.
+
+    `probands` is a flat list of sample ids by the same rule as `db trio`
+    and `db families` (cli.pedigree_load builds the graph; see
+    storage/pedigree_graph.py): an analysable child not marked unaffected
+    who has no children or is affected. `families` is the structure behind
+    it: per family its probands and every trio or duo with its siblings.
+
+    Pedigrees are per ingestion. With exactly one, both come from its graph;
+    with several (trio analysis does not apply to those databases) the older
+    flat list of every child with two declared parents is all there is. A
+    database without a pedigree, or one the graph cannot read, gives none.
+    """
+    from cli.pedigree_load import NO_PEDIGREE
+
+    if not table_exists("pedigree"):
+        _note_once(
+            "no-pedigree", "pedigree: %s The proband list is empty.", NO_PEDIGREE
+        )
+        return [], []
+    if len(ingest_ids) == 1:
+        try:
+            from cli.pedigree_load import load_pedigree_graph
+            from cli.pedigree_report import web_families
+
+            graph = load_pedigree_graph(get_session(), ingest_ids[0])
+            for child in graph.analysable_children():
+                if graph.kind_of(child) == "duo":
+                    _note_once(
+                        f"duo:{child}",
+                        "pedigree: %s has one declared parent (a duo); duo "
+                        "analysis is not available yet, so it is not offered "
+                        "as a proband",
+                        child,
+                    )
+            return graph.probands(), web_families(graph)
+        except Exception:
+            _log.exception("could not read the pedigree; using the flat list")
+    return (
+        _scalar_list(
+            "SELECT DISTINCT sample_id FROM pedigree "
+            "WHERE father_id NOT IN ('0', '') AND mother_id NOT IN ('0', '') "
+            "ORDER BY sample_id FORMAT JSONCompact"
+        ),
+        [],
+    )
 
 
 @app.post("/api/query")
