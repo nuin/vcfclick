@@ -497,13 +497,6 @@ def test_skipped_keys_that_widen_the_search_are_warnings_others_are_not():
     assert [w["message"] for w in by_code(rep, "skipped_widening")] == ["m1"]
 
 
-def test_a_duo_asking_for_de_novo_is_told_it_is_weaker():
-    assert not by_code(report(kind="trio"), "duo_denovo")
-    assert by_code(report(kind="duo", categories=["denovo"]), "duo_denovo")
-    assert by_code(report(kind="duo", categories=["all"]), "duo_denovo")
-    assert not by_code(report(kind="duo", categories=["recessive"]), "duo_denovo")
-
-
 def test_a_presets_max_af_that_was_skipped_is_explained_as_info():
     rep = report(
         gates=GATES._replace(af_gate="skipped_cohort_derived"), preset_max_af=0.001
@@ -676,9 +669,12 @@ def test_the_refusal_names_each_problem_once_and_says_how_to_run_anyway():
 def test_warning_codes_are_a_closed_list():
     assert set(CODES) >= {
         "gate_unbound", "gate_partial", "thin_coverage", "gnomad_not_loaded",
-        "no_population_frequency_filter", "skipped_widening", "duo_denovo",
+        "no_population_frequency_filter", "skipped_widening",
         "preset_max_af_not_applied", "gnomad_no_coverage", "gnomad_no_record",
     }  # fmt: skip
+    # a code is registered by the change that first emits it: none for a run that
+    # `db trio` refuses (a duo's de novo answer comes with duo analysis)
+    assert "duo_denovo" not in CODES
     assert warning("gate_unbound", "min_gq", "m") == {
         "code": "gate_unbound", "level": "warning", "key": "min_gq", "message": "m",
     }  # fmt: skip

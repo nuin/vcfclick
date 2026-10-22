@@ -124,7 +124,6 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare (novel variants, which is what de novo candidates are; the text says how much of the cohort gnomAD does reach) |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
 | `skipped_widening` | a preset key was skipped and skipping widens the search |
-| `duo_denovo` | one parent: the de novo answer is `possible_denovo`, weaker evidence |
 | `preset_max_af_not_applied` | the preset's `max_af` was skipped as cohort-derived (`info`) |
 
 The same information is in the JSON `effective` object (below).
@@ -373,4 +372,6 @@ a `--no-require-bound-gates` run did not apply it to), `pass_only`,
 Gene lists and regions as a preset scope, the `--funnel` / `--near-miss`
 diagnostics and `preset diff`, the web and MCP preset endpoints, and the desktop
 picker come in later steps; none of them is needed to use or share a preset
-today. gnomAD homozygote counts are not stored, so there is no `gnomad_max_hom`.
+today. A duo (a proband with one parent declared) is not analysed by `db trio`
+yet, so there is no duo warning either; it comes with duo analysis. gnomAD
+homozygote counts are not stored, so there is no `gnomad_max_hom`.

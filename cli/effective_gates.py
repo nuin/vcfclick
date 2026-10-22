@@ -283,7 +283,6 @@ def build_report(
     gnomad_chroms: Collection[str] | None = None,
     gnomad_probe: GnomadProbe | None = None,
     filter_present: bool = True,
-    kind: str = "trio",
     categories: Sequence[str] = ("all",),
     assay: str | None = None,
     subject: str = "preset",
@@ -483,15 +482,6 @@ def build_report(
     for item in skipped:
         if item.get("widening"):
             warnings.append(warning("skipped_widening", item["key"], item["message"]))
-    if kind == "duo" and any(c in ("all", "denovo") for c in categories):
-        warnings.append(
-            warning(
-                "duo_denovo",
-                "category",
-                "with one parent the de novo answer is possible_denovo: weaker "
-                "evidence than a trio's",
-            )
-        )
     if preset_max_af is not None and gates.af_gate == AF_GATE_SKIPPED:
         warnings.append(
             warning(

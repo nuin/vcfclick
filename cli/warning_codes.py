@@ -37,8 +37,6 @@ CODES: dict[str, str] = {
     # a preset key this command does not take was skipped, and skipping it
     # makes the search wider
     "skipped_widening": WARNING,
-    # a duo's de novo answer is possible_denovo: weaker than a trio's
-    "duo_denovo": WARNING,
     # the preset's max_af was not applied because INFO/AF is the cohort's own
     "preset_max_af_not_applied": INFO,
 }

@@ -159,7 +159,6 @@ def attach_gate_reports(
             gnomad_chroms=gnomad_chroms,
             gnomad_probe=gnomad_probe,
             filter_present=filter_present,
-            kind=trio.kind,
             categories=selected_categories(options.category),
             assay=state.located.preset.assay if state else None,
             subject="preset" if state else "gates",
