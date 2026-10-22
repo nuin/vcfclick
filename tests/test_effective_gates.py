@@ -133,6 +133,56 @@ def test_the_parent_alt_screen_needs_the_parents_allele_depths():
     assert "every parent 0/0 would be trusted" in w["message"]
 
 
+def test_pass_only_binds_only_where_the_data_has_a_filter_label_to_act_on():
+    """FILTER is NULL for both PASS and '.', so on a VCF that labels nothing the
+    gate removes nothing: it must not read as a gate that worked."""
+    gates = GATES._replace(pass_only=True)
+    labelled = report(gates=gates, variants=VariantStats(100, 100, non_pass=3))
+    assert labelled.bound["pass_only"] is True and labelled.warnings == ()
+    bare = report(
+        gates=gates, variants=VariantStats(100, 100, non_pass=0), enforce_bound=True
+    )
+    assert bare.bound["pass_only"] is False
+    (w,) = by_code(bare, "pass_only_no_labels")
+    assert (w["level"], w["key"]) == ("warning", "pass_only")
+    assert w["message"] == (
+        "pass_only removes nothing: no variant in this database carries a FILTER "
+        "label other than PASS or unset"
+    )
+    # a warning and never a refusal: a VCF that was hard-filtered before it was
+    # ingested is all PASS, and is not a reason to stop a strict preset
+    assert bare.errors == ()
+    # not counted (a stand-in, or an older caller): nothing is claimed either way
+    unknown = report(gates=gates, variants=VariantStats(100, 100))
+    assert unknown.bound["pass_only"] is True and unknown.warnings == ()
+    # not asked for: not judged
+    off = report(variants=VariantStats(100, 100, non_pass=0))
+    assert "pass_only" not in off.bound and not by_code(off, "pass_only_no_labels")
+    # no filter column at all: the gate cannot be enforced, and a run that insists refuses
+    nocol = report(gates=gates, filter_present=False, enforce_bound=True)
+    assert nocol.bound["pass_only"] is False
+    assert [e["key"] for e in nocol.errors] == ["pass_only"]
+    assert nocol.errors[0]["code"] == "gate_unbound"
+
+
+def test_the_filter_column_object_counts_the_labelled_variants():
+    doc = report(variants=VariantStats(100, 100, non_pass=4)).document["filter_column"]
+    assert doc == {"present": True, "non_pass_variants": 4}
+    assert report().document["filter_column"] == {
+        "present": True, "non_pass_variants": None,
+    }  # fmt: skip
+
+
+def test_a_report_limited_to_pass_only_says_only_that():
+    gates = GATES._replace(af_gate="skipped_cohort_derived", pass_only=True)
+    scoped = report(
+        broken(), gates, variants=VariantStats(100, 100, non_pass=0), only={"pass_only"}
+    )
+    assert [w["code"] for w in scoped.warnings] == ["pass_only_no_labels"]
+    assert scoped.bound == {"pass_only": False}
+    assert scoped.document["gq"]["bound"] is None
+
+
 # ───────────────────────────── the frequency filters ─────────────────────────────
 
 
@@ -691,6 +741,7 @@ def test_warning_codes_are_a_closed_list():
         "gate_unbound", "gate_partial", "thin_coverage", "gnomad_not_loaded",
         "no_population_frequency_filter", "skipped_widening",
         "preset_max_af_not_applied", "gnomad_no_coverage", "gnomad_no_record",
+        "pass_only_no_labels",
     }  # fmt: skip
     # a code is registered by the change that first emits it: none for a run that
     # `db trio` refuses (a duo's de novo answer comes with duo analysis)

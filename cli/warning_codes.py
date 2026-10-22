@@ -34,6 +34,10 @@ CODES: dict[str, str] = {
     "gnomad_no_coverage": WARNING,
     # after the run: the gnomAD filter found a record for none of the candidates
     "gnomad_no_record": WARNING,
+    # pass_only is on, and the data has no FILTER label other than PASS or unset
+    # for it to act on (a warning, not a refusal: a VCF hard-filtered before it
+    # was ingested is all PASS)
+    "pass_only_no_labels": WARNING,
     # a preset key this command does not take was skipped, and skipping it
     # makes the search wider
     "skipped_widening": WARNING,

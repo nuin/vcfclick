@@ -10,8 +10,10 @@ unchanged.
 
 `--parent-alt-screen` typed alone is an opt-in gate that exists to catch false
 de novos, and on a VCF without allele depths it screens nothing: every parent
-0/0 is trusted. That run is reported too, but only about that gate (the other
-gates were not asked for), so it adds one warning and the `effective` object.
+0/0 is trusted. `--pass-only` typed alone keeps FILTER = PASS, and on a VCF whose
+FILTER column carries no label it removes nothing. Those runs are reported too,
+but only about the gates that were typed (the others were not asked for), so
+they add their warning and the `effective` object.
 
 A run told to go ahead anyway (`--no-require-bound-gates`) does not fail every
 call on a field the data lacks: for each strict_missing gate that cannot bind,
@@ -52,19 +54,34 @@ def needs_report(
     require_bound: bool,
     strict: bool,
     parent_alt_screen: bool = False,
+    pass_only: bool = False,
 ) -> bool:
-    return state is not None or require_bound or strict or parent_alt_screen
+    return (
+        state is not None or require_bound or strict or parent_alt_screen or pass_only
+    )
 
 
 def report_scope(
-    state: PresetState | None, require_bound: bool, strict: bool
+    state: PresetState | None,
+    require_bound: bool,
+    strict: bool,
+    parent_alt_screen: bool = False,
+    pass_only: bool = False,
 ) -> frozenset[str] | None:
     """The gate keys a run's warnings are limited to: None (all of them) for a
-    preset, `--strict-missing` or `--require-bound-gates`; only the parent-allele
-    screen for a run that asked for nothing but that."""
+    preset, `--strict-missing` or `--require-bound-gates`; only the opt-in gates
+    that were typed (the parent-allele screen, the FILTER gate) for a run that
+    asked for nothing else."""
     if state is not None or require_bound or strict:
         return None
-    return frozenset({"parent_alt_screen"})
+    return frozenset(
+        key
+        for key, on in (
+            ("parent_alt_screen", parent_alt_screen),
+            ("pass_only", pass_only),
+        )
+        if on
+    )
 
 
 def _gnomad_chromosomes() -> frozenset[str] | None:
@@ -101,7 +118,10 @@ def attach_gate_reports(
     exempt."""
     first = analyses[0]
     sess, ingest_id = first.session, first.trio.ingest_id
-    variants = collect_variant_stats(sess, ingest_id)
+    from storage import table_columns
+
+    filter_present = "filter" in set(table_columns("variants"))
+    variants = collect_variant_stats(sess, ingest_id, filter_present=filter_present)
     gnomad_loaded = bool(_annotation_status()["gnomad"])
     wants_gnomad = first.gnomad_max_af is not None
     # --no-require-bound-gates typed on the command line overrides both kinds
@@ -109,7 +129,13 @@ def attach_gate_reports(
     overridden_off = is_explicit(ctx, "require_bound") and not options.require_bound
     enforce_bound = bool(options.require_bound)
     enforce_format = bool(options.strict_missing) and not overridden_off
-    only = report_scope(state, enforce_bound, bool(options.strict_missing))
+    only = report_scope(
+        state,
+        enforce_bound,
+        bool(options.strict_missing),
+        bool(options.parent_alt_screen),
+        bool(options.pass_only),
+    )
     # gnomAD is looked at (its chromosomes, and a sample of the cohort's own
     # variants looked up in it) only when the report is about it
     looked_up = wants_gnomad and gnomad_loaded and only is None
@@ -117,10 +143,6 @@ def attach_gate_reports(
     gnomad_probe = (
         collect_gnomad_probe(sess, ingest_id, variants) if looked_up else None
     )
-    from storage import table_columns
-
-    filter_present = "filter" in set(table_columns("variants"))
-
     subject = f"preset {state.located.preset.name!r}" if state else "this run"
     skipped = []
     preset_max_af = None

@@ -141,7 +141,9 @@ BUILTINS: dict[str, BuiltinPreset] = {
             does_not_cover=(
                 "Inherited variants, and de novo + inherited compound-het "
                 f"pairs. {_NO_X} Mapping artefacts beyond the FILTER column "
-                f"are not excluded. {_ABSENT_FROM_GNOMAD} A homozygous-alt "
+                "are not excluded, and on a VCF whose FILTER column carries no "
+                "label other than PASS the FILTER gate removes nothing (the run "
+                f"says so). {_ABSENT_FROM_GNOMAD} A homozygous-alt "
                 "proband call is not allele-balance gated and a missing "
                 "allele depth does not fail it. A parent 0/0 with fewer than "
                 "2 alt reads is trusted whatever the fraction. "

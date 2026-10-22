@@ -14,6 +14,7 @@ shows, so a test written against it would pass vacuously.
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import re
@@ -28,6 +29,7 @@ from cli import filter_registry as fr
 from cli.builtin_presets import BUILTINS
 from cli.main import cli
 from tests.conftest import FIXTURES, run_cli
+from tests.fixtures import make_preset_vcf
 from tests.fixtures._vcfgen import TRIO_PED, TRIO_SAMPLES, trio_sites, write_vcf
 from tests.test_trio_contract import assert_trio_document
 
@@ -118,10 +120,19 @@ def world(backend, tmp_path_factory):
     )  # INFO/AF is the callset's own frequency, as GATK writes it
     cohort_ped = base / "cohort.ped"
     cohort_ped.write_text(TRIO_PED)
+    # the planted sites again, with the FILTER column '.' everywhere (the caller
+    # wrote no labels): the LowQual site is no longer marked
+    unlabelled = write_vcf(
+        base / "unlabelled.vcf",
+        make_preset_vcf.SAMPLES,
+        [dataclasses.replace(x, filter=".") for x in make_preset_vcf.sites()],
+        filter_header=make_preset_vcf.FILTERS,
+    )
     stores = (
         ("p", FIXTURES / "presets.vcf.gz", ped),
         ("n", FIXTURES / "presets_nogq.vcf.gz", ped),
         ("c", cohort, cohort_ped),
+        ("f", unlabelled, ped),
     )
     for name, vcf, pedigree in stores:
         run_cli(home, backend, "db", "create", name)
@@ -371,7 +382,11 @@ def test_the_opt_in_gates_remove_exactly_their_planted_site(world):
             assert "preset" not in doc
             assert "parent_alt_reads" in doc["models"]["denovo"]["candidates"][0]
         elif flag == "--pass-only":
-            assert "effective" not in doc  # no preset, nothing insisted on
+            # told about, as the parent-allele screen is, but only about that gate
+            assert "preset" not in doc
+            assert doc["effective"]["warnings"] == []  # the LowQual site is a label
+            assert doc["effective"]["filter_column"]["non_pass_variants"] == 1
+            assert doc["effective"]["gq"]["bound"] is None  # not asked: not examined
 
 
 def test_a_parent_alt_screen_that_screens_nothing_says_so_and_says_only_that(world):
@@ -399,6 +414,48 @@ def test_a_parent_alt_screen_that_screens_nothing_says_so_and_says_only_that(wor
 
 
 # ─────────────────────────── gates that cannot bind ───────────────────────────
+
+
+def warning_lines(stdout: str) -> list[str]:
+    return [x for x in stdout.splitlines() if x.startswith("  WARNING:")]
+
+
+def test_pass_only_on_a_vcf_without_filter_labels_says_it_removes_nothing(world):
+    """FILTER '.' everywhere: the planted LowQual site is not marked, so the gate
+    cannot remove it. strict-denovo lists it as a strict candidate, and must say
+    that its FILTER gate did nothing (a warning: an all-PASS VCF is legitimate)."""
+    doc = jtrio(world, "f", "--preset", "strict-denovo")
+    assert "dn_nonpass" in names(doc, "denovo")
+    eff = doc["effective"]
+    assert eff["filter_column"] == {"present": True, "non_pass_variants": 0}
+    (w,) = [x for x in eff["warnings"] if x["code"] == "pass_only_no_labels"]
+    assert (w["level"], w["key"]) == ("warning", "pass_only")
+    assert doc["preset"]["resolved"]["pass_only"]["bound"] is False
+    text = trio(world, "f", "--preset", "strict-denovo").stdout
+    assert f"  WARNING: {w['message']}" in warning_lines(text)
+    # the same preset on a VCF that does label a site: bound, silent, and it works
+    labelled = jtrio(world, "p", "--preset", "strict-denovo")
+    assert labelled["preset"]["resolved"]["pass_only"]["bound"] is True
+    assert "dn_nonpass" not in names(labelled, "denovo")
+    assert "pass_only_no_labels" not in [
+        x["code"] for x in labelled["effective"]["warnings"]
+    ]
+
+
+def test_a_typed_pass_only_is_told_about_and_only_about_that_gate(world):
+    doc = jtrio(world, "f", "--category", "denovo", "--pass-only")
+    assert names(doc, "denovo") == DE_NOVO  # nothing was removed
+    assert "preset" not in doc
+    eff = doc["effective"]
+    (w,) = eff["warnings"]  # not the GQ / DP gates it did not ask for
+    assert (w["code"], w["key"]) == ("pass_only_no_labels", "pass_only")
+    assert eff["population_filter"] is None and eff["gnomad"]["bound"] is None
+    out = trio(world, "f", "--category", "denovo", "--pass-only").stdout
+    assert warning_lines(out) == [f"  WARNING: {w['message']}"]
+    # without the flag the run is the plain one: no effective object, no line
+    plain = jtrio(world, "f", "--category", "denovo")
+    assert "effective" not in plain
+    assert warning_lines(trio(world, "f", "--category", "denovo").stdout) == []
 
 
 def test_a_warn_only_preset_runs_on_data_without_gq_dp_ad_and_says_so(world):

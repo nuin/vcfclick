@@ -101,7 +101,12 @@ frequency and gnomAD is not loaded. A run with a preset therefore prints an
 **effective-gate report**: for each gate, whether the field it reads exists in
 this data. A gate **binds** when its field is present on at least 90% of the rows
 it reads (GQ, DP and AD on the stored rows of the proband and both parents;
-`INFO/AF` on the variants; gnomAD when it can judge the cohort, below).
+`INFO/AF` on the variants; gnomAD when it can judge the cohort, below). The
+`FILTER` gate (`pass_only`) binds when some variant in the database carries a
+`FILTER` label other than `PASS` or unset: the column is null for both `PASS` and
+`.`, so on a VCF that labels nothing the gate removes nothing, which the run says
+(`pass_only_no_labels`) without refusing, because a VCF that was hard-filtered
+before it was ingested is all `PASS` and the gate is right to remove nothing.
 
 The text puts the `preset:` and `gates:` lines under the `trio:` line, then one
 `WARNING:` line per problem, on stdout:
@@ -119,6 +124,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gate_unbound` | a requested gate's field is present on under 90% of its rows |
 | `gate_partial` | the gate binds but not on every row (a note on stderr, `info`) |
 | `thin_coverage` | the proband's median DP is under 1.5 x `min_dp` |
+| `pass_only_no_labels` | `--pass-only` (or the preset's) is on and no variant carries a `FILTER` label other than `PASS` or unset, so it removes nothing (a warning, never a refusal: a VCF hard-filtered before ingest is all `PASS`) |
 | `gnomad_not_loaded` | `--gnomad-max-af` was asked for and no gnomAD data is loaded |
 | `gnomad_no_coverage` | gnomAD is loaded but cannot judge the cohort: it has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere), or a record for under 10% of a sample of the cohort's own variants (a one-row test load, a slice of one gene, another genome build) |
 | `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare (novel variants, which is what de novo candidates are; the text says how much of the cohort gnomAD does reach) |
@@ -191,12 +197,14 @@ when it is all of them the text ends with a `WARNING:` line and `effective`
 carries `gnomad_no_record`. That is a warning and not a refusal because gnomAD
 does judge the cohort, which the probe has already established.
 
-`--parent-alt-screen` typed on its own is told about too: on a VCF whose parents
-have no allele depths it screens nothing (every parent 0/0 is trusted), so the
-run prints that one `WARNING:` line and carries an `effective` object whose only
-warning is `gate_unbound` for `parent_alt_screen`. The other gates were not asked
-for, so they are not reported, and the object does not claim anything about them
-either: gnomAD is not probed in this run, so `gnomad.bound`, `info_af.bound`,
+`--parent-alt-screen` and `--pass-only` typed on their own are told about too:
+on a VCF whose parents have no allele depths the screen screens nothing (every
+parent 0/0 is trusted), and on a VCF whose `FILTER` column carries no label the
+FILTER gate removes nothing, so the run prints that `WARNING:` line and carries an
+`effective` object whose only warning is the one for the gate that was typed
+(`gate_unbound` for `parent_alt_screen`, `pass_only_no_labels` for `pass_only`).
+The other gates were not asked for, so they are not reported, and the object does
+not claim anything about them either: gnomAD is not probed in this run, so `gnomad.bound`, `info_af.bound`,
 `gq.bound`, `dp.bound` and `population_filter` are `null` (not examined; not the
 same as bound or unbound), and `ad.bound` is the screen's own verdict. The shares
 of rows, the medians and `gnomad.loaded` are facts about the data and stay.
@@ -208,7 +216,7 @@ are exactly what they were.
 
 | Flag | Effect |
 |---|---|
-| `--pass-only` | keep only variants whose VCF `FILTER` is `PASS` or unset |
+| `--pass-only` | keep only variants whose VCF `FILTER` is `PASS` or unset. It binds only where some variant carries another label: `FILTER` is stored as null for both `PASS` and `.`, so on a VCF that labels nothing it removes nothing, and the run says so (`pass_only_no_labels`) |
 | `--parent-alt-screen` | de novo only: a parent's stored 0/0 counts as "does not carry it" only when its alt reads stay under `--max-parent-alt-frac` (default 0.05; a parent 0/0 with two or more alt reads and a higher fraction is excluded). The most common false de novo is a parent called 0/0 with real alt support. |
 
 When a preset or `--parent-alt-screen` is on, each de novo candidate also shows
@@ -355,7 +363,8 @@ With a preset, `db trio --format json` adds two top-level objects after
   `does_not_cover`, `notes`.
 - `effective`: `rows`, `gq`, `dp`, `ad` (the share of rows carrying each, per
   sample, and `bound`), `median_dp`, `info_af` (`state` is `gates.af_gate`),
-  `filter_column`, `gnomad` (`loaded`, `bound`, `candidates_checked`,
+  `filter_column` (`present`, and `non_pass_variants`: the variants whose `FILTER`
+  is a label other than `PASS` or unset), `gnomad` (`loaded`, `bound`, `candidates_checked`,
   `candidates_without_record`, `cohort_variants_sampled`,
   `cohort_variants_with_record`), `population_filter` and `warnings` (`{code,
   level, key, message}`). `gnomad.bound` is given only for a filter that was

@@ -95,8 +95,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   PASS or unset), `--parent-alt-screen` with `--max-parent-alt-frac` (the de
   novo model distrusts a parent's stored 0/0 that has alt reads) and
   `--require-bound-gates` (an error, not a warning, when a gate cannot bind or no
-  population-frequency filter is in effect). `--parent-alt-screen` on a VCF
-  whose parents carry no allele depths says so (it screens nothing), in a
+  population-frequency filter is in effect). `--pass-only` on a VCF whose
+  FILTER column carries no label other than PASS or unset says it removes
+  nothing (`pass_only_no_labels`, a warning and never a refusal), and a typed
+  `--pass-only` is reported like `--parent-alt-screen`. `--parent-alt-screen`
+  on a VCF whose parents carry no allele depths says so (it screens nothing), in a
   `WARNING:` line and an `effective` object that is about that gate alone (the
   `bound` of the gates it did not examine, `gnomad.bound` and
   `population_filter` are `null`, not a claim that gnomAD took effect).
@@ -113,7 +116,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   an unknown name; a list prints one summary line per model.
 - `db trio --format json`: a run with a preset ends with `preset` and
   `effective` objects (`effective` alone with `--strict-missing`,
-  `--require-bound-gates` or `--parent-alt-screen`), and `gates` reports
+  `--require-bound-gates`, `--parent-alt-screen` or `--pass-only`), and `gates`
+  reports
   `strict_missing` (and `strict_exempt`), `pass_only`, `parent_alt_screen` and
   `max_parent_alt_frac` when they are on. Additive only: a run without them is byte-identical, which
   the goldens pin (they gain one preset run).

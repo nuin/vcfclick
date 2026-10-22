@@ -113,7 +113,7 @@ Defaults follow common rare-disease practice and are all tunable:
 | `--max-af` | 0.01 | keep variants with the VCF's own `info_AF` at or below this (a site exactly at the threshold is kept; see [below](#cohort-derived-infoaf)) |
 | `--gnomad-max-af` | off | additionally drop candidates whose **gnomAD popmax** AF exceeds this; needs `vcfclick annotations load-gnomad`. Variants absent from the loaded gnomAD slice are kept as rare. |
 | `--strict-missing` | off | a missing GQ, DP or (for a het call) AD on the proband or a parent counts as a **fail**, not a pass, for each gate that is asked for (`--min-gq` / `--min-dp` above 0, an allele-balance band narrower than 0..1, the parent-allele screen); a field nobody asked about is not held against a call |
-| `--pass-only` | off | keep only variants whose VCF `FILTER` is `PASS` or unset |
+| `--pass-only` | off | keep only variants whose VCF `FILTER` is `PASS` or unset (on a VCF that labels no variant otherwise it removes nothing, and says so) |
 | `--parent-alt-screen` / `--max-parent-alt-frac` | off / 0.05 | de novo only: a parent's stored 0/0 is trusted only while its alt reads stay under the fraction (two or more alt reads and a higher fraction exclude the site); shows the parents' read counts |
 | `--require-bound-gates` | off | an error, instead of a warning, when a requested gate cannot bind in this data (see [Presets](PRESETS.md#does-the-gate-actually-bind)) |
 
@@ -491,11 +491,12 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   name, source, revision, fingerprint, the filters requested and the value each
   filter took with where it came from, what a flag overrode, what was skipped)
   and an `effective` object (per gate, how much of the data carries its field,
-  and the warnings). `--strict-missing`, `--require-bound-gates` and
-  `--parent-alt-screen` without a preset add `effective` alone (for
-  `--parent-alt-screen` alone its warnings are about that gate only, and the
-  `bound` of every other gate, `gnomad.bound` and `population_filter` are
-  `null`: not examined, which is not the same as bound). With none
+  and the warnings). `--strict-missing`, `--require-bound-gates`,
+  `--parent-alt-screen` and `--pass-only` without a preset add `effective` alone
+  (for `--parent-alt-screen` or `--pass-only` alone its warnings are about that
+  gate only, and the `bound` of every other gate, `gnomad.bound` and
+  `population_filter` are `null`: not examined, which is not the same as
+  bound). With none
   of them neither key is present. See [Presets](PRESETS.md#what-the-output-carries).
 - With a preset or `--parent-alt-screen`, each `denovo` candidate also carries
   `parent_alt_reads`: `{"father": {"ref", "alt"}, "mother": {...}}`, the allele

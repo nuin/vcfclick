@@ -24,6 +24,12 @@ typed on the command line overrides both for one run, and for that run
 strict_missing is not applied to the gates that cannot bind (`Gates.strict_exempt`):
 they are NULL-tolerant, as their warnings say, rather than failing every call.
 
+The FILTER gate (`pass_only`) binds when some variant of the cohort carries a
+FILTER label other than PASS or unset: `variants.filter` is NULL for both PASS and
+'.', so on a VCF that labels nothing the gate removes nothing. That is a warning
+(`pass_only_no_labels`) and never a refusal, because a VCF that was hard-filtered
+before it was ingested is all PASS and the gate is right to remove nothing.
+
 A strict_missing gate is judged only when it is asked for (min_gq > 0, min_dp
 > 0, an allele-balance band narrower than 0..1, the parent-allele screen on):
 an unasked-for field is not held against a call, so it cannot make a gate
@@ -47,7 +53,7 @@ import math
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
-from cli.trio_analysis import AF_GATE_SKIPPED, Gates
+from cli.trio_analysis import AF_GATE_SKIPPED, PASS_ONLY_SQL, Gates
 from cli.warning_codes import warning
 
 # A gate binds when its field is present on at least this share of the rows.
@@ -163,33 +169,49 @@ def collect_sample_stats(
 
 @dataclass(frozen=True)
 class VariantStats:
-    """How many of the cohort's variants carry INFO/AF."""
+    """How many of the cohort's variants carry INFO/AF, and a FILTER label."""
 
     n: int
     with_af: int
     # (chrom, variants on it), most variants first: where gnomAD must have
     # records to judge anything
     chroms: tuple[tuple[str, int], ...] = ()
+    # variants whose FILTER is a label other than PASS, unset or '.' (None: not
+    # counted). variants.filter is NULL for both PASS and '.', so a gate that keeps
+    # PASS has something to remove only where this is above 0.
+    non_pass: int | None = None
 
     @property
     def af_fraction(self) -> float | None:
         return self.with_af / self.n if self.n else None
 
 
-def collect_variant_stats(sess, ingest_id: str) -> VariantStats:
+def collect_variant_stats(
+    sess, ingest_id: str, *, filter_present: bool = True
+) -> VariantStats:
     """One pass over the cohort's variants: how many, how many carry INFO/AF,
-    and how many sit on each chromosome."""
+    how many carry a FILTER label other than PASS, and how many sit on each
+    chromosome."""
     from storage import count_expr, sql_quote_str
 
+    labelled = (
+        f"sum(CASE WHEN NOT {PASS_ONLY_SQL} THEN 1 ELSE 0 END)"
+        if filter_present
+        else "0"
+    )
     sql = (
         f"SELECT chrom, {count_expr()}, "
-        "sum(CASE WHEN info_AF IS NOT NULL THEN 1 ELSE 0 END) "
-        f"FROM variants WHERE ingest_id = {sql_quote_str(ingest_id)} GROUP BY chrom"
+        "sum(CASE WHEN info_AF IS NOT NULL THEN 1 ELSE 0 END), "
+        f"{labelled} "
+        f"FROM variants v WHERE ingest_id = {sql_quote_str(ingest_id)} GROUP BY chrom"
     )
     data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
-    per = sorted(((c, int(n or 0)) for c, n, _ in data), key=lambda t: (-t[1], t[0]))
+    per = sorted(((c, int(n or 0)) for c, n, _, _ in data), key=lambda t: (-t[1], t[0]))
     return VariantStats(
-        sum(n for _, n in per), sum(int(w or 0) for _, _, w in data), tuple(per)
+        sum(n for _, n in per),
+        sum(int(w or 0) for _, _, w, _ in data),
+        tuple(per),
+        sum(int(x or 0) for _, _, _, x in data),
     )
 
 
@@ -406,7 +428,32 @@ def build_report(
                 )
             )
     if gates.pass_only:
-        bound["pass_only"] = filter_present
+        # the gate keeps PASS and unset, and the column holds NULL for both, so it
+        # has something to remove only where some variant carries another label.
+        # A warning and not a refusal (_BOUND_CODES): a VCF that was hard-filtered
+        # before it was ingested is all PASS, and the gate is right to remove nothing.
+        if not filter_present:
+            bound["pass_only"] = False
+            warnings.append(
+                warning(
+                    "gate_unbound",
+                    "pass_only",
+                    "pass_only cannot be enforced: the variants table has no "
+                    "filter column",
+                )
+            )
+        elif variants.non_pass == 0:
+            bound["pass_only"] = False
+            warnings.append(
+                warning(
+                    "pass_only_no_labels",
+                    "pass_only",
+                    "pass_only removes nothing: no variant in this database "
+                    "carries a FILTER label other than PASS or unset",
+                )
+            )
+        else:
+            bound["pass_only"] = True
 
     # the population-frequency filters
     af_run = gates.af_gate != AF_GATE_SKIPPED and gates.max_af < 1
@@ -714,7 +761,10 @@ def _document(
             "state": gates.af_gate,
             "bound": bound.get("max_af", False) if examined("max_af") else None,
         },
-        "filter_column": {"present": filter_present},
+        "filter_column": {
+            "present": filter_present,
+            "non_pass_variants": variants.non_pass,
+        },
         "gnomad": {
             "loaded": gnomad_loaded,
             # asked for and probed, or null: a loaded store nobody asked to

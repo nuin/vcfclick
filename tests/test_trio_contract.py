@@ -105,7 +105,11 @@ def assert_preset_objects(doc: dict) -> None:
             ), gate
         assert all(_is_int(n) for n in e["rows"].values())
         assert e["info_af"]["state"] in AF_GATE_VALUES
+        assert list(e["filter_column"]) == ["present", "non_pass_variants"]
         assert isinstance(e["filter_column"]["present"], bool)
+        assert e["filter_column"]["non_pass_variants"] is None or _is_int(
+            e["filter_column"]["non_pass_variants"]
+        )
         assert list(e["gnomad"]) == [
             "loaded", "bound", "field", "version", "candidates_checked",
             "candidates_without_record", "cohort_variants_sampled",
@@ -230,7 +234,7 @@ _EFFECTIVE = {
     "ad": {"proband": 1.0, "father": 1.0, "mother": 1.0, "bound": True},
     "median_dp": {"proband": 30, "father": 30, "mother": None},
     "info_af": {"state": "applied", "bound": True},
-    "filter_column": {"present": True},
+    "filter_column": {"present": True, "non_pass_variants": 2},
     "gnomad": {
         "loaded": False, "bound": False, "field": "popmax (grpmax else AF)",
         "version": None, "candidates_checked": None,
@@ -320,6 +324,7 @@ def test_contract_checker_rejects_what_would_blank_an_app():
             assert_trio_document(doc)
 
     broken_effective(lambda e: e["gq"].update(bound="yes"))
+    broken_effective(lambda e: e["filter_column"].update(non_pass_variants="2"))
     broken_effective(lambda e: e["gnomad"].update(bound="yes"))
     broken_effective(lambda e: e["gnomad"].update(bound=True))  # not loaded
     broken_effective(lambda e: e["gnomad"].update(candidates_checked=4))  # not loaded
