@@ -66,6 +66,9 @@ def world(backend, tmp_path_factory):
         # cohort does not have, and on its chromosome at a position it does not
         "wrong": base / "wrong.duckdb",
         "far": base / "far.duckdb",
+        # a gnomAD that holds the cohort's inherited variants and none of its
+        # de novo ones: it judges the cohort, and the candidates are novel
+        "novel": base / "novel.duckdb",
     }
     with mock.patch.dict(os.environ, {"VCFCLICK_ANNOTATIONS_DB": str(ann["loaded"])}):
         conn = get_connection()  # in-process DuckDB, never a chDB session
@@ -81,6 +84,14 @@ def world(backend, tmp_path_factory):
                 "INSERT INTO gnomad_af VALUES ('chr1', ?, 'A', 'G', ?, ?)",
                 [int(pos), popmax / 2, popmax],
             )
+        # the 30 common filler sites are in gnomAD too, as common variants are: a
+        # real load has a record for most of a cohort's variants, which is what
+        # the pre-run probe of the cohort's own variants asks for
+        for i in range(30):
+            conn.execute(
+                "INSERT INTO gnomad_af VALUES ('chr1', ?, 'A', 'G', 0.1, 0.2)",
+                [20000 + 100 * i],
+            )
         conn.close()
     with mock.patch.dict(os.environ, {"VCFCLICK_ANNOTATIONS_DB": str(ann["empty"])}):
         get_connection().close()
@@ -91,6 +102,15 @@ def world(backend, tmp_path_factory):
                 "INSERT INTO gnomad_af VALUES (?, 5, 'A', 'G', 0.0001, 0.0002)", [chrom]
             )
             conn.close()
+
+    with mock.patch.dict(os.environ, {"VCFCLICK_ANNOTATIONS_DB": str(ann["novel"])}):
+        conn = get_connection()
+        for i in range(1, 30, 2):  # trio_sites: the odd sites are the inherited ones
+            conn.execute(
+                "INSERT INTO gnomad_af VALUES ('chr1', ?, 'A', 'G', 0.0001, 0.0002)",
+                [1000 + i * 1000],
+            )
+        conn.close()
 
     ped = FIXTURES / "presets.ped"
     cohort = write_vcf(
@@ -306,8 +326,12 @@ def test_text_has_the_preset_and_gates_lines_after_the_trio_line(world):
     assert "chr1:7100 A>G" in out
     assert "parents' alt reads: father 1/40, mother 0/40" in out
     assert "chr1:6000" not in out  # AF 0.0009 is over the typed 0.0005
-    # the gnomAD slice holds two of the candidates: the rest it cannot judge
-    assert lines[-1] == "  gnomAD: no record for 6 of 8 candidates (kept as rare)"
+    # the gnomAD slice holds two of the candidates: the rest it cannot judge, and
+    # the line says how much of the cohort it does reach
+    assert lines[-1] == (
+        "  gnomAD: no record for 6 of 8 candidates (kept as rare); it has a "
+        "record for 62.7% of a sample of the cohort's variants"
+    )
 
 
 def test_parent_allele_depths_are_shown_on_de_novo_rows(preset_runs):
@@ -343,8 +367,25 @@ def test_the_opt_in_gates_remove_exactly_their_planted_site(world):
         assert doc["gates"][flag[2:].replace("-", "_")] is True
         if flag == "--parent-alt-screen":
             assert doc["gates"]["max_parent_alt_frac"] == 0.05
-            assert "effective" not in doc  # no preset, nothing insisted on
+            assert doc["effective"]["warnings"] == []  # it binds here: AD is in the VCF
+            assert "preset" not in doc
             assert "parent_alt_reads" in doc["models"]["denovo"]["candidates"][0]
+        elif flag == "--pass-only":
+            assert "effective" not in doc  # no preset, nothing insisted on
+
+
+def test_a_parent_alt_screen_that_screens_nothing_says_so_and_says_only_that(world):
+    """The store has no allele depths: every parent 0/0 would be trusted. A typed
+    opt-in gate that judges nothing must not look like a screen that worked."""
+    doc = jtrio(world, "n", "--category", "denovo", "--parent-alt-screen")
+    assert names(doc, "denovo") == DE_NOVO  # nothing was screened out
+    (w,) = doc["effective"]["warnings"]  # not the GQ / DP gates it did not ask for
+    assert (w["code"], w["key"]) == ("gate_unbound", "parent_alt_screen")
+    assert "every parent 0/0 would be trusted" in w["message"]
+    text = trio(world, "n", "--category", "denovo", "--parent-alt-screen").stdout
+    assert [x for x in text.splitlines() if x.startswith("  WARNING:")] == [
+        f"  WARNING: {w['message']}"
+    ]  # on stdout, and it did not refuse: nothing insisted on the gate
 
 
 # ─────────────────────────── gates that cannot bind ───────────────────────────
@@ -469,24 +510,66 @@ def test_a_gnomad_slice_on_other_chromosomes_is_not_a_gate_that_binds(world):
     assert eff["population_filter"] is False
 
 
-def test_a_gnomad_slice_that_reaches_no_candidate_is_said_after_the_run(world):
-    """The chromosome matches, so the gate binds; the slice still judges nothing.
-    No report made before the query can see that, so the run says it."""
-    doc = jtrio(world, "c", "--preset", "strict-denovo", ann="far")
+def test_a_gnomad_with_one_row_on_the_right_chromosome_is_not_a_gate_that_binds(world):
+    """The chromosome matches and a record exists, but gnomAD has a record for none
+    of the cohort's variants: the filter judges nothing, and a run that insists on
+    it refuses before it starts (and a broad one says so, in the same document)."""
+    r = trio(world, "c", "--preset", "strict-denovo", ann="far", ok=False)
+    assert r.stdout == ""
+    assert "gnomad_max_af=0.0001 cannot be enforced" in r.stderr
+    assert (
+        "a record for only 0% of a sample of 30 of this cohort's variants" in r.stderr
+    )
+    assert "Remedy: load gnomAD for this cohort's chromosomes" in r.stderr
+    # the same single row does not satisfy it on the GQ-bearing fixture either
+    refused = trio(world, "p", "--preset", "strict-denovo", ann="far", ok=False)
+    assert "a record for only 0% of a sample of 51" in refused.stderr
+    # --no-require-bound-gates runs it anyway, and the document agrees with itself
+    doc = jtrio(
+        world, "c", "--preset", "strict-denovo", "--no-require-bound-gates", ann="far"
+    )
+    eff = doc["effective"]
+    assert (eff["gnomad"]["loaded"], eff["gnomad"]["bound"]) == (True, False)
+    assert (
+        eff["gnomad"]["cohort_variants_sampled"],
+        eff["gnomad"]["cohort_variants_with_record"],
+    ) == (30, 0)
+    assert "gnomad_no_coverage" in [w["code"] for w in eff["warnings"]]
+    assert eff["population_filter"] is False
+    # a broad preset only warns
+    broad = jtrio(world, "c", "--preset", "broad-first-pass", ann="far")
+    assert broad["effective"]["gnomad"]["bound"] is False
+    assert "gnomad_no_coverage" in [w["code"] for w in broad["effective"]["warnings"]]
+
+
+def test_a_gnomad_that_judges_the_cohort_but_not_its_novel_candidates_says_so_after_the_run(
+    world,
+):
+    """gnomAD holds half of the cohort's variants (the inherited ones), so the filter
+    binds, and none of the de novo candidates is in it: what a de novo list looks like.
+    That is a fact about the candidates, said after the run, and not a refusal."""
+    doc = jtrio(world, "c", "--preset", "strict-denovo", ann="novel")
     eff = doc["effective"]
     assert eff["gnomad"]["bound"] is True
+    assert eff["gnomad"]["cohort_variants_sampled"] == 30
+    assert eff["gnomad"]["cohort_variants_with_record"] == 15
     assert eff["gnomad"]["candidates_checked"] == 15
     assert eff["gnomad"]["candidates_without_record"] == 15
     (late,) = [w for w in eff["warnings"] if w["code"] == "gnomad_no_record"]
     assert "judged none of the 15 candidates" in late["message"]
+    assert "a record for 50% of a sample of the cohort's variants" in late["message"]
+    assert "probably novel" in late["message"]
     assert eff["population_filter"] is False  # INFO/AF is the cohort's own
-    out = trio(world, "c", "--preset", "strict-denovo", ann="far").stdout
-    last = out.splitlines()[-1]
-    assert last.startswith("  WARNING: gnomad_max_af=0.0001 judged none of the 15")
-    # a slice that does reach some candidates is not that warning
+    out = trio(world, "c", "--preset", "strict-denovo", ann="novel").stdout
+    assert out.splitlines()[-1].startswith(
+        "  WARNING: gnomad_max_af=0.0001 judged none of the 15"
+    )
+    # a store that does hold some candidates is not that warning
     ok = jtrio(world, "p", "--preset", "strict-denovo")
     assert "gnomad_no_record" not in [w["code"] for w in ok["effective"]["warnings"]]
     assert ok["effective"]["gnomad"]["candidates_checked"] == 8 + 1  # the common one
+    assert ok["effective"]["gnomad"]["cohort_variants_sampled"] == 51
+    assert ok["effective"]["gnomad"]["cohort_variants_with_record"] == 32
 
 
 def test_preset_ignore_switches_one_key_off_for_one_run(world):

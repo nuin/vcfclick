@@ -78,8 +78,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   preset `NAME` (`--force` replaces that file).
 - The effective-gate report. A run with a preset says, per gate, whether the
   field it reads is in this data: GQ, DP and AD on the proband's and parents'
-  rows, `INFO/AF`, gnomAD (loaded, and with records on the chromosomes of 90% of
-  the cohort's variants; after the run, a warning when it found a record for none
+  rows, `INFO/AF`, gnomAD (loaded, with records on the chromosomes of 90% of
+  the cohort's variants, and a record for at least 10% of a sample of up to 5,000
+  of the cohort's own variants, so a one-row or one-gene load does not count as a
+  population filter; after the run, a warning when it found a record for none
   of the candidates). A gate binds at 90% of its rows. Gates that cannot
   bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
   so is `NO population frequency filter applied` (the cohort-derived-AF case
@@ -90,8 +92,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   PASS or unset), `--parent-alt-screen` with `--max-parent-alt-frac` (the de
   novo model distrusts a parent's stored 0/0 that has alt reads) and
   `--require-bound-gates` (an error, not a warning, when a gate cannot bind or no
-  population-frequency filter is in effect). `strict-denovo` turns the strict
-  ones on, so it refuses to run, with the remedy, on data it cannot be strict
+  population-frequency filter is in effect). `--parent-alt-screen` on a VCF
+  whose parents carry no allele depths says so (it screens nothing), in a
+  `WARNING:` line and an `effective` object that is about that gate alone.
+  `strict-denovo` turns the strict ones on, so it refuses to run, with the remedy, on data it cannot be strict
   about; `--no-require-bound-gates` overrides that for one run, and for that run
   `--strict-missing` is not applied to the gates that cannot bind (a call
   without GQ passes `min_gq`, as the warning says, instead of failing every
@@ -103,10 +107,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   single name behave as before, with the same metavar and the same message for
   an unknown name; a list prints one summary line per model.
 - `db trio --format json`: a run with a preset ends with `preset` and
-  `effective` objects (`effective` alone with `--strict-missing` or
-  `--require-bound-gates`), and `gates` reports `strict_missing` (and
-  `strict_exempt`), `pass_only`, `parent_alt_screen` and `max_parent_alt_frac`
-  when they are on. Additive only: a run without them is byte-identical, which
+  `effective` objects (`effective` alone with `--strict-missing`,
+  `--require-bound-gates` or `--parent-alt-screen`), and `gates` reports
+  `strict_missing` (and `strict_exempt`), `pass_only`, `parent_alt_screen` and
+  `max_parent_alt_frac` when they are on. Additive only: a run without them is byte-identical, which
   the goldens pin (they gain one preset run).
 - `cli/filter_registry.py` declares every filter once (file key, Click
   parameter, flag, type, range, default, owner, commands); the options of

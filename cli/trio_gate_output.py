@@ -6,7 +6,9 @@ plain run's output is the bytes it always was.
 
   * the document decorator adds the top-level `preset` and `effective` objects,
     and, once the gnomAD filter has run, how many candidates it found no record
-    for (and the warning when that is all of them);
+    for (and the warning when that is all of them: a fact about the candidates,
+    which a de novo list is expected to have, and not about whether the filter
+    binds, which the pre-run probe of the cohort's own variants decides);
   * `parent_alt_reads` on each de novo candidate (and a suffix on its line in
     the text listing): the parents' ref / alt read counts at the site, so a
     clinician sees at a glance that a "de novo" has 4 alt reads of 40 in the
@@ -20,7 +22,7 @@ from __future__ import annotations
 import json
 from collections.abc import Sequence
 
-from cli.effective_gates import gnomad_record_warning
+from cli.effective_gates import gnomad_record_warning, pct
 from cli.trio_output import (
     Render,
     register_candidate_decorator,
@@ -140,6 +142,15 @@ def text_suffix(analysis):
 # ───────────────────────────── document decorator ─────────────────────────────
 
 
+def gnomad_reported(analysis) -> bool:
+    """Is this run's report about the gnomAD filter? (`db trio` sets it for a run
+    that asked for gnomAD and for the whole report; a run that asked only for the
+    parent-allele screen is told about that gate alone.)"""
+    return bool(analysis.stats.get("gnomad_reported")) and (
+        analysis.gnomad_max_af is not None
+    )
+
+
 def gnomad_counts(analysis) -> tuple[int, int]:
     """(candidates the gnomAD filter looked at, those it kept for want of a
     record), over everything this run has rendered so far."""
@@ -153,11 +164,14 @@ def _late_warning(analysis, effective: dict) -> dict | None:
     if analysis.gnomad_max_af is None or not effective["gnomad"]["loaded"]:
         return None
     checked, without = gnomad_counts(analysis)
+    sampled = effective["gnomad"].get("cohort_variants_sampled")
+    found = effective["gnomad"].get("cohort_variants_with_record")
     return gnomad_record_warning(
         checked=checked,
         without_record=without,
         max_af=analysis.gnomad_max_af,
         info_af_bound=bool(effective["info_af"]["bound"]),
+        cohort_rate=found / sampled if sampled else None,
     )
 
 
@@ -166,15 +180,24 @@ def gnomad_footer(analysis) -> list[str]:
     it found a record for none of the candidates, otherwise how many it could
     not judge. (The `trio:` header is printed before the filter has run.)"""
     effective = analysis.stats.get("effective_block")
-    if effective is None or analysis.gnomad_max_af is None:
+    if effective is None or not gnomad_reported(analysis):
         return []
     late = _late_warning(analysis, effective)
     if late is not None:
         return [f"  WARNING: {late['message']}"]
     checked, without = gnomad_counts(analysis)
     if effective["gnomad"]["loaded"] and without:
+        sampled = effective["gnomad"].get("cohort_variants_sampled")
+        found = effective["gnomad"].get("cohort_variants_with_record")
+        reach = (
+            f"; it has a record for {pct(found / sampled)} of a sample of the "
+            "cohort's variants"
+            if sampled
+            else ""
+        )
         return [
-            f"  gnomAD: no record for {without} of {checked} candidates (kept as rare)"
+            f"  gnomAD: no record for {without} of {checked} candidates "
+            f"(kept as rare){reach}"
         ]
     return []
 
@@ -186,7 +209,7 @@ def _preset_document(doc: dict, render: Render) -> dict:
     if "effective_block" in stats:
         effective = json.loads(json.dumps(stats["effective_block"]))
         analysis = render.analysis
-        if analysis.gnomad_max_af is not None:
+        if gnomad_reported(analysis):
             checked, without = gnomad_counts(analysis)
             effective["gnomad"]["candidates_checked"] = checked
             effective["gnomad"]["candidates_without_record"] = without

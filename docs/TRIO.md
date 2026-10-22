@@ -491,8 +491,10 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   name, source, revision, fingerprint, the filters requested and the value each
   filter took with where it came from, what a flag overrode, what was skipped)
   and an `effective` object (per gate, how much of the data carries its field,
-  and the warnings). `--strict-missing` and `--require-bound-gates` without a
-  preset add `effective` alone. With none of them neither key is present. See [Presets](PRESETS.md#what-the-output-carries).
+  and the warnings). `--strict-missing`, `--require-bound-gates` and
+  `--parent-alt-screen` without a preset add `effective` alone (for
+  `--parent-alt-screen` alone its warnings are about that gate only). With none
+  of them neither key is present. See [Presets](PRESETS.md#what-the-output-carries).
 - With a preset or `--parent-alt-screen`, each `denovo` candidate also carries
   `parent_alt_reads`: `{"father": {"ref", "alt"}, "mother": {...}}`, the allele
   depths of the parents' stored 0/0 rows (`null` counts where the call has no AD).

@@ -1,12 +1,17 @@
 """`db trio` with a preset or a strictness flag: compute, enforce, leave the echo.
 
-For a run that uses a preset, `--strict-missing` or `--require-bound-gates`,
-`attach_gate_reports` asks the data whether each gate binds
+For a run that uses a preset, `--strict-missing`, `--require-bound-gates` or
+`--parent-alt-screen`, `attach_gate_reports` asks the data whether each gate binds
 (`cli.effective_gates`), stops the run when it was told to insist and a gate
 cannot bind, and leaves the answers in each analysis' `stats` for the output
 hooks of `cli.trio_gate_output` (the `preset` and `effective` JSON objects, the
 text header). A plain run never gets here, so its output and its queries are
 unchanged.
+
+`--parent-alt-screen` typed alone is an opt-in gate that exists to catch false
+de novos, and on a VCF without allele depths it screens nothing: every parent
+0/0 is trusted. That run is reported too, but only about that gate (the other
+gates were not asked for), so it adds one warning and the `effective` object.
 
 A run told to go ahead anyway (`--no-require-bound-gates`) does not fail every
 call on a field the data lacks: for each strict_missing gate that cannot bind,
@@ -26,6 +31,7 @@ import click
 from cli import filter_registry as fr
 from cli.effective_gates import (
     build_report,
+    collect_gnomad_probe,
     collect_sample_stats,
     collect_variant_stats,
     refusal_message,
@@ -41,8 +47,24 @@ from cli.trio_output import MODELS, _annotation_status, selected_categories
 _SILENT_NOTES = ("preset_max_af_not_applied",)
 
 
-def needs_report(state: PresetState | None, require_bound: bool, strict: bool) -> bool:
-    return state is not None or require_bound or strict
+def needs_report(
+    state: PresetState | None,
+    require_bound: bool,
+    strict: bool,
+    parent_alt_screen: bool = False,
+) -> bool:
+    return state is not None or require_bound or strict or parent_alt_screen
+
+
+def report_scope(
+    state: PresetState | None, require_bound: bool, strict: bool
+) -> frozenset[str] | None:
+    """The gate keys a run's warnings are limited to: None (all of them) for a
+    preset, `--strict-missing` or `--require-bound-gates`; only the parent-allele
+    screen for a run that asked for nothing but that."""
+    if state is not None or require_bound or strict:
+        return None
+    return frozenset({"parent_alt_screen"})
 
 
 def _gnomad_chromosomes() -> frozenset[str] | None:
@@ -82,16 +104,22 @@ def attach_gate_reports(
     variants = collect_variant_stats(sess, ingest_id)
     gnomad_loaded = bool(_annotation_status()["gnomad"])
     wants_gnomad = first.gnomad_max_af is not None
-    gnomad_chroms = _gnomad_chromosomes() if wants_gnomad and gnomad_loaded else None
-    from storage import table_columns
-
-    filter_present = "filter" in set(table_columns("variants"))
-
     # --no-require-bound-gates typed on the command line overrides both kinds
     # of refusal for this run
     overridden_off = is_explicit(ctx, "require_bound") and not options.require_bound
     enforce_bound = bool(options.require_bound)
     enforce_format = bool(options.strict_missing) and not overridden_off
+    only = report_scope(state, enforce_bound, bool(options.strict_missing))
+    # gnomAD is looked at (its chromosomes, and a sample of the cohort's own
+    # variants looked up in it) only when the report is about it
+    looked_up = wants_gnomad and gnomad_loaded and only is None
+    gnomad_chroms = _gnomad_chromosomes() if looked_up else None
+    gnomad_probe = (
+        collect_gnomad_probe(sess, ingest_id, variants) if looked_up else None
+    )
+    from storage import table_columns
+
+    filter_present = "filter" in set(table_columns("variants"))
 
     subject = f"preset {state.located.preset.name!r}" if state else "this run"
     skipped = []
@@ -129,6 +157,7 @@ def attach_gate_reports(
             gnomad_max_af=analysis.gnomad_max_af,
             gnomad_loaded=gnomad_loaded,
             gnomad_chroms=gnomad_chroms,
+            gnomad_probe=gnomad_probe,
             filter_present=filter_present,
             kind=trio.kind,
             categories=selected_categories(options.category),
@@ -138,6 +167,7 @@ def attach_gate_reports(
             preset_max_af=preset_max_af,
             enforce_bound=enforce_bound,
             enforce_format=enforce_format,
+            only=only,
         )
 
     printed: set[str] = set()
@@ -153,7 +183,8 @@ def attach_gate_reports(
                 analysis = replace(analysis, gates=gates)
                 report = make_report(analysis, gates)
         ready.append(analysis)
-        if wants_gnomad:
+        if wants_gnomad and only is None:
+            analysis.stats["gnomad_reported"] = True
             analysis.stats["text_footer"] = partial(gnomad_footer, analysis)
         if report.errors:
             who = f" (proband {trio.proband})" if len(analyses) > 1 else ""

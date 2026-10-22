@@ -219,7 +219,9 @@ def db_trio(options: TrioOptions) -> None:
     if state or options.parent_alt_screen:
         for analysis in analyses:
             show_parent_reads(analysis)
-    if needs_report(state, options.require_bound, options.strict_missing):
+    if needs_report(
+        state, options.require_bound, options.strict_missing, options.parent_alt_screen
+    ):
         resolved, overridden = (
             resolve_filters(ctx, "trio", state) if state else (None, [])
         )

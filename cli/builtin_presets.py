@@ -32,6 +32,16 @@ _NO_X = (
     "chrX gets no special treatment (no hemizygous male logic), and UPD and "
     "mosaic variants are not looked for."
 )
+# What the frequency gates do when they cannot judge a variant. Every built-in
+# sets both, so every built-in says both.
+_ABSENT_FROM_GNOMAD = (
+    "A variant absent from the loaded gnomAD slice, or with no frequency in it, "
+    "is kept as rare."
+)
+_COHORT_AF = (
+    "The INFO/AF gate is skipped when INFO/AF is the cohort's own frequency "
+    "(the run says so)."
+)
 
 
 @dataclass(frozen=True)
@@ -86,9 +96,8 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "frequency of at most 1% on INFO/AF and on gnomAD popmax."
             ),
             does_not_cover=(
-                f"{_NO_CONSEQUENCE} {_NO_X} A variant absent from the loaded "
-                "gnomAD slice is kept as rare. Alleles just under 1% are "
-                "kept; common alleles are not."
+                f"{_NO_CONSEQUENCE} {_NO_X} {_ABSENT_FROM_GNOMAD} {_COHORT_AF} "
+                "Alleles just under 1% are kept; common alleles are not."
             ),
             filters={
                 "category": _ALL_MODELS,
@@ -122,14 +131,21 @@ BUILTINS: dict[str, BuiltinPreset] = {
             covers=(
                 "De novo single-nucleotide and indel calls in the proband "
                 "where both parents have a stored 0/0 with under 5% alt "
-                "reads, FILTER=PASS, GQ >= 30, DP >= 20, allele balance "
-                "0.30-0.70, INFO/AF <= 0.001 and gnomAD popmax <= 0.0001. A "
-                "missing GQ, DP or AD counts as a fail."
+                "reads, or fewer than 2 alt reads, FILTER=PASS (a FILTER that "
+                'is unset or "." counts as PASS), GQ >= 30, DP >= 20, '
+                "allele balance 0.30-0.70 for a heterozygous proband call, INFO/AF "
+                "<= 0.001 and gnomAD popmax <= 0.0001. A missing GQ or DP "
+                "counts as a fail, and so does a missing allele depth on a "
+                "heterozygous call or on a parent's 0/0."
             ),
             does_not_cover=(
                 "Inherited variants, and de novo + inherited compound-het "
                 f"pairs. {_NO_X} Mapping artefacts beyond the FILTER column "
-                f"are not excluded. {_NO_CONSEQUENCE}"
+                f"are not excluded. {_ABSENT_FROM_GNOMAD} A homozygous-alt "
+                "proband call is not allele-balance gated and a missing "
+                "allele depth does not fail it. A parent 0/0 with fewer than "
+                "2 alt reads is trusted whatever the fraction. "
+                f"{_COHORT_AF} {_NO_CONSEQUENCE}"
             ),
             filters={
                 "category": ["denovo"],
@@ -180,7 +196,8 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "chrX in males, de novo + inherited compound-het pairs (the "
                 "compound-het model takes only hets inherited from exactly "
                 "one parent), UPD, mosaic; the allele balance of a "
-                f"hom-alt call is not gated. {_NO_CONSEQUENCE}"
+                f"hom-alt call is not gated. {_ABSENT_FROM_GNOMAD} "
+                f"{_COHORT_AF} {_NO_CONSEQUENCE}"
             ),
             filters={
                 "category": ["recessive", "comphet"],
@@ -222,7 +239,9 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "The dominant model keeps a variant inherited from EITHER "
                 "parent: whether the carrying parent is affected is not "
                 "considered, so it also lists inherited variants a healthy "
-                f"parent carries. {_NO_X} {_NO_CONSEQUENCE}"
+                "parent carries. Its de novo model also keeps a homozygous-alt "
+                "proband call, which is not allele-balance gated. "
+                f"{_ABSENT_FROM_GNOMAD} {_COHORT_AF} {_NO_X} {_NO_CONSEQUENCE}"
             ),
             filters={
                 "category": ["dominant", "denovo"],

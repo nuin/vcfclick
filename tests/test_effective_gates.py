@@ -14,14 +14,18 @@ import pytest
 from cli import trio_gate_output as tgo
 from cli.effective_gates import (
     ENFORCEABLE_MIN,
+    GNOMAD_MIN_HIT_RATE,
+    GNOMAD_PROBE_SIZE,
     STRICT_KEYS,
     THIN_COVERAGE_FACTOR,
+    GnomadProbe,
     SampleGateStats,
     VariantStats,
     build_report,
     gnomad_record_warning,
     median_from_histogram,
     refusal_message,
+    sample_cohort_keys,
     unbound_strict_keys,
 )
 from cli.trio_analysis import Gates
@@ -185,7 +189,8 @@ def test_gnomad_asked_for_and_not_loaded():
     assert rep.document["gnomad"] == {
         "loaded": False, "bound": False, "field": "popmax (grpmax else AF)",
         "version": None, "candidates_checked": None,
-        "candidates_without_record": None,
+        "candidates_without_record": None, "cohort_variants_sampled": None,
+        "cohort_variants_with_record": None,
     }  # fmt: skip
 
 
@@ -261,6 +266,84 @@ def test_gnomad_not_asked_for_is_not_judged_for_coverage():
     assert not by_code(rep, "gnomad_no_coverage") and "gnomad_max_af" not in rep.bound
 
 
+def probed(found, sampled=1000, chroms=None, variants=None, **kw):
+    """A gnomAD report whose pre-run probe found `found` of `sampled` variants."""
+    return gnomad_report(
+        variants or cohort(chr1=100),
+        chroms if chroms is not None else {"chr1"},
+        gnomad_probe=GnomadProbe(sampled, found),
+        **kw,
+    )
+
+
+def test_gnomad_binds_only_when_it_has_a_record_for_a_tenth_of_the_cohorts_variants():
+    """Rows on the right chromosome are not enough: a one-row load, a slice of one
+    gene or another build judges almost nothing there."""
+    assert GNOMAD_MIN_HIT_RATE == 0.10
+    at = probed(100)  # 10%: inclusive
+    assert at.bound["gnomad_max_af"] is True and at.warnings == ()
+    low = probed(99, enforce_bound=True)
+    (w,) = by_code(low, "gnomad_no_coverage")
+    assert w["level"] == "warning" and w["key"] == "gnomad_max_af"
+    assert (
+        "a record for only 9.9% of a sample of 1000 of this cohort's variants"
+        in (w["message"])
+    )
+    assert "at least 10% are needed" in w["message"] and "genome build" in w["message"]
+    assert low.bound["gnomad_max_af"] is False
+    assert low.document["gnomad"]["bound"] is False
+    assert low.document["population_filter"] is False  # so it is no filter at all
+    assert {e["code"] for e in low.errors} == {
+        "gnomad_no_coverage",
+        "no_population_frequency_filter",
+    }
+    assert probed(99).errors == ()  # warn only, unless the run insists
+    # the one-row store: a record, on the right chromosome, for almost nothing
+    one_row = probed(1, sampled=5000)
+    assert one_row.bound["gnomad_max_af"] is False
+    # the counts are in the document, for the app to show
+    assert one_row.document["gnomad"]["cohort_variants_sampled"] == 5000
+    assert one_row.document["gnomad"]["cohort_variants_with_record"] == 1
+
+
+def test_a_probe_that_has_nothing_to_judge_by_is_not_a_reason_to_refuse():
+    for probe in (None, GnomadProbe(0, 0)):
+        rep = gnomad_report(cohort(chr1=100), {"chr1"}, gnomad_probe=probe)
+        assert rep.bound["gnomad_max_af"] is True and rep.warnings == ()
+
+
+def test_the_chromosomes_are_still_judged_first_and_say_the_most():
+    rep = probed(0, chroms={"9"})
+    (w,) = by_code(rep, "gnomad_no_coverage")
+    assert "no record on any chromosome this cohort has variants on" in w["message"]
+    assert "chr1 against 1" in w["message"]
+
+
+def test_the_probe_samples_every_nth_position_of_a_big_cohort_and_all_of_a_small_one():
+    class Sess:
+        def __init__(self):
+            self.sql = []
+
+        def query(self, sql, fmt):
+            self.sql.append(sql)
+            return self
+
+        def bytes(self):
+            return b'{"data": [["chr1", 5, "A", "G"]]}'
+
+    small, big = Sess(), Sess()
+    assert sample_cohort_keys(small, "i1", GNOMAD_PROBE_SIZE) == [("chr1", 5, "A", "G")]
+    assert "pos %" not in small.sql[0] and "ingest_id = 'i1'" in small.sql[0]
+    sample_cohort_keys(big, "i1", 3 * GNOMAD_PROBE_SIZE + 1)
+    assert "pos % 4 = 0" in big.sql[0]  # ceil(15001 / 5000)
+    assert f"LIMIT {2 * GNOMAD_PROBE_SIZE}" in big.sql[0]
+
+
+def test_a_probe_rate_is_found_over_sampled():
+    assert GnomadProbe(200, 50).rate == 0.25
+    assert GnomadProbe(0, 0).rate is None
+
+
 # ───────────────────── after the run: a filter that judged nothing ─────────────────────
 
 
@@ -285,6 +368,15 @@ def test_a_gnomad_filter_that_found_no_record_for_any_candidate_is_a_warning():
     assert (
         "none of the 1 candidate:" in one["message"] and "it is kept" in one["message"]
     )
+    # when the pre-run probe says gnomAD does judge this cohort, the candidates are
+    # probably novel, and the advice is not "check the build"
+    reach = gnomad_record_warning(
+        checked=15, without_record=15, max_af=0.0001, info_af_bound=True,
+        cohort_rate=0.62,
+    )  # fmt: skip
+    assert "a record for 62% of a sample of the cohort's variants" in reach["message"]
+    assert "these are probably novel" in reach["message"]
+    assert "genome build" not in reach["message"]
     for checked, without in ((15, 14), (15, 0), (0, 0)):
         assert (
             gnomad_record_warning(
@@ -294,12 +386,22 @@ def test_a_gnomad_filter_that_found_no_record_for_any_candidate_is_a_warning():
         )
 
 
-def stub_analysis(seen, absent, *, loaded=True, af_bound=False, max_af=0.001):
+def stub_analysis(
+    seen,
+    absent,
+    *,
+    loaded=True,
+    af_bound=False,
+    max_af=0.001,
+    probe=None,
+    reported=True,
+):
     """What the gnomAD hooks read from a finished run."""
     effective = report(
         gates=GATES._replace(af_gate="skipped_cohort_derived"),
         gnomad_max_af=max_af,
         gnomad_loaded=loaded,
+        gnomad_probe=probe,
     ).document
     effective["gnomad"]["loaded"] = loaded
     effective["info_af"]["bound"] = af_bound
@@ -307,6 +409,7 @@ def stub_analysis(seen, absent, *, loaded=True, af_bound=False, max_af=0.001):
         "effective_block": effective,
         "gnomad_seen": set(range(seen)),
         "gnomad_absent": set(range(absent)),
+        "gnomad_reported": reported,
     }
     return SimpleNamespace(gnomad_max_af=max_af, stats=stats)
 
@@ -324,6 +427,19 @@ def test_the_text_footer_says_what_the_gnomad_filter_could_not_judge():
     assert tgo.gnomad_footer(stub_analysis(15, 15, max_af=None)) == []
     bare = SimpleNamespace(gnomad_max_af=0.001, stats={})
     assert tgo.gnomad_footer(bare) == []
+    # a run whose report is not about gnomAD (it asked for one opt-in gate only)
+    quiet = stub_analysis(15, 15, reported=False)
+    assert tgo.gnomad_footer(quiet) == []
+
+
+def test_the_footer_says_how_much_of_the_cohort_gnomad_can_judge():
+    (line,) = tgo.gnomad_footer(stub_analysis(9, 8, probe=GnomadProbe(1000, 620)))
+    assert line == (
+        "  gnomAD: no record for 8 of 9 candidates (kept as rare); it has a "
+        "record for 62% of a sample of the cohort's variants"
+    )
+    (all_lost,) = tgo.gnomad_footer(stub_analysis(9, 9, probe=GnomadProbe(1000, 620)))
+    assert "probably novel" in all_lost
 
 
 def test_the_json_effective_object_carries_the_counts_and_the_late_warning():
@@ -343,6 +459,11 @@ def test_the_json_effective_object_carries_the_counts_and_the_late_warning():
     off = stub_analysis(0, 0, max_af=None)
     doc = tgo._preset_document({}, SimpleNamespace(analysis=off))["effective"]
     assert doc["gnomad"]["candidates_checked"] is None
+    # a run whose report is not about gnomAD: no counts, no late warning
+    quiet = stub_analysis(15, 15, reported=False)
+    doc = tgo._preset_document({}, SimpleNamespace(analysis=quiet))["effective"]
+    assert doc["gnomad"]["candidates_checked"] is None
+    assert "gnomad_no_record" not in [w["code"] for w in doc["warnings"]]
 
 
 # ───────────────────────────── the other warnings ─────────────────────────────
@@ -497,6 +618,21 @@ def test_the_strict_gates_a_go_ahead_run_exempts_are_the_unbound_ones():
     assert unbound_strict_keys(report(mixed, gates)) == ("min_gq",)
 
 
+def test_a_report_limited_to_one_gate_says_only_that_gate():
+    """`--parent-alt-screen` typed alone is told about the screen, and not about
+    the default GQ / DP gates or the missing population filter it did not ask for."""
+    gates = GATES._replace(af_gate="skipped_cohort_derived", parent_alt_screen=True)
+    everything = report(broken(), gates)
+    assert {w["key"] for w in everything.warnings} > {"parent_alt_screen", "min_gq"}
+    scoped = report(broken(), gates, only={"parent_alt_screen"})
+    assert [w["key"] for w in scoped.warnings] == ["parent_alt_screen"]
+    assert "every parent 0/0 would be trusted" in scoped.warnings[0]["message"]
+    assert scoped.document["warnings"] == list(scoped.warnings)
+    assert scoped.bound["parent_alt_screen"] is False
+    fine = report(trio(), gates, only={"parent_alt_screen"})
+    assert fine.warnings == () and fine.bound["parent_alt_screen"] is True
+
+
 def test_the_refusal_names_each_problem_once_and_says_how_to_run_anyway():
     rep = report(
         broken(), GATES._replace(af_gate="skipped_cohort_derived"),
@@ -524,6 +660,11 @@ def test_warning_codes_are_a_closed_list():
 
 def test_the_document_has_exactly_the_documented_keys():
     doc = report().document
+    assert list(doc["gnomad"]) == [
+        "loaded", "bound", "field", "version", "candidates_checked",
+        "candidates_without_record", "cohort_variants_sampled",
+        "cohort_variants_with_record",
+    ]  # fmt: skip
     assert list(doc) == [
         "rows", "gq", "dp", "ad", "median_dp", "info_af", "filter_column",
         "gnomad", "population_filter", "warnings",

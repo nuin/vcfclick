@@ -10,9 +10,12 @@ object) and, on request, into a refusal.
 A gate BINDS when its field is present on at least ENFORCEABLE_MIN of the rows
 it reads: GQ, DP and AD on the stored rows of the proband and both parents, the
 INFO/AF gate on the variants (and its probe not saying the AF is the cohort's
-own), gnomAD when it is loaded and has records on the chromosomes that hold
+own), gnomAD when it is loaded, has records on the chromosomes that hold
 ENFORCEABLE_MIN of the cohort's variants (a slice on other chromosomes, or
-under another naming, judges nothing). `--require-bound-gates` makes a gate
+under another naming, judges nothing) AND has a record for at least
+GNOMAD_MIN_HIT_RATE of a sample of the cohort's own variants (a sparse test
+load, a slice of one gene, another genome build judge almost nothing, whatever
+chromosomes they have a row on). `--require-bound-gates` makes a gate
 that cannot bind, and the absence of any population-frequency filter, an error;
 `--strict-missing` makes that error for the GQ / DP / AD gates (and the
 parent-allele screen) alone, because it turns a missing field into a fail and a
@@ -26,10 +29,11 @@ A strict_missing gate is judged only when it is asked for (min_gq > 0, min_dp
 an unasked-for field is not held against a call, so it cannot make a gate
 "unbound" either.
 
-What the report cannot know before the query is whether a gnomAD slice that
-covers the right chromosomes has a record for any candidate (a genome-build
-mismatch, a slice of one gene): `gnomad_record_warning` says it after the
-candidates are known.
+The gnomAD probe is a fact about the COHORT, known before the run, so a
+run that insists (`require_bound`, `strict-denovo`) can refuse on it. What is
+left for after the run is a fact about the CANDIDATES: a de novo candidate is
+novel by nature, so one that gnomAD has no record for is the expected case and
+not a reason to refuse; `gnomad_record_warning` says it when it is all of them.
 
 `collect_sample_stats` is the only query (one pass over the three samples'
 rows); `build_report` is pure so every threshold is a unit test. The numbers
@@ -51,6 +55,13 @@ ENFORCEABLE_MIN = 0.90
 # The proband's median depth below this many times min_dp: the gate is close to
 # the assay's own depth, so the preset may be too strict for it.
 THIN_COVERAGE_FACTOR = 1.5
+# gnomAD binds only when it has a record for at least this share of a sample of
+# the cohort's own variants. A real load has one for most of a cohort's common
+# variants; the floor is low on purpose (a cohort's private variants are
+# legitimately absent), so only a load that judges almost nothing fails it.
+GNOMAD_MIN_HIT_RATE = 0.10
+# how many of the cohort's variants the probe looks up (one Arrow join)
+GNOMAD_PROBE_SIZE = 5000
 
 GNOMAD_FIELD = "popmax (grpmax else AF)"
 
@@ -182,6 +193,52 @@ def collect_variant_stats(sess, ingest_id: str) -> VariantStats:
     )
 
 
+@dataclass(frozen=True)
+class GnomadProbe:
+    """How many of a sample of the cohort's own variants the loaded gnomAD data
+    can judge (has a record with a frequency for)."""
+
+    sampled: int
+    found: int
+
+    @property
+    def rate(self) -> float | None:
+        return self.found / self.sampled if self.sampled else None
+
+
+def sample_cohort_keys(sess, ingest_id: str, n: int) -> list[tuple[str, int, str, str]]:
+    """About GNOMAD_PROBE_SIZE of the cohort's `n` variants as (chrom, pos, ref,
+    alt), spread over the whole genome: every stride-th position (the same on
+    both engines, and the same sample on every run). A cohort of at most
+    GNOMAD_PROBE_SIZE variants is taken whole."""
+    from storage import sql_quote_str
+
+    stride = max(1, -(-n // GNOMAD_PROBE_SIZE))
+    where = f"ingest_id = {sql_quote_str(ingest_id)}"
+    if stride > 1:
+        where += f" AND pos % {stride} = 0"
+    sql = (
+        f"SELECT chrom, pos, ref, alt FROM variants WHERE {where} "
+        f"LIMIT {2 * GNOMAD_PROBE_SIZE}"
+    )
+    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    return [(c, int(p), r, a) for c, p, r, a in data]
+
+
+def collect_gnomad_probe(sess, ingest_id: str, variants: VariantStats) -> GnomadProbe:
+    """Look the cohort's sampled variants up in the loaded gnomAD data, exactly as
+    the `--gnomad-max-af` filter will (an exact chrom / pos / ref / alt join), and
+    count the ones it can judge. A load that holds one row, a slice of one gene or
+    another genome build finds almost none, whatever chromosomes it has rows on."""
+    from annotations import gnomad_af_many
+
+    keys = sample_cohort_keys(sess, ingest_id, variants.n) if variants.n else []
+    unique = list(dict.fromkeys(keys))
+    found = gnomad_af_many(unique)
+    judged = sum(1 for g in found.values() if g.popmax is not None)
+    return GnomadProbe(len(unique), judged)
+
+
 # ───────────────────────────────── the report ─────────────────────────────────
 
 
@@ -193,7 +250,7 @@ class EffectiveReport:
     errors: tuple[dict, ...] = ()  # the warnings a refusal is made of
 
 
-def _pct(fraction: float) -> str:
+def pct(fraction: float) -> str:
     """A share as a percent, never rounded up to 100 when some rows lack it."""
     value = math.floor(fraction * 1000) / 10
     return f"{value:g}%"
@@ -224,6 +281,7 @@ def build_report(
     gnomad_max_af: float | None,
     gnomad_loaded: bool,
     gnomad_chroms: Collection[str] | None = None,
+    gnomad_probe: GnomadProbe | None = None,
     filter_present: bool = True,
     kind: str = "trio",
     categories: Sequence[str] = ("all",),
@@ -233,11 +291,16 @@ def build_report(
     preset_max_af: float | None = None,
     enforce_bound: bool = False,
     enforce_format: bool = False,
+    only: Collection[str] | None = None,
 ) -> EffectiveReport:
     """Whether each requested gate binds, and what to say about it.
 
     `gnomad_chroms` are the chromosomes the loaded gnomAD data has records on
-    (None: not looked at, so any loaded gnomAD is taken to cover the cohort).
+    and `gnomad_probe` how much of a sample of the cohort's variants it can
+    judge (None for either: not looked at, so any loaded gnomAD is taken to
+    cover the cohort). `only` limits the warnings to those about these keys: a
+    run that asked for one opt-in gate, and nothing else, is told about that
+    gate only.
     `skipped` are the preset's skipped keys (from the echo); `preset_max_af` is
     the max_af a preset supplied, set only so a skip of it can be explained;
     `enforce_bound` / `enforce_format` choose which warnings are also errors
@@ -281,7 +344,7 @@ def build_report(
                 warning(
                     "gate_unbound",
                     key,
-                    f"{shown} cannot be enforced: only {_pct(lowest)} of "
+                    f"{shown} cannot be enforced: only {pct(lowest)} of "
                     f"{'/'.join(below)} rows carry {label}" + strict_note(key, label),
                 )
             )
@@ -293,7 +356,7 @@ def build_report(
                     warning(
                         "gate_partial",
                         key,
-                        f"{shown} enforced on {_pct(lowest)} of rows (a call "
+                        f"{shown} enforced on {pct(lowest)} of rows (a call "
                         f"with no {label} counts as a {outcome})",
                     )
                 )
@@ -321,7 +384,7 @@ def build_report(
             why = (
                 "no stored rows for the parents"
                 if lowest is None
-                else f"only {_pct(lowest)} of {'/'.join(below)} rows carry AD"
+                else f"only {pct(lowest)} of {'/'.join(below)} rows carry AD"
             )
             if gates.strict_for("parent_alt_screen"):
                 outcome = (
@@ -354,7 +417,7 @@ def build_report(
             have = (
                 "no variants"
                 if af_share is None
-                else f"only {_pct(af_share)} of variants carry INFO/AF"
+                else f"only {pct(af_share)} of variants carry INFO/AF"
             )
             warnings.append(
                 warning(
@@ -376,19 +439,13 @@ def build_report(
                     "gnomAD data is loaded (`vcfclick annotations load-gnomad`)",
                 )
             )
-        elif gnomad_chroms is not None:
-            share, cohort = _gnomad_coverage(variants, gnomad_chroms)
-            if share is not None and share < ENFORCEABLE_MIN:
+        else:
+            why_not = _gnomad_unbound(
+                gnomad_max_af, variants, gnomad_chroms, gnomad_probe
+            )
+            if why_not:
                 gnomad_bound = False
-                warnings.append(
-                    warning(
-                        "gnomad_no_coverage",
-                        "gnomad_max_af",
-                        _no_coverage_message(
-                            gnomad_max_af, share, cohort, gnomad_chroms
-                        ),
-                    )
-                )
+                warnings.append(warning("gnomad_no_coverage", "gnomad_max_af", why_not))
         bound["gnomad_max_af"] = gnomad_bound
     population = af_ok or (gnomad_max_af is not None and gnomad_bound)
     if not population:
@@ -445,6 +502,8 @@ def build_report(
             )
         )
 
+    if only is not None:
+        warnings = [w for w in warnings if w["key"] in only]
     errors = tuple(
         w
         for w in warnings
@@ -461,6 +520,7 @@ def build_report(
         bound,
         population,
         warnings,
+        gnomad_probe,
     )
     return EffectiveReport(document, tuple(warnings), bound, errors)
 
@@ -475,6 +535,33 @@ def unbound_strict_keys(report: EffectiveReport) -> tuple[str, ...]:
             if w["code"] == "gate_unbound" and w["key"] in STRICT_KEYS
         )
     )
+
+
+def _gnomad_unbound(
+    gnomad_max_af: float,
+    variants: VariantStats,
+    gnomad_chroms: Collection[str] | None,
+    probe: GnomadProbe | None,
+) -> str | None:
+    """Why the loaded gnomAD data cannot judge this cohort, or None when it can
+    (or when nothing was looked at). The chromosomes are tested first: they say
+    the most when the naming differs."""
+    if gnomad_chroms is not None:
+        share, cohort = _gnomad_coverage(variants, gnomad_chroms)
+        if share is not None and share < ENFORCEABLE_MIN:
+            return _no_coverage_message(gnomad_max_af, share, cohort, gnomad_chroms)
+    rate = probe.rate if probe is not None else None
+    if rate is not None and rate < GNOMAD_MIN_HIT_RATE:
+        return (
+            f"gnomad_max_af={gnomad_max_af:g} cannot be enforced: the loaded gnomAD "
+            f"data has a record for only {pct(rate)} of a sample of "
+            f"{probe.sampled} of this cohort's variants (at least "
+            f"{pct(GNOMAD_MIN_HIT_RATE)} are needed), so most are kept as rare "
+            "without being judged. Check that its genome build and chromosome "
+            "naming match the cohort's and that it covers more than a slice of one "
+            "region"
+        )
+    return None
 
 
 def _gnomad_coverage(
@@ -510,18 +597,25 @@ def _no_coverage_message(
         )
     return (
         head + f"the loaded gnomAD data has records on chromosomes that hold only "
-        f"{_pct(share)} of this cohort's variants, so the rest are kept as rare "
+        f"{pct(share)} of this cohort's variants, so the rest are kept as rare "
         "without being judged"
     )
 
 
 def gnomad_record_warning(
-    *, checked: int, without_record: int, max_af: float, info_af_bound: bool
+    *,
+    checked: int,
+    without_record: int,
+    max_af: float,
+    info_af_bound: bool,
+    cohort_rate: float | None = None,
 ) -> dict | None:
     """After the gnomAD filter has run: None, or the warning that it found a
-    record for none of the `checked` candidates (a slice that does not reach
-    them, another build). The pre-run report cannot see this; a filter that
-    judged nothing must not read as "all rare"."""
+    record for none of the `checked` candidates. `cohort_rate` is the share of
+    the cohort's sampled variants gnomAD could judge (the pre-run probe): when
+    it is known the filter does work on this cohort and the candidates are most
+    likely novel variants, which is what a de novo candidate is; when it is not,
+    a slice that does not reach them or another build is the suspect."""
     if not checked or without_record < checked:
         return None
     one = checked == 1
@@ -531,14 +625,23 @@ def gnomad_record_warning(
         else ", and INFO/AF is not applied either, so no population frequency "
         "filter took effect"
     )
+    if cohort_rate is None:
+        advice = (
+            ". Check that its genome build and chromosome naming match the cohort's"
+        )
+    else:
+        advice = (
+            f". It does hold a record for {pct(cohort_rate)} of a sample of the "
+            f"cohort's variants, so {'this one is' if one else 'these are'} "
+            "probably novel"
+        )
     return warning(
         "gnomad_no_record",
         "gnomad_max_af",
         f"gnomad_max_af={max_af:g} judged none of the {checked} "
         f"candidate{'' if one else 's'}: the loaded gnomAD data has no record for "
         f"{'it' if one else 'any of them'}, so {'it is' if one else 'all are'} "
-        f"kept as rare{tail}. Check that its genome build and chromosome naming "
-        "match the cohort's",
+        f"kept as rare{tail}{advice}",
     )
 
 
@@ -577,6 +680,7 @@ def _document(
     bound: dict[str, bool],
     population: bool,
     warnings: list[dict],
+    probe: GnomadProbe | None = None,
 ) -> dict:
     def per_sample(name: str, key: str | None) -> dict:
         out: dict = {s.role: _round(s.fraction(name)) for s in stats}
@@ -605,6 +709,8 @@ def _document(
             "version": None,
             "candidates_checked": None,
             "candidates_without_record": None,
+            "cohort_variants_sampled": probe.sampled if probe else None,
+            "cohort_variants_with_record": probe.found if probe else None,
         },
         "population_filter": population,
         "warnings": list(warnings),

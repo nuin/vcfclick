@@ -61,6 +61,31 @@ def test_every_built_in_is_a_valid_starting_point_with_its_limits_in_words(name)
     }  # fmt: skip
 
 
+@pytest.mark.parametrize("name", PINNED)
+def test_the_limits_in_words_say_what_the_frequency_gates_cannot_judge(name):
+    """The text must not claim more than the filter does: a variant that gnomAD has
+    no record for is KEPT, and the INFO/AF gate steps aside for a cohort's own AF."""
+    b = BUILTINS[name]
+    if "gnomad_max_af" in b.filters:
+        assert "absent from the loaded gnomad slice" in b.does_not_cover.lower()
+        assert "is kept as rare" in b.does_not_cover
+    if "max_af" in b.filters:
+        assert "skipped when INFO/AF is the cohort's own frequency" in b.does_not_cover
+
+
+def test_strict_denovo_says_where_its_gates_do_not_reach():
+    """Each of these is a place where the code is looser than the covers text reads."""
+    b = BUILTINS["strict-denovo"]
+    for limit in (
+        "homozygous-alt proband call is not allele-balance gated",
+        "fewer than 2 alt reads is trusted whatever the fraction",
+    ):
+        assert limit in b.does_not_cover, limit
+    assert "or fewer than 2 alt reads" in b.covers
+    assert 'unset or "." counts as PASS' in b.covers
+    assert "heterozygous proband call" in b.covers
+
+
 def test_every_registered_model_is_run_or_excluded():
     """A built-in whose category list omits a registered model must say why."""
     for name, b in BUILTINS.items():

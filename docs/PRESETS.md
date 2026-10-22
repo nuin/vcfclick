@@ -45,7 +45,12 @@ looks for chrX in males, UPD or mosaic variants; `rare-dominant` keeps a variant
 inherited from either parent because parent phenotype is not considered;
 `rare-recessive` takes a single 1% ceiling, which is the usual carrier-frequency
 limit but can still hide alleles near 1% popmax (some *CFTR* and *GJB2* alleles;
-check against the gnomAD release in use).
+check against the gnomAD release in use). All four say that a variant absent from
+the loaded gnomAD slice is **kept** as rare, and that the `INFO/AF` gate steps
+aside when `INFO/AF` is the cohort's own frequency; `strict-denovo` also says that
+a homozygous-alt proband call is not allele-balance gated and a missing allele
+depth does not fail it, and that a parent 0/0 with fewer than two alt reads is
+trusted whatever the fraction.
 
 Built-ins are read-only. A built-in only changes when a release adds a model or
 a filter that belongs in it; the change bumps its `revision`, adds a line to its
@@ -96,7 +101,7 @@ frequency and gnomAD is not loaded. A run with a preset therefore prints an
 **effective-gate report**: for each gate, whether the field it reads exists in
 this data. A gate **binds** when its field is present on at least 90% of the rows
 it reads (GQ, DP and AD on the stored rows of the proband and both parents;
-`INFO/AF` on the variants; gnomAD when any is loaded).
+`INFO/AF` on the variants; gnomAD when it can judge the cohort, below).
 
 The text puts the `preset:` and `gates:` lines under the `trio:` line, then one
 `WARNING:` line per problem, on stdout:
@@ -115,8 +120,8 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gate_partial` | the gate binds but not on every row (a note on stderr, `info`) |
 | `thin_coverage` | the proband's median DP is under 1.5 x `min_dp` |
 | `gnomad_not_loaded` | `--gnomad-max-af` was asked for and no gnomAD data is loaded |
-| `gnomad_no_coverage` | gnomAD is loaded but has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere): it judges nothing |
-| `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates (a slice that does not reach them, another genome build); all are kept as rare |
+| `gnomad_no_coverage` | gnomAD is loaded but cannot judge the cohort: it has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere), or a record for under 10% of a sample of the cohort's own variants (a one-row test load, a slice of one gene, another genome build) |
+| `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare (novel variants, which is what de novo candidates are; the text says how much of the cohort gnomAD does reach) |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
 | `skipped_widening` | a preset key was skipped and skipping widens the search |
 | `duo_denovo` | one parent: the de novo answer is `possible_denovo`, weaker evidence |
@@ -158,17 +163,40 @@ Remedy: load gnomAD for this cohort's chromosomes and genome build with `vcfclic
 To run anyway, pass --no-require-bound-gates: the warnings stay in the output, and a call whose field is missing passes the gate instead of failing it.
 ```
 
-gnomAD **binds** when it is loaded and has records on the chromosomes that hold
-at least 90% of the cohort's variants. A slice on other chromosomes, or under
-another naming (`1` against `chr1`), applies no frequency filter at all, and
-`strict-denovo` refuses it as it refuses an unloaded one. Whether a slice that
-covers the right chromosomes has a record for any candidate (a build mismatch, a
-slice of one gene) cannot be known before the query: the run says so afterwards,
-with a `WARNING:` line at the end of the text (and `gnomad_no_record` plus
+gnomAD **binds** when it can judge the cohort, which is tested before the run on
+the cohort's own variants, not on whether the store has a row:
+
+- it has records on the chromosomes that hold at least 90% of the cohort's
+  variants (a slice on other chromosomes, or under another naming, `1` against
+  `chr1`, judges nothing), **and**
+- the exact allele (chromosome, position, ref, alt) is in it for at least 10% of
+  a sample of up to 5,000 of the cohort's variants (the same lookup the
+  `--gnomad-max-af` filter does, so a one-row test load, a slice of one gene or a
+  genome-build mismatch finds almost none). A real load has a record for most of a
+  cohort's variants; the floor is low because a cohort's private variants are
+  legitimately absent.
+
+A gnomAD that does not bind applies no frequency filter that can be relied on,
+and `strict-denovo` refuses it as it refuses an unloaded one (the JSON carries
+`gnomad.cohort_variants_sampled` / `cohort_variants_with_record`, and the message
+says the share). A slice of one gene on an exome therefore reads as not covering,
+and `--no-require-bound-gates` runs it anyway.
+
+What is left for after the run is a fact about the *candidates*: a de novo
+candidate is novel by nature, so one that gnomAD has no record for is the
+expected case and not a reason to refuse. The candidates the filter kept for want
+of a record are counted (`gnomAD: no record for 6 of 8 candidates (kept as
+rare); it has a record for 62.7% of a sample of the cohort's variants`, and
 `gnomad.candidates_checked` / `candidates_without_record` in `effective`), and
-the candidates the filter kept for want of a record are counted
-(`gnomAD: no record for 6 of 8 candidates (kept as rare)`). This one is a
-warning, not a refusal, because the run is already done.
+when it is all of them the text ends with a `WARNING:` line and `effective`
+carries `gnomad_no_record`. That is a warning and not a refusal because gnomAD
+does judge the cohort, which the probe has already established.
+
+`--parent-alt-screen` typed on its own is told about too: on a VCF whose parents
+have no allele depths it screens nothing (every parent 0/0 is trusted), so the
+run prints that one `WARNING:` line and carries an `effective` object whose only
+warning is `gate_unbound` for `parent_alt_screen`. The other gates were not asked
+for, so they are not reported.
 
 ### The other new gates
 
@@ -319,7 +347,8 @@ With a preset, `db trio --format json` adds two top-level objects after
 - `effective`: `rows`, `gq`, `dp`, `ad` (the share of rows carrying each, per
   sample, and `bound`), `median_dp`, `info_af` (`state` is `gates.af_gate`),
   `filter_column`, `gnomad` (`loaded`, `bound`, `candidates_checked`,
-  `candidates_without_record`), `population_filter` and `warnings` (`{code,
+  `candidates_without_record`, `cohort_variants_sampled`,
+  `cohort_variants_with_record`), `population_filter` and `warnings` (`{code,
   level, key, message}`).
 
 `gates` also reports `strict_missing` (and, after it, `strict_exempt`: the gates

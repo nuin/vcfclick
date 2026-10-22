@@ -104,9 +104,13 @@ def assert_preset_objects(doc: dict) -> None:
         assert isinstance(e["filter_column"]["present"], bool)
         assert list(e["gnomad"]) == [
             "loaded", "bound", "field", "version", "candidates_checked",
-            "candidates_without_record",
+            "candidates_without_record", "cohort_variants_sampled",
+            "cohort_variants_with_record",
         ]  # fmt: skip
-        for k in ("candidates_checked", "candidates_without_record"):
+        for k in (
+            "candidates_checked", "candidates_without_record",
+            "cohort_variants_sampled", "cohort_variants_with_record",
+        ):  # fmt: skip
             assert e["gnomad"][k] is None or _is_int(e["gnomad"][k]), k
         assert isinstance(e["population_filter"], bool)
         for w in e["warnings"]:
@@ -218,7 +222,8 @@ _EFFECTIVE = {
     "gnomad": {
         "loaded": False, "bound": False, "field": "popmax (grpmax else AF)",
         "version": None, "candidates_checked": None,
-        "candidates_without_record": None,
+        "candidates_without_record": None, "cohort_variants_sampled": 30,
+        "cohort_variants_with_record": 0,
     },
     "population_filter": True,
     "warnings": [
