@@ -3,8 +3,9 @@
 A trio candidate passes through one ordered chain. Row decorators need only
 the variant key and also serve other commands' rows (`decorate_row`);
 candidate decorators need the 8-column trio row and never reach those rows.
-Document decorators edit the finished trio document. Pure unit tests: the
-only store is the in-process DuckDB annotation store, never a chDB session.
+Document decorators edit the finished trio document. A decorator may also
+register a prefetch, run once per batch of rows. Pure unit tests: the only
+store is the in-process DuckDB annotation store, never a chDB session.
 """
 
 from __future__ import annotations
@@ -97,10 +98,84 @@ def test_registration_order_is_key_order_across_both_kinds(chains):
     assert list(row)[-2:] == ["first", "third"]
 
 
+# ───────────────────── the per-batch prefetch hook ─────────────────────
+
+
+def _lookup_decorators(calls):
+    """A row decorator and a candidate decorator that do their lookup in a
+    prefetch, as a later feature's batched query would. The per-row call only
+    reads `render.cache`, so a row that was not prefetched is a KeyError."""
+
+    def row_prefetch(render, keys):
+        calls["row"].append(list(keys))
+        for key in keys:
+            render.cache[("depth", key)] = key[1] * 2
+
+    def depth(d, key, render):
+        d["depth"] = render.cache[("depth", key)]
+        return d
+
+    def cand_prefetch(render, rows):
+        calls["cand"].append([r[1] for r in rows])
+        for r in rows:
+            render.cache[("pgt", tuple(r))] = r[4]
+
+    def pgt(d, row, model, render):
+        d["pgt"] = render.cache[("pgt", tuple(row))]
+        return d
+
+    out.register_row_decorator(depth, prefetch=row_prefetch)
+    out.register_candidate_decorator(
+        pgt, models=frozenset({"denovo"}), prefetch=cand_prefetch
+    )
+
+
+def test_prefetch_runs_once_per_rendered_model_and_rows_look_nothing_up(chains):
+    calls = {"row": [], "cand": []}
+    _lookup_decorators(calls)
+    rows = [
+        ["chr1", 100, "A", "G", 1, 0, 0, 0.01],
+        ["chr1", 200, "C", "T", 1, 0, 0, None],
+        ["chr1", 100, "A", "G", 2, 0, 0, 0.01],  # the same variant again
+    ]
+    render = _render()
+
+    denovo = out._candidates(rows, "denovo", render)
+    assert calls == {"row": [[("chr1", 100, "A", "G"), ("chr1", 200, "C", "T")]],
+                     "cand": [[100, 200, 100]]}  # fmt: skip
+    assert [(c["depth"], c["pgt"]) for c in denovo] == [(200, 1), (400, 1), (200, 2)]
+
+    # another model: the row decorator's prefetch runs again for the new
+    # batch, the candidate decorator's does not (it is for denovo only)
+    recessive = out._candidates(rows, "recessive", render)
+    assert len(calls["row"]) == 2 and len(calls["cand"]) == 1
+    assert all("depth" in c and "pgt" not in c for c in recessive)
+
+    # nothing to render, nothing to look up
+    assert out._candidates([], "denovo", render) == []
+    assert len(calls["row"]) == 2 and len(calls["cand"]) == 1
+
+
+def test_decorate_rows_prefetches_once_for_a_foreign_command(chains):
+    calls = {"row": [], "cand": []}
+    _lookup_decorators(calls)
+    rows = [("chr1", 100, "A", "G"), ("chr2", 5, "T", "C"), ("chr1", 100, "A", "G")]
+    got = out.decorate_rows([{"i": i} for i in range(3)], rows, _render())
+    assert calls == {"row": [[("chr1", 100, "A", "G"), ("chr2", 5, "T", "C")]],
+                     "cand": []}  # fmt: skip
+    assert [(d["i"], d["depth"]) for d in got] == [(0, 200), (1, 10), (2, 200)]
+    assert "pgt" not in got[0]  # a candidate decorator never reaches these
+
+    assert out.decorate_rows([], [], _render()) == []
+    assert len(calls["row"]) == 1  # an empty batch makes no call
+    with pytest.raises(ValueError, match="2 dicts for 3 rows"):
+        out.decorate_rows([{}, {}], rows, _render())
+
+
 # ─────────────────── annotation prefetch with row decorators ───────────────────
 
 
-def test_prefetch_serves_the_row_decorator_for_a_foreign_row(
+def test_decorate_rows_batches_the_annotation_lookups(
     isolated_annotation_db, monkeypatch
 ):
     from annotations.db import get_connection
@@ -125,12 +200,13 @@ def test_prefetch_serves_the_row_decorator_for_a_foreign_row(
             out.decorate_row({}, r, out.Render(object(), 1, have, store)) for r in rows
         ]
 
+        # the annotation columns are a row decorator with its own prefetch:
+        # decorate_rows alone batches them, and no row asks the store
         batched = out.Render(object(), 1, have, store)
-        out.prefetch_annotations(batched, rows)
-        assert {k for k in batched.cache if isinstance(k, tuple)} == set(rows)
-        with monkeypatch.context() as m:  # a prefetched row never asks the store
+        with monkeypatch.context() as m:
             m.setattr(out, "_enrich", pytest.fail)
-            got = [out.decorate_row({}, r, batched) for r in rows]
+            got = out.decorate_rows([{}, {}], rows, batched)
+        assert {k for k in batched.cache if isinstance(k, tuple)} == set(rows)
     finally:
         store.close()
     assert got == per_row

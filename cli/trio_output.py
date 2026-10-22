@@ -19,6 +19,16 @@ ones. There are two kinds:
 
 `register_document_decorator` edits the finished trio document as a whole.
 
+A decorator that needs a lookup should not make one per row (0.1-1.5 ms
+each, seconds for a long listing). Both registrars take an optional
+`prefetch(render, rows)`, called once per batch of rows before any row of it
+is decorated: it does the lookup for the whole batch and leaves the answers
+in `render.cache`, and the per-row call only reads them. A row decorator's
+prefetch receives the batch's distinct variant keys; a candidate decorator's
+receives the trio rows of the one model being rendered (and is skipped for a
+model outside its `models`). `db trio` runs these per model; another command
+runs them with `decorate_rows` (or `prefetch_rows`, then `decorate_row`).
+
 JSON compatibility policy (docs/TRIO.md): additive only. A key that is
 already emitted is never removed, renamed or retyped, and the relative
 order of the existing keys never changes; new keys are snake_case and are
@@ -112,8 +122,11 @@ class Render:
     limit: int
     have: dict  # annotation sources that hold data
     store: object | None = None  # open annotation connection, kept alive only
-    # Annotation answers prefetched in batches (see prefetch_annotations), so
-    # a rendered row costs a dict lookup, not a store query.
+    # Answers prefetched in batches, so a rendered row costs a dict lookup,
+    # not a store query. The annotation columns keep theirs under the bare
+    # variant key (see prefetch_annotations); any other decorator keys its
+    # entries under its own name, e.g. `render.cache[("parent_alt", key)]`,
+    # so that two decorators never share an entry.
     cache: dict = field(default_factory=dict)
 
 
@@ -125,8 +138,10 @@ def prefetch_annotations(render: Render, rows: Sequence[Sequence]) -> None:
 
     `rows` need only carry (chrom, pos, ref, alt) as their first four
     columns, so a trio detail row and any other command's variant row both
-    work. The annotation row decorator reads what this stores in
-    `render.cache`; without a prefetch it falls back to one lookup per row."""
+    work. This is the annotation row decorator's registered prefetch, so the
+    batch runs by itself through `prefetch_rows` / `decorate_rows` / `db
+    trio`; the decorator reads what is stored in `render.cache`, and without
+    a prefetch it falls back to one lookup per row."""
     from annotations.db import GeneIndex, clinvar_many, gnomad_af_many
 
     keys = [(r[0], int(r[1]), r[2], r[3]) for r in rows]
@@ -177,35 +192,55 @@ CandidateDecorator = Callable[[dict, list, str, Render], dict]
 # A document decorator receives the whole trio document and returns it.
 DocumentDecorator = Callable[[dict, Render], dict]
 
+# A prefetch receives the render context and the batch of rows about to be
+# decorated, looks up whatever the per-row call will need for all of them at
+# once, and stores it in `render.cache`. For a row decorator the rows are the
+# batch's distinct variant keys; for a candidate decorator they are the trio
+# detail rows of one model. Called once per batch, never for an empty one.
+Prefetch = Callable[[Render, Sequence[Sequence]], None]
+
 
 @dataclass(frozen=True)
 class _Decorator:
     fn: RowDecorator | CandidateDecorator
     row_only: bool
     models: frozenset[str] | None = None  # candidate decorators only
+    prefetch: Prefetch | None = None
 
 
 _DECORATORS: list[_Decorator] = []
 _DOCUMENT_DECORATORS: list[DocumentDecorator] = []
 
 
-def register_row_decorator(fn: RowDecorator) -> RowDecorator:
+def register_row_decorator(
+    fn: RowDecorator, *, prefetch: Prefetch | None = None
+) -> RowDecorator:
     """Append `fn` to the chain as a per-variant column: it sees only the
     variant key (chrom, pos, ref, alt), so it applies to a trio candidate and
     to a row of any other command alike (`decorate_row`). Order of
-    registration is the order keys appear in the output."""
-    _DECORATORS.append(_Decorator(fn, row_only=True))
+    registration is the order keys appear in the output.
+
+    `prefetch(render, keys)`, if given, is called once per batch with the
+    batch's distinct variant keys, before any row of it is decorated."""
+    _DECORATORS.append(_Decorator(fn, row_only=True, prefetch=prefetch))
     return fn
 
 
 def register_candidate_decorator(
-    fn: CandidateDecorator, models: frozenset[str] | None = None
+    fn: CandidateDecorator,
+    models: frozenset[str] | None = None,
+    *,
+    prefetch: Prefetch | None = None,
 ) -> CandidateDecorator:
     """Append `fn` to the chain as a `db trio` candidate key (all models, or
     only `models`). It sees the 8-column trio row, so it is never applied to
     another command's rows. Order of registration is the order keys appear
-    in the output."""
-    _DECORATORS.append(_Decorator(fn, row_only=False, models=models))
+    in the output.
+
+    `prefetch(render, rows)`, if given, is called once per rendered batch of
+    one model's trio rows (only for a model `fn` applies to), before any row
+    of it is decorated."""
+    _DECORATORS.append(_Decorator(fn, row_only=False, models=models, prefetch=prefetch))
     return fn
 
 
@@ -234,20 +269,57 @@ def _decorate(out: dict, row: Sequence, render: Render, model: str | None) -> di
     return out
 
 
+def _prefetch_chain(render: Render, rows: Sequence[Sequence], model: str | None):
+    """Run the chain's prefetches once over `rows`, in registration order:
+    every row decorator's (given the distinct variant keys) and, when `model`
+    is a trio model, those of the candidate decorators that apply to it."""
+    if not rows:
+        return
+    keys = list(dict.fromkeys(_variant_key(r) for r in rows))
+    for d in _DECORATORS:
+        if d.prefetch is None:
+            continue
+        if d.row_only:
+            d.prefetch(render, keys)
+        elif model is not None and (d.models is None or model in d.models):
+            d.prefetch(render, rows)
+
+
+def prefetch_rows(render: Render, rows: Sequence[Sequence]) -> None:
+    """Run every row decorator's prefetch once for `rows` (anything that
+    starts with (chrom, pos, ref, alt)), so the `decorate_row` calls that
+    follow read answers from `render.cache` and make no lookup. Use it when
+    the dicts are built row by row; otherwise `decorate_rows` does both."""
+    _prefetch_chain(render, rows, None)
+
+
 def decorate_row(out: dict, row: Sequence, render: Render) -> dict:
     """Append the per-variant columns (the row decorators: genes, gnomAD
     popmax, ClinVar, ...) to `out`, a dict the caller built for `row`.
 
     `row` need only start with (chrom, pos, ref, alt). Candidate decorators
     are not applied: they are `db trio` keys that read a trio detail row.
-    Call `prefetch_annotations` on the batch first, or each row costs a
-    store query."""
+    Call `prefetch_rows` on the batch first, or each row costs the lookups
+    its decorators make."""
     return _decorate(out, row, render, None)
 
 
+def decorate_rows(
+    outs: Sequence[dict], rows: Sequence[Sequence], render: Render
+) -> list[dict]:
+    """`decorate_row` for a whole batch: run every row decorator's prefetch
+    once over `rows`, then decorate `outs[i]` for `rows[i]`. The entry point
+    for a command other than `db trio` that renders many variant rows."""
+    if len(outs) != len(rows):
+        raise ValueError(f"{len(outs)} dicts for {len(rows)} rows")
+    prefetch_rows(render, rows)
+    return [decorate_row(o, r, render) for o, r in zip(outs, rows, strict=True)]
+
+
 def _candidates(rows: list, model: str, render: Render) -> list[dict]:
-    """Rendered candidates for `rows`, annotations fetched in one batch."""
-    prefetch_annotations(render, rows)
+    """Rendered candidates for `rows`: the prefetches of every decorator that
+    applies to `model` run once over the batch first."""
+    _prefetch_chain(render, rows, model)
     return [_candidate(r, model, render) for r in rows]
 
 
@@ -271,11 +343,13 @@ def _candidate(row: list, model: str, render: Render) -> dict:
     return _decorate(_candidate_base(row), row, render, model)
 
 
-@register_row_decorator
 def _annotation_columns(out: dict, key: VariantKey, render: Render) -> dict:
     hit = render.cache.get(key)
     out.update(dict(hit) if hit is not None else _enrich(*key, render.have))
     return out
+
+
+register_row_decorator(_annotation_columns, prefetch=prefetch_annotations)
 
 
 @dataclass(frozen=True)

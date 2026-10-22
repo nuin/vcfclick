@@ -41,8 +41,10 @@ conn.close()
 """
 
 # Render the same trio document twice in one interpreter: as shipped, and
-# with the batch prefetch disabled so every candidate goes to the store.
+# with every decorator's prefetch removed so each candidate goes to the
+# store. Counting the per-row lookups proves the two runs differ.
 _RENDER = """
+import dataclasses
 import json
 import cli.trio_output as out
 from cli.trio_analysis import Gates, Trio, TrioAnalysis, _has_reference_rows
@@ -56,10 +58,16 @@ analysis = TrioAnalysis(
     has_reference=_has_reference_rows(sess),
     gnomad_max_af=None,
 )
+lookups = []
+real_enrich = out._enrich
+out._enrich = lambda *a: lookups.append(a) or real_enrich(*a)
 batched = out._trio_json(analysis, "all", 1000)
-out.prefetch_annotations = lambda render, rows: None
+n_batched = len(lookups)
+out._DECORATORS[:] = [
+    dataclasses.replace(d, prefetch=None) for d in out._DECORATORS
+]
 per_row = out._trio_json(analysis, "all", 1000)
-print("DOCS " + json.dumps([batched, per_row]))
+print("DOCS " + json.dumps([batched, per_row, n_batched, len(lookups) - n_batched]))
 """
 
 
@@ -83,7 +91,7 @@ def test_batched_annotations_equal_per_candidate_lookups(
     )  # fmt: skip
     out = run_python(vcfclick_home, _RENDER, VCFCLICK_DB_NAME="t", **env)
     line = [ln for ln in out.splitlines() if ln.startswith("DOCS ")][-1]
-    batched, per_row = json.loads(line.removeprefix("DOCS "))
+    batched, per_row, n_batched, n_per_row = json.loads(line.removeprefix("DOCS "))
     assert batched == per_row
     assert batched["annotations"] == {
         "genes": seeded,
@@ -92,6 +100,8 @@ def test_batched_annotations_equal_per_candidate_lookups(
     }
     cands = [c for m in batched["models"].values() for c in m.get("candidates", [])]
     assert cands, "the fixture should yield candidates at --max-af 0.5"
+    assert n_batched == 0  # every candidate was served by the batch
+    assert n_per_row == len(cands)  # and without it, each asked the store
     if seeded:  # the comparison is only meaningful if annotations land
         assert any(c["genes"] for c in cands)
         assert any(c["gnomad_popmax"] is not None for c in cands)
