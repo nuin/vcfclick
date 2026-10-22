@@ -87,6 +87,18 @@ IDENTITY_KEYS = frozenset(
         "ped",
     }
 )
+# The same keys with case, spaces, hyphens, underscores and dots taken out, so
+# `Patient`, `sample-id`, `sampleId` and `SAMPLE_ID` are caught as the keys they
+# spell. (NEVER_PRESET is matched the same way.)
+_KEY_NOISE = re.compile(r"[\s_.\-]+")
+
+
+def flat_key(key: str) -> str:
+    return _KEY_NOISE.sub("", key).casefold()
+
+
+_IDENTITY_FLAT = frozenset(flat_key(k) for k in IDENTITY_KEYS)
+_NEVER_FLAT = {flat_key(k): k for k in fr.NEVER_PRESET}
 _META_STRINGS = (
     "created_with",
     "updated",
@@ -143,20 +155,33 @@ def name_problem(name: object) -> str | None:
 
 
 def identity_problem(key: str, *, envelope: bool = True) -> str | None:
-    """Why a top-level (`envelope`) or `meta` key may not be in a preset file,
-    or None: it names a sample, family, path or database (a preset carries
-    none), or is one of the keys a preset may never carry. The envelope's own
-    keys (`name`, `filters`, ...) are not in question."""
+    """Why a top-level (`envelope`), `meta` or filter key may not be in a preset
+    file, or None: it names a sample, family, path or database (a preset carries
+    none), or is one of the keys a preset may never carry. Matched without regard
+    to case, spaces, hyphens, underscores and dots (`Patient`, `sample-id`). The
+    envelope's own keys (`name`, `filters`, ...) are not in question."""
     if envelope and key in _ENVELOPE_ORDER:
         return None
-    if key in fr.NEVER_PRESET:
-        return f"can never be part of a preset: {fr.NEVER_PRESET[key]}"
-    if key in IDENTITY_KEYS:
+    flat = flat_key(key)
+    never = key if key in fr.NEVER_PRESET else _NEVER_FLAT.get(flat)
+    if never is not None:
+        return f"can never be part of a preset: {fr.NEVER_PRESET[never]}"
+    if flat in _IDENTITY_FLAT:
         return (
             "can never be part of a preset: it would carry a sample, family, "
             "path or database identity"
         )
     return None
+
+
+def filter_identity_problem(key: str) -> str | None:
+    """`identity_problem` for a key under `filters`: an extension (`x_`) key and
+    a registered filter are what they are; any other key that spells an identity
+    is refused (an unknown key that does not is `unknown_key`, a warning in a
+    stored file)."""
+    if key.startswith(EXTENSION_PREFIX) or key in fr.REGISTRY:
+        return None
+    return identity_problem(key, envelope=False)
 
 
 # ───────────────────────────── parsing ─────────────────────────────
@@ -329,6 +354,8 @@ def _validate_document(doc: object, allow_unknown: bool) -> Validated:
     out["filters"], unknown = _check_filters(doc, allow_unknown, bad)
     out["meta"] = _check_meta(doc.get("meta"), bad)
     for key, value in doc.items():  # unknown envelope keys survive a rewrite
+        if key in _ENVELOPE_ORDER:
+            continue  # the checks above own these: a wrong one is dropped, not kept
         why = identity_problem(key)
         if why:
             bad("never_presettable", f"{key[:40]} {why}", key[:40])
@@ -417,6 +444,8 @@ def _check_filters(
                 f"{shown} can never be part of a preset: {fr.NEVER_PRESET[key]}",
                 key,
             )
+        elif who := filter_identity_problem(key):
+            bad("never_presettable", f"{shown} {who}", key)
         else:
             near = fr.suggest(key)
             hint = f" (did you mean {', '.join(near)}?)" if near else ""

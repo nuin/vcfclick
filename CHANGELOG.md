@@ -69,9 +69,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   before the file system is touched); writes are atomic; a locked preset
   (`meta.locked`) needs `--force`; import and export are all-or-nothing and strip
   patient-specific keys on export. A preset carries no sample, family, path or
-  database identity in any key of the file, no number that is not finite, and
-  `export -o DIR` writes `DIR/NAME.vcfclick-preset.json`, which a directory on
-  `VCFCLICK_PRESET_PATH` reads as `NAME`.
+  database identity in any key of the file, at the top level, in `meta` or under
+  `filters`, however it is spelt (`Patient`, `sample-id`), no number that is not
+  finite, and a `null` or mistyped `title` / `applies_to` / `assay` is dropped or
+  listed as an error and never breaks `preset list`. `export -o DIR` writes
+  `DIR/NAME.vcfclick-preset.json`, which a directory on `VCFCLICK_PRESET_PATH`
+  reads as `NAME`, and which `save`, `import` and `rename` count as the existing
+  preset `NAME` (`--force` replaces that file).
 - The effective-gate report. A run with a preset says, per gate, whether the
   field it reads is in this data: GQ, DP and AD on the proband's and parents'
   rows, `INFO/AF`, gnomAD (loaded, and with records on the chromosomes of 90% of

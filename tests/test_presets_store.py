@@ -260,6 +260,166 @@ def test_a_file_with_a_400_digit_number_is_listed_not_a_crash(run, vcfclick_home
     )
 
 
+def test_a_text_field_that_is_null_or_the_wrong_type_never_breaks_the_listing(
+    run, vcfclick_home
+):
+    """`preset list --format json` is the call the desktop apps make: a bad file in
+    the directory must be listed with its problem, whatever its text fields hold."""
+    d = vcfclick_home / "presets"
+    d.mkdir(parents=True)
+    head = '{"schema": "vcfclick.preset", "schema_version": 1, "filters": {}, '
+    for name, field in (
+        ("nullapp", '"applies_to": null'),  # accepted as absent
+        ("intapp", '"applies_to": 5'),  # an error
+        ("strapp", '"applies_to": "trio"'),
+        ("nulltitle", '"title": null, "description": null, "assay": null'),
+        ("inttitle", '"title": 5, "description": [1], "assay": 7'),
+    ):
+        (d / f"{name}.json").write_text(head + field + "}")
+    for args in (["list", "--format", "json"], ["list", "--command", "trio"],
+                 ["list", "--command", "trio", "--format", "json"]):  # fmt: skip
+        run(*args)
+    rows = {
+        p["name"]: p
+        for p in json.loads(run("list", "--format", "json").stdout)["presets"]
+    }
+    assert rows["nullapp"]["applies_to"] == [] and rows["nullapp"]["available"]
+    assert rows["nulltitle"]["available"] and rows["nulltitle"]["title"] == "nulltitle"
+    for bad in ("intapp", "strapp", "inttitle"):
+        assert rows[bad]["available"] is False
+        assert rows[bad]["problems"][0]["code"] in ("bad_type", "bad_value"), bad
+        assert rows[bad]["applies_to"] == [] and isinstance(rows[bad]["title"], str)
+        assert rows[bad]["assay"] is None
+    for name in rows:
+        if name in ("nullapp", "intapp", "strapp", "nulltitle", "inttitle"):
+            run("show", name, "--format", "json")
+    # a null is dropped from the normalised document, not carried into a store or export
+    checked = ps.validate_document(json.loads((d / "nullapp.json").read_text()))
+    assert checked.ok and "applies_to" not in checked.doc
+    wrong = ps.validate_document(json.loads((d / "intapp.json").read_text()))
+    assert not wrong.ok and "applies_to" not in wrong.doc
+
+
+def test_an_identity_key_is_refused_however_it_is_spelt_and_wherever_it_sits(
+    run, vcfclick_home, tmp_path
+):
+    """Case, hyphen and separator variants of an identity key are the key, and a
+    key under `filters` is held to the same rule (an error in every mode, not the
+    warning an unknown filter key is)."""
+    base = {"schema": ps.SCHEMA, "schema_version": 1, "name": "idv",
+            "filters": {"min_gq": 20}}  # fmt: skip
+    for top in (
+        "Patient",
+        "sample-id",
+        "sampleId",
+        "SAMPLE_ID",
+        "Proband",
+        "Family ID",
+    ):
+        found = ps.validate_document({**base, top: "x"}, allow_unknown=True)
+        assert [p.code for p in found.errors] == ["never_presettable"], top
+    for key in (
+        "proband_id",
+        "Sample",
+        "family_id",
+        "mrn",
+        "Family-ID",
+        "DB",
+        "Proband",
+    ):
+        for allow in (False, True):
+            found = ps.validate_document(
+                {**base, "filters": {"min_gq": 20, key: "x"}}, allow_unknown=allow
+            )
+            assert [p.code for p in found.errors] == ["never_presettable"], (key, allow)
+            assert found.unknown_keys == ()
+    meta = ps.validate_document({**base, "meta": {"Patient-ID": "x"}})
+    assert [p.code for p in meta.errors] == ["never_presettable"]
+    # what is not an identity is still an unknown filter key, and the envelope's own
+    # keys and the extension namespace are untouched
+    plain = ps.validate_document(
+        {**base, "filters": {"min_gq": 20, "colour": 1, "x_sample": 1}},
+        allow_unknown=True,
+    )
+    assert plain.ok and plain.unknown_keys == ("colour",)
+    assert (
+        ps.identity_problem("name") is None and ps.identity_problem("filters") is None
+    )
+
+    # import refuses them, even with --allow-unknown-keys, and writes nothing
+    f = tmp_path / "idv.json"
+    f.write_text(
+        json.dumps({**base, "filters": {"min_gq": 20, "Sample": "x", "mrn": 1}})
+    )
+    r = run("import", str(f), "--allow-unknown-keys", ok=False)
+    assert "Sample" in r.output and files(vcfclick_home) == []
+
+    # a hand-edited file in the presets directory is listed with the error, never used
+    # or exported
+    d = vcfclick_home / "presets"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "idv.json").write_text(f.read_text())
+    (listed,) = [p for p in store.list_presets("user") if p.name == "idv"]
+    assert listed.has_errors and listed.problems[0].code == "never_presettable"
+    assert "cannot be exported" in run("export", "idv", ok=False).output
+    # and whatever a Preset object holds, an export leaves them out of the filters too
+    tainted = store.Preset(
+        "idv", store.USER,
+        {**base, "filters": {"min_gq": 20, "Sample": "x", "family_id": "F1", "x_k": 1}},
+    )  # fmt: skip
+    assert exchange.export_document(tainted)["filters"] == {"min_gq": 20, "x_k": 1}
+
+
+def test_an_exported_file_counts_as_the_preset_when_a_write_asks_whether_it_exists(
+    run, vcfclick_home
+):
+    """Only `a.vcfclick-preset.json` is in the presets directory: it is the preset
+    `a`, so save, import and rename must refuse to shadow it, and --force replaces
+    that file and not a twin beside it."""
+    d = vcfclick_home / "presets"
+    run("save", "a", "--min-gq", "30")
+    (d / "a.json").rename(d / "a.vcfclick-preset.json")
+    assert store.user_file("a") == d / "a.vcfclick-preset.json"
+    assert store.user_file("nothing") is None
+    with pytest.raises(ps.PresetError, match="not a preset name"):
+        store.user_file("../a")
+
+    doc = store.new_document("a", {"min_gq": 40})
+    with pytest.raises(ps.PresetError, match="already exists"):
+        store.save_user_preset(doc)
+    assert "already exists" in run("save", "a", "--min-gq", "25", ok=False).output
+    incoming = [exchange.Incoming("a", doc, "a.json")]
+    with pytest.raises(ps.PresetError, match="already exists"):
+        exchange.import_presets(incoming, force=False)
+    run("save", "b", "--min-gq", "20")
+    assert "already exists" in run("rename", "b", "a", ok=False).output
+    assert files(vcfclick_home) == ["a.vcfclick-preset.json", "b.json"]
+
+    # --force writes to the file that is there; a twin NAME.json is never created
+    assert store.save_user_preset(doc, force=True) == d / "a.vcfclick-preset.json"
+    assert files(vcfclick_home) == ["a.vcfclick-preset.json", "b.json"]
+    assert json.loads((d / "a.vcfclick-preset.json").read_text())["filters"] == {
+        "min_gq": 40
+    }
+    again = store.new_document("a", {"min_gq": 50})
+    (written,) = exchange.import_presets(
+        [exchange.Incoming("a", again, "x")], force=True
+    )
+    assert written == d / "a.vcfclick-preset.json"
+    assert files(vcfclick_home) == ["a.vcfclick-preset.json", "b.json"]
+    assert [p.name for p in store.list_presets("user")] == [
+        "a",
+        "b",
+    ]  # no duplicate_name
+    # a failing import puts the original back into that same file
+    before = (d / "a.vcfclick-preset.json").read_text()
+    bad = exchange.Incoming("c", {"not": "serialisable", "x": {1, 2}}, "c.json")
+    with pytest.raises(TypeError):
+        exchange.import_presets([exchange.Incoming("a", doc, "a"), bad], force=True)
+    assert (d / "a.vcfclick-preset.json").read_text() == before
+    assert files(vcfclick_home) == ["a.vcfclick-preset.json", "b.json"]
+
+
 # ─────────────────── a file that leaves and comes back unchanged ───────────────────
 
 

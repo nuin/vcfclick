@@ -23,6 +23,7 @@ from cli.preset_schema import (
     EXPORT_STEM,
     SCHEMA_VERSION,
     PresetError,
+    filter_identity_problem,
     fingerprint,
     identity_problem,
     name_problem,
@@ -35,6 +36,7 @@ from cli.preset_schema import (
 from cli.presets import (
     Preset,
     find_preset,
+    user_file,
     user_path,
     write_text_atomic,
 )
@@ -50,14 +52,18 @@ def export_document(preset: Preset, *, with_patient_data: bool = False) -> dict:
     """The preset as a file to hand to a colleague: without the patient-specific
     keys (unless asked), without where it was imported from, with its
     approval metadata."""
-    # a loaded preset has no identity keys (validation refuses them); drop any
-    # anyway, so nothing can leave through an export
+    # a loaded preset has no identity keys, at the top level or under filters
+    # (validation refuses them); drop any anyway, so nothing can leave through
+    # an export
     doc = {k: v for k, v in preset.doc.items() if identity_problem(k) is None}
     doc["filters"] = {
         k: v
         for k, v in preset.filters.items()
-        if with_patient_data
-        or not (k in fr.REGISTRY and fr.REGISTRY[k].patient_specific)
+        if filter_identity_problem(k) is None
+        and (
+            with_patient_data
+            or not (k in fr.REGISTRY and fr.REGISTRY[k].patient_specific)
+        )
     }
     meta = preset.meta
     doc["meta"] = {
@@ -180,7 +186,7 @@ def import_presets(incoming: list[Incoming], *, force: bool) -> list[Path]:
     """Write every incoming preset as a user preset, or none: a name that is
     taken is refused without `force` before anything is written, and a failure
     while writing puts back what the import changed."""
-    taken = [i.name for i in incoming if user_path(i.name).exists()]
+    taken = [i.name for i in incoming if user_file(i.name) is not None]
     if taken and not force:
         raise PresetError(
             f"preset {taken[0]!r} already exists; pass --force to replace it, or "
@@ -190,7 +196,8 @@ def import_presets(incoming: list[Incoming], *, force: bool) -> list[Path]:
     written: list[Path] = []
     try:
         for item in incoming:
-            path = user_path(item.name)
+            # the file that is there, which may be an exported NAME.vcfclick-preset.json
+            path = user_file(item.name) or user_path(item.name)
             previous[path] = path.read_text("utf-8") if path.exists() else None
             write_text_atomic(path, to_text(item.doc))
             written.append(path)

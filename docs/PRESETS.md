@@ -206,7 +206,10 @@ has changed revision since. `--from-json FILE|-` reads `{"filters": {...}}`.
 
 Presets live in `$VCFCLICK_HOME/presets/NAME.json`. Names are lowercase letters,
 digits, `.`, `_` and `-` (up to 63), and may not end in `.json`, be a Windows
-device name or a built-in's name. Writes are atomic.
+device name or a built-in's name. Writes are atomic. A file an export wrote
+(`NAME.vcfclick-preset.json`) dropped into that directory is the same preset as
+`NAME.json`: `save`, `import` and `rename` refuse to shadow it without `--force`,
+and `--force` replaces that file rather than adding a second one beside it.
 
 ### The file
 
@@ -239,11 +242,15 @@ device name or a built-in's name. Writes are atomic.
   analysed, output control (`format`, `limit`), paths and environment, safety
   checks (`parentage`, the X guard) and attestations. This holds for any key of
   the file, not only those under `filters`: `proband`, `family`, `db`, `path`,
-  `sample` and the like at the top level or in `meta` are errors too (other
-  unknown top-level keys are kept for forward compatibility). A preset can only make a
+  `sample` and the like at the top level, in `meta` or under `filters` are errors
+  too, whatever the case or separator (`Patient`, `sample-id`, `sampleId`); other
+  unknown top-level keys are kept for forward compatibility. A preset can only make a
   run stricter or equal, so nothing in it can switch off a check.
 - `applies_to` (`trio`, `segregate`, `case`) and `assay` (`genome`, `exome`,
-  `panel`) are hints for pickers and for the median-depth warning.
+  `panel`) are hints for pickers and for the median-depth warning. A `title`,
+  `description`, `applies_to` or `assay` that is `null` is the same as leaving it
+  out; one of the wrong type is an error, and `preset list` shows the file with
+  that error instead of failing.
 - `schema_version` changes only when the envelope changes; adding a filter key
   never bumps it. A newer file is rejected with "made by a newer vcfclick; upgrade".
   Unknown envelope keys are preserved when a preset is edited.

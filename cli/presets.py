@@ -103,21 +103,30 @@ class Preset:
     def fingerprint(self) -> str | None:
         return None if self.has_errors or not self.doc else fingerprint(self.doc)
 
+    # The text fields are read defensively: a document that failed validation is
+    # still listed (with its problem), so whatever a file held must not crash
+    # `preset list` or `show`.
     @property
     def title(self) -> str:
-        return self.doc.get("title") or self.name
+        value = self.doc.get("title")
+        return value if isinstance(value, str) and value else self.name
 
     @property
     def description(self) -> str:
-        return self.doc.get("description") or ""
+        value = self.doc.get("description")
+        return value if isinstance(value, str) else ""
 
     @property
     def applies_to(self) -> list[str]:
-        return list(self.doc.get("applies_to", []))
+        value = self.doc.get("applies_to")
+        if not isinstance(value, list):
+            return []
+        return [a for a in value if isinstance(a, str)]
 
     @property
     def assay(self) -> str | None:
-        return self.doc.get("assay")
+        value = self.doc.get("assay")
+        return value if isinstance(value, str) else None
 
     @property
     def locked(self) -> bool:
@@ -507,6 +516,18 @@ def user_path(name: str) -> Path:
     return user_dir() / f"{name}.json"
 
 
+def user_file(name: str) -> Path | None:
+    """The file the user's preset `name` is in, whichever spelling it has
+    (`NAME.json`, or the `NAME.vcfclick-preset.json` an export writes), or None.
+    This, not `user_path(name).exists()`, is what "does that preset exist" asks:
+    a write that only looked for `NAME.json` would put a second file beside an
+    exported one and shadow it."""
+    why = name_problem(name)
+    if why:
+        raise PresetError(f"{str(name)[:40]!r} is not a preset name: {why}")
+    return _first_file(user_dir(), name)
+
+
 def new_document(
     name: str,
     filters: dict,
@@ -556,9 +577,10 @@ def save_user_preset(doc: dict, *, force: bool = False) -> Path:
             f"{name!r} is a built-in preset; choose another name (copy it with "
             f"`vcfclick preset save NEWNAME --from-preset {name}`)"
         )
-    path = user_path(name)
-    if path.exists() and not force:
+    existing = user_file(name)
+    if existing is not None and not force:
         raise PresetError(f"preset {name!r} already exists; pass --force to replace it")
+    path = existing or user_path(name)  # replace the file that is there, not a twin
     write_text_atomic(path, to_text(doc))
     return path
 

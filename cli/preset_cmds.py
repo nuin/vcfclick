@@ -63,6 +63,7 @@ from cli.presets import (
     shared_dirs,
     touch,
     user_dir,
+    user_file,
     user_path,
     validated_or_raise,
     write_text_atomic,
@@ -539,7 +540,7 @@ def rename(old: str, new: str, force: bool) -> None:
             raise PresetError(why)
         if new in BUILTINS:
             raise PresetError(f"{new!r} is a built-in preset's name; choose another")
-        if user_path(new).exists():
+        if user_file(new) is not None:
             raise PresetError(f"a preset named {new!r} already exists")
         doc = validated_or_raise(touch({**p.doc, "name": new}), allow_unknown=True)
         write_text_atomic(user_path(new), to_text(doc))
