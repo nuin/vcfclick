@@ -193,25 +193,65 @@ def test_decorate_rows_batches_the_annotation_lookups(
     rows = [VARIANT_ROW, ("chr1", 700, "C", "T")]  # the second matches nothing
 
     assert out._prefetch is out.prefetch_annotations  # the old name still works
-    have, store = out._annotation_store()
-    try:
-        assert have == {"genes": True, "clinvar": True, "gnomad": True}
-        per_row = [
-            out.decorate_row({}, r, out.Render(object(), 1, have, store)) for r in rows
-        ]
+    with out.open_render(object(), 1) as render:
+        assert render.have == {"genes": True, "clinvar": True, "gnomad": True}
+        solo = out.Render(object(), 1, render.have, render.store)
+        per_row = [out.decorate_row({}, r, solo) for r in rows]
 
         # the annotation columns are a row decorator with its own prefetch:
         # decorate_rows alone batches them, and no row asks the store
-        batched = out.Render(object(), 1, have, store)
         with monkeypatch.context() as m:
             m.setattr(out, "_enrich", pytest.fail)
-            got = out.decorate_rows([{}, {}], rows, batched)
-        assert {k for k in batched.cache if isinstance(k, tuple)} == set(rows)
-    finally:
-        store.close()
+            got = out.decorate_rows([{}, {}], rows, render)
+        assert {k for k in render.cache if isinstance(k, tuple)} == set(rows)
     assert got == per_row
     assert got[0] == {"genes": ["GA"], "gnomad_popmax": 0.3, "clinvar": "Pathogenic"}
     assert got[1] == {"genes": [], "gnomad_popmax": None, "clinvar": None}
+
+
+# ─────────────────────────────── open_render ───────────────────────────────
+
+
+def test_open_render_serves_another_command_and_closes_the_store(
+    isolated_annotation_db,
+):
+    """The way a command other than `db trio` gets a Render: it decorates its
+    own rows inside the block, and the store is closed after it."""
+    from annotations.db import get_connection
+
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO refseq_genes VALUES ('GA', 'chr1', 50, 500, '+', 'id', 'x')"
+    )
+    conn.close()
+    case = object()  # whatever the command's own document is about
+
+    with out.open_render(case, 7) as render:
+        assert (render.analysis, render.limit) == (case, 7)
+        assert render.have["genes"] and render.store is not None
+        got = out.decorate_rows([{"i": 0}], [VARIANT_ROW], render)
+        render.store.execute("SELECT 1")  # open for the whole block
+    assert got == [{"i": 0, "genes": ["GA"], "gnomad_popmax": None, "clinvar": None}]
+    with pytest.raises(duckdb.Error):
+        render.store.execute("SELECT 1")
+
+
+def test_open_render_closes_the_store_when_the_block_raises(monkeypatch):
+    closed = []
+    store = SimpleNamespace(close=lambda: closed.append(True))
+    monkeypatch.setattr(out, "_annotation_store", lambda: (NO_ANNOTATIONS, store))
+    with pytest.raises(RuntimeError, match="boom"):
+        with out.open_render(object(), 10):
+            raise RuntimeError("boom")
+    assert closed == [True]
+
+    # no annotation store at all: a Render with nothing to close
+    monkeypatch.setattr(out, "_annotation_store", lambda: (NO_ANNOTATIONS, None))
+    with out.open_render(object(), 10) as render:
+        assert render.store is None
+        assert out.decorate_rows([{}], [VARIANT_ROW], render) == [
+            {"genes": [], "gnomad_popmax": None, "clinvar": None}
+        ]
 
 
 # ─────────────────────────── document decorators ───────────────────────────

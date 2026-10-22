@@ -29,6 +29,11 @@ receives the trio rows of the one model being rendered (and is skipped for a
 model outside its `models`). `db trio` runs these per model; another command
 runs them with `decorate_rows` (or `prefetch_rows`, then `decorate_row`).
 
+Both need a `Render`. Another command gets one from `open_render(analysis,
+limit)`, a context manager that opens the annotation store and closes it when
+the block ends. Do not build a `Render` by hand or call the private
+`_annotation_store` from another module: a store left open is a leaked handle.
+
 JSON compatibility policy (docs/TRIO.md): additive only. A key that is
 already emitted is never removed, renamed or retyped, and the relative
 order of the existing keys never changes; new keys are snake_case and are
@@ -39,7 +44,8 @@ byte-for-byte once the whitelisted new keys are removed.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import click
@@ -128,6 +134,26 @@ class Render:
     # entries under its own name, e.g. `render.cache[("parent_alt", key)]`,
     # so that two decorators never share an entry.
     cache: dict = field(default_factory=dict)
+
+
+@contextmanager
+def open_render(analysis: object, limit: int) -> Iterator[Render]:
+    """A `Render` over the annotation store, closed when the block ends.
+
+    The way for a command other than `db trio` to get one: hold it open for
+    the whole rendering (the store stays open between lookups, see
+    `_annotation_store`) and pass it to `decorate_rows`. `analysis` is
+    whatever the command's document is about; the row chain never reads it.
+
+        with open_render(my_analysis, limit) as render:
+            rows = decorate_rows(outs, variant_rows, render)
+    """
+    have, store = _annotation_store()
+    try:
+        yield Render(analysis, limit, have, store)
+    finally:
+        if store is not None:
+            store.close()
 
 
 def prefetch_annotations(render: Render, rows: Sequence[Sequence]) -> None:
@@ -525,9 +551,7 @@ def _applicable(analysis: TrioAnalysis, category: str) -> list[ModelSpec]:
 
 def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
     trio, gates = analysis.trio, analysis.gates
-    have, store = _annotation_store()
-    render = Render(analysis, limit, have, store)
-    try:
+    with open_render(analysis, limit) as render:
         models = {
             spec.name: spec.build(render) for spec in _applicable(analysis, category)
         }
@@ -554,7 +578,7 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
             "annotations": render.have,
             "models": models,
         }
-        # Inside the try: the store stays open for a decorator that looks
+        # Inside the block: the store stays open for a decorator that looks
         # something up.
         for fn in _DOCUMENT_DECORATORS:
             doc = fn(doc, render)
@@ -563,9 +587,6 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
                     f"document decorator {getattr(fn, '__name__', fn)!r} must "
                     f"return the document dict, not {type(doc).__name__}"
                 )
-    finally:
-        if store is not None:
-            store.close()
     return doc
 
 
