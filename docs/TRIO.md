@@ -493,7 +493,9 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   and an `effective` object (per gate, how much of the data carries its field,
   and the warnings). `--strict-missing`, `--require-bound-gates` and
   `--parent-alt-screen` without a preset add `effective` alone (for
-  `--parent-alt-screen` alone its warnings are about that gate only). With none
+  `--parent-alt-screen` alone its warnings are about that gate only, and the
+  `bound` of every other gate, `gnomad.bound` and `population_filter` are
+  `null`: not examined, which is not the same as bound). With none
   of them neither key is present. See [Presets](PRESETS.md#what-the-output-carries).
 - With a preset or `--parent-alt-screen`, each `denovo` candidate also carries
   `parent_alt_reads`: `{"father": {"ref", "alt"}, "mother": {...}}`, the allele

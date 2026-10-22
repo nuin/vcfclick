@@ -633,6 +633,34 @@ def test_a_report_limited_to_one_gate_says_only_that_gate():
     assert fine.warnings == () and fine.bound["parent_alt_screen"] is True
 
 
+def test_a_report_limited_to_one_gate_claims_nothing_about_the_gates_it_did_not_examine():
+    """A typed `--parent-alt-screen` does not probe gnomAD, so a gnomAD that judges
+    nothing must not read as bound, nor as a population filter in effect. Every
+    `bound` outside the scope, and `population_filter`, is null (not examined),
+    and the screen's own verdict is the one `bound` that is given."""
+    gates = GATES._replace(af_gate="skipped_cohort_derived", parent_alt_screen=True)
+    asked = {"gnomad_max_af": 0.001, "gnomad_loaded": True}
+    everything = report(trio(), gates, **asked).document
+    assert everything["gnomad"]["bound"] is True  # an unscoped run takes it as probed
+    assert everything["population_filter"] is True and everything["gq"]["bound"]
+
+    for stats, screen_binds, share in ((trio(), True, 1.0), (broken(), False, 0.0)):
+        scoped = report(stats, gates, only={"parent_alt_screen"}, **asked)
+        doc = scoped.document
+        assert doc["gnomad"]["bound"] is None and doc["gnomad"]["loaded"] is True
+        assert doc["gnomad"]["cohort_variants_sampled"] is None
+        assert doc["population_filter"] is None
+        assert doc["info_af"] == {"state": "skipped_cohort_derived", "bound": None}
+        assert doc["gq"]["bound"] is None and doc["dp"]["bound"] is None
+        assert doc["ad"]["bound"] is screen_binds  # the one gate that was examined
+        assert scoped.bound == {"parent_alt_screen": screen_binds}
+        assert doc["rows"] == {"proband": 100, "father": 100, "mother": 100}
+        assert doc["gq"]["proband"] == share  # the facts about the data stay
+    # no gate in scope: every verdict is null, none is invented
+    none = report(trio(), GATES, only=frozenset(), **asked).document
+    assert none["ad"]["bound"] is None and none["population_filter"] is None
+
+
 def test_the_refusal_names_each_problem_once_and_says_how_to_run_anyway():
     rep = report(
         broken(), GATES._replace(af_gate="skipped_cohort_derived"),

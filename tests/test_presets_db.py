@@ -377,11 +377,21 @@ def test_the_opt_in_gates_remove_exactly_their_planted_site(world):
 def test_a_parent_alt_screen_that_screens_nothing_says_so_and_says_only_that(world):
     """The store has no allele depths: every parent 0/0 would be trusted. A typed
     opt-in gate that judges nothing must not look like a screen that worked."""
-    doc = jtrio(world, "n", "--category", "denovo", "--parent-alt-screen")
+    # a gnomAD that judges nothing here (one row at chr1:5) is not probed by this
+    # run, so the report must not call it bound nor a population filter in effect
+    doc = jtrio(
+        world, "n", "--category", "denovo", "--parent-alt-screen",
+        "--gnomad-max-af", "0.0001", ann="far",
+    )  # fmt: skip
     assert names(doc, "denovo") == DE_NOVO  # nothing was screened out
-    (w,) = doc["effective"]["warnings"]  # not the GQ / DP gates it did not ask for
+    eff = doc["effective"]
+    (w,) = eff["warnings"]  # not the GQ / DP gates it did not ask for
     assert (w["code"], w["key"]) == ("gate_unbound", "parent_alt_screen")
     assert "every parent 0/0 would be trusted" in w["message"]
+    assert (eff["gnomad"]["loaded"], eff["gnomad"]["bound"]) == (True, None)
+    assert eff["gnomad"]["cohort_variants_sampled"] is None  # never looked at
+    assert (eff["population_filter"], eff["ad"]["bound"]) == (None, False)
+    assert eff["gq"]["bound"] is None and eff["info_af"]["bound"] is None
     text = trio(world, "n", "--category", "denovo", "--parent-alt-screen").stdout
     assert [x for x in text.splitlines() if x.startswith("  WARNING:")] == [
         f"  WARNING: {w['message']}"

@@ -97,7 +97,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `--require-bound-gates` (an error, not a warning, when a gate cannot bind or no
   population-frequency filter is in effect). `--parent-alt-screen` on a VCF
   whose parents carry no allele depths says so (it screens nothing), in a
-  `WARNING:` line and an `effective` object that is about that gate alone.
+  `WARNING:` line and an `effective` object that is about that gate alone (the
+  `bound` of the gates it did not examine, `gnomad.bound` and
+  `population_filter` are `null`, not a claim that gnomAD took effect).
   `strict-denovo` turns the strict ones on, so it refuses to run, with the remedy, on data it cannot be strict
   about; `--no-require-bound-gates` overrides that for one run, and for that run
   `--strict-missing` is not applied to the gates that cannot bind (a call

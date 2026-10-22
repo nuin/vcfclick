@@ -298,9 +298,11 @@ def build_report(
     `gnomad_chroms` are the chromosomes the loaded gnomAD data has records on
     and `gnomad_probe` how much of a sample of the cohort's variants it can
     judge (None for either: not looked at, so any loaded gnomAD is taken to
-    cover the cohort). `only` limits the warnings to those about these keys: a
-    run that asked for one opt-in gate, and nothing else, is told about that
-    gate only.
+    cover the cohort). `only` limits the report to these gate keys: a run that
+    asked for one opt-in gate, and nothing else, is told about that gate only.
+    The warnings are those about these keys, and in the document every `bound`
+    (and `population_filter`) of a gate outside them is null: it was not
+    examined, which is not the same as bound.
     `skipped` are the preset's skipped keys (from the echo); `preset_max_af` is
     the max_af a preset supplied, set only so a skip of it can be explained;
     `enforce_bound` / `enforce_format` choose which warnings are also errors
@@ -504,6 +506,9 @@ def build_report(
 
     if only is not None:
         warnings = [w for w in warnings if w["key"] in only]
+        # what was not examined is not claimed either: no `bound` for a gate
+        # outside the scope (the document says null for it)
+        bound = {k: v for k, v in bound.items() if k in only}
     errors = tuple(
         w
         for w in warnings
@@ -521,6 +526,7 @@ def build_report(
         population,
         warnings,
         gnomad_probe,
+        only,
     )
     return EffectiveReport(document, tuple(warnings), bound, errors)
 
@@ -681,9 +687,24 @@ def _document(
     population: bool,
     warnings: list[dict],
     probe: GnomadProbe | None = None,
+    only: Collection[str] | None = None,
 ) -> dict:
-    def per_sample(name: str, key: str | None) -> dict:
+    """The `effective` object. In a report limited to some gates (`only`) the
+    shares of rows, the medians and the facts about the store stay, but every
+    `bound`, and `population_filter`, is reported only for what the scope looked
+    at and is null for the rest: a gate nobody examined (gnomAD, say, which a
+    scoped run does not probe) is neither bound nor unbound."""
+
+    def examined(*keys: str) -> bool:
+        return only is None or any(k in only for k in keys)
+
+    def per_sample(name: str, key: str | None, *scoped: str) -> dict:
         out: dict = {s.role: _round(s.fraction(name)) for s in stats}
+        if only is not None:
+            # `scoped` are the extra gates whose verdict this field decides
+            hit = next((k for k in (key, *scoped) if k and k in only), None)
+            out["bound"] = bound.get(hit) if hit else None
+            return out
         out["bound"] = bound.get(key) if key else None
         if out["bound"] is None:
             # not requested: bound in the sense of "the data has it"
@@ -695,16 +716,16 @@ def _document(
         "rows": {s.role: s.rows for s in stats},
         "gq": per_sample("gq", "min_gq"),
         "dp": per_sample("dp", "min_dp"),
-        "ad": per_sample("ad", "min_ab"),
+        "ad": per_sample("ad", "min_ab", "parent_alt_screen"),
         "median_dp": {s.role: _num(s.median_dp) for s in stats},
         "info_af": {
             "state": gates.af_gate,
-            "bound": bound.get("max_af", False),
+            "bound": bound.get("max_af", False) if examined("max_af") else None,
         },
         "filter_column": {"present": filter_present},
         "gnomad": {
             "loaded": gnomad_loaded,
-            "bound": gnomad_bound,
+            "bound": gnomad_bound if examined("gnomad_max_af") else None,
             "field": GNOMAD_FIELD,
             "version": None,
             "candidates_checked": None,
@@ -712,7 +733,9 @@ def _document(
             "cohort_variants_sampled": probe.sampled if probe else None,
             "cohort_variants_with_record": probe.found if probe else None,
         },
-        "population_filter": population,
+        "population_filter": (
+            population if examined("max_af", "gnomad_max_af") else None
+        ),
         "warnings": list(warnings),
     }
 

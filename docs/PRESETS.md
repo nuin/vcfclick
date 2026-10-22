@@ -196,7 +196,11 @@ does judge the cohort, which the probe has already established.
 have no allele depths it screens nothing (every parent 0/0 is trusted), so the
 run prints that one `WARNING:` line and carries an `effective` object whose only
 warning is `gate_unbound` for `parent_alt_screen`. The other gates were not asked
-for, so they are not reported.
+for, so they are not reported, and the object does not claim anything about them
+either: gnomAD is not probed in this run, so `gnomad.bound`, `info_af.bound`,
+`gq.bound`, `dp.bound` and `population_filter` are `null` (not examined; not the
+same as bound or unbound), and `ad.bound` is the screen's own verdict. The shares
+of rows, the medians and `gnomad.loaded` are facts about the data and stay.
 
 ### The other new gates
 
@@ -239,16 +243,16 @@ device name or a built-in's name. Writes are atomic. A file an export wrote
 `NAME.json`: `save`, `import` and `rename` refuse to shadow it without `--force`,
 and `--force` replaces that file rather than adding a second one beside it.
 
-### The file
-
-```json
-{
 The file name is what a stored preset is called. A colleague's `q1.json` copied in
 as `lab-q.json` still says `"name": "q1"` inside: it is listed with a
 `name_mismatch` warning and used as `lab-q`, and `set`, `edit`, `rename` and
 `export` all write `lab-q`, so an export imports back as `lab-q` and `edit` is not
 asked to rename it. (A file with no `name` at all gets the same treatment.)
 
+### The file
+
+```json
+{
   "schema": "vcfclick.preset",
   "schema_version": 1,
   "name": "id-panel",
@@ -355,7 +359,9 @@ With a preset, `db trio --format json` adds two top-level objects after
   `filter_column`, `gnomad` (`loaded`, `bound`, `candidates_checked`,
   `candidates_without_record`, `cohort_variants_sampled`,
   `cohort_variants_with_record`), `population_filter` and `warnings` (`{code,
-  level, key, message}`).
+  level, key, message}`). In a run limited to one gate (`--parent-alt-screen`
+  typed alone) every `bound` of a gate outside the scope, and
+  `population_filter`, is `null`: it was not examined.
 
 `gates` also reports `strict_missing` (and, after it, `strict_exempt`: the gates
 a `--no-require-bound-gates` run did not apply it to), `pass_only`,

@@ -63,6 +63,10 @@ def _check_variant(v: dict) -> None:
     assert v["af"] is None or _is_num(v["af"])
 
 
+def _is_bool_or_null(v) -> bool:
+    return v is None or isinstance(v, bool)
+
+
 def assert_preset_objects(doc: dict) -> None:
     """The optional `preset` and `effective` objects of a run that used a preset
     (or insisted on a gate): present at the end of the document, never in the
@@ -95,7 +99,7 @@ def assert_preset_objects(doc: dict) -> None:
         e = doc["effective"]
         assert list(e) == EFFECTIVE_KEYS
         for gate in ("gq", "dp", "ad"):
-            assert isinstance(e[gate]["bound"], bool), gate
+            assert _is_bool_or_null(e[gate]["bound"]), gate
             assert all(
                 v is None or _is_num(v) for k, v in e[gate].items() if k != "bound"
             ), gate
@@ -112,7 +116,10 @@ def assert_preset_objects(doc: dict) -> None:
             "cohort_variants_sampled", "cohort_variants_with_record",
         ):  # fmt: skip
             assert e["gnomad"][k] is None or _is_int(e["gnomad"][k]), k
-        assert isinstance(e["population_filter"], bool)
+        # null: not examined (a run limited to one gate says nothing of the others)
+        assert _is_bool_or_null(e["info_af"]["bound"])
+        assert _is_bool_or_null(e["gnomad"]["bound"])
+        assert _is_bool_or_null(e["population_filter"])
         for w in e["warnings"]:
             assert list(w) == ["code", "level", "key", "message"]
             assert w["level"] in ("warning", "info")
@@ -308,6 +315,14 @@ def test_contract_checker_rejects_what_would_blank_an_app():
             assert_trio_document(doc)
 
     broken_effective(lambda e: e["gq"].update(bound="yes"))
+    broken_effective(lambda e: e["gnomad"].update(bound="yes"))
+    broken_effective(lambda e: e.update(population_filter=1))
+    scoped = json.loads(json.dumps(with_effective))  # a run limited to one gate
+    scoped["effective"]["gnomad"]["bound"] = None
+    scoped["effective"]["population_filter"] = None
+    scoped["effective"]["info_af"]["bound"] = None
+    scoped["effective"]["gq"]["bound"] = None
+    assert_trio_document(scoped)
     broken_effective(lambda e: e["warnings"].append({"code": "x"}))
     broken_effective(lambda e: e["info_af"].update(state="maybe"))
 
