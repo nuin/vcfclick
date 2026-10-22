@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 import click
 
+from cli.filter_registry import DEFAULT_MAX_AF as DEFAULT_MAX_AF
+from cli.filter_registry import DEFAULTS
 
 # The inheritance models, in the order a trio document lists them. This is
 # the one definition: the CLI's --category choices, the web UI's category
@@ -22,8 +24,8 @@ GENE_CATEGORIES: tuple[str, ...] = ("comphet",)  # reported per gene
 CATEGORIES: tuple[str, ...] = ROW_CATEGORIES + GENE_CATEGORIES
 CATEGORY_CHOICES: tuple[str, ...] = CATEGORIES + ("all",)
 
-# The default for `db trio --max-af` (and the web API's max_af).
-DEFAULT_MAX_AF = 0.01
+# DEFAULT_MAX_AF, the default for `db trio --max-af` (and the web API's
+# max_af), is declared in cli/filter_registry.py with every other default.
 
 # Why a model reports `blocked_reason` instead of results: the closed
 # vocabulary of the JSON `blocked_reason` key (null when not blocked).
@@ -108,11 +110,18 @@ class Gates(NamedTuple):
     min_ab: float
     max_ab: float
     # A parent's stored 0/0 row is trusted as "parent does not carry it" only
-    # when its allele balance stays under this (see parent_ref_ok). The four
-    # classic models do not read it.
-    max_parent_alt_frac: float = 0.05
+    # when its allele balance stays under this (see parent_ref_ok). The
+    # classic models read it only for the opt-in `parent_alt_screen`.
+    max_parent_alt_frac: float = DEFAULTS["max_parent_alt_frac"]
     # See AF_GATE_VALUES. Only `skipped_cohort_derived` changes the SQL.
     af_gate: str = "applied"
+    # Opt-in gates (cli/filter_registry.py). All off: the SQL is the text it
+    # always was. strict_missing turns a NULL GQ / DP / AD into a fail,
+    # pass_only keeps VCF FILTER = PASS (or unset), parent_alt_screen makes
+    # the de novo model distrust a parent's 0/0 that has alt reads.
+    strict_missing: bool = False
+    pass_only: bool = False
+    parent_alt_screen: bool = False
 
 
 def _sole_ingest_id(name: str) -> str | None:
@@ -130,7 +139,14 @@ def _sole_ingest_id(name: str) -> str | None:
     return ids[0] if len(ids) == 1 else None
 
 
-def _quality_gate(alias: str, min_gq: int, min_dp: int) -> str:
+def _quality_gate(alias: str, min_gq: int, min_dp: int, *, strict: bool = False) -> str:
+    """GQ and DP gate. Tolerant by default: a call with no GQ (or DP) passes.
+    `strict` (strict_missing) counts a NULL as a fail."""
+    if strict:
+        return (
+            f"({alias}.gq IS NOT NULL AND {alias}.gq >= {min_gq}) "
+            f"AND ({alias}.dp IS NOT NULL AND {alias}.dp >= {min_dp})"
+        )
     return (
         f"({alias}.gq IS NULL OR {alias}.gq >= {min_gq}) "
         f"AND ({alias}.dp IS NULL OR {alias}.dp >= {min_dp})"
@@ -146,6 +162,21 @@ def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
         f"({alias}.gt != 1 OR {alias}.ad_ref IS NULL OR {alias}.ad_alt IS NULL "
         f"OR {denom} = 0 OR {frac} BETWEEN {min_ab} AND {max_ab})"
     )
+
+
+def _het_ad_present(alias: str) -> str:
+    """strict_missing: a het call must carry allele depths. Only the proband
+    is held to the allele-balance band; this asks that no het call, the
+    proband's or a parent's, has its depths missing."""
+    return (
+        f"({alias}.gt != 1 OR "
+        f"({alias}.ad_ref IS NOT NULL AND {alias}.ad_alt IS NOT NULL))"
+    )
+
+
+# variants.filter holds NULL for both PASS and '.' (cyvcf2 reports neither),
+# and the label otherwise. The literals cover a store written another way.
+PASS_ONLY_SQL = "(v.filter IS NULL OR v.filter IN ('PASS', '.', ''))"
 
 
 def _parent_joins(father: str | None, mother: str | None) -> str:
@@ -193,22 +224,53 @@ def parent_ref_ok(alias: str, gates: Gates) -> str:
     )
 
 
-def _where(trio: Trio, gates: Gates, model: str) -> str:
+def _where_parts(
+    trio: Trio, gates: Gates, model: str, *, parent_alt_screen: bool = False
+) -> list[tuple[str, str]]:
+    """The predicates of the shared WHERE clause, in application order, each
+    with its name: model, quality_proband, quality_father, quality_mother,
+    allele_balance, population_af, pass_only, parent_alt_screen. `_where`
+    joins them; a diagnostic that wants to count what each removes (the
+    funnel) walks them. A part is absent when its gate is off. (`trio` is
+    unused today; the scope predicate of a later step needs it.)"""
+    from storage.sql import af_gate_sql
+
+    strict = gates.strict_missing
+    allele_balance = _het_ab_gate("g", gates.min_ab, gates.max_ab)
+    if strict:
+        allele_balance += " AND " + " AND ".join(
+            _het_ad_present(alias) for alias in ("g", "f", "m")
+        )
+    parts = [
+        ("model", model),
+        ("quality_proband", _quality_gate("g", gates.min_gq, gates.min_dp, strict=strict)),
+        ("quality_father", _quality_gate("f", gates.min_gq, gates.min_dp, strict=strict)),
+        ("quality_mother", _quality_gate("m", gates.min_gq, gates.min_dp, strict=strict)),
+        ("allele_balance", allele_balance),
+    ]  # fmt: skip
+    if gates.af_gate != AF_GATE_SKIPPED:
+        parts.append(("population_af", af_gate_sql("v.info_AF", gates.max_af)))
+    if gates.pass_only:
+        parts.append(("pass_only", PASS_ONLY_SQL))
+    if parent_alt_screen:
+        parts.append(
+            (
+                "parent_alt_screen",
+                f"{parent_ref_ok('f', gates)} AND {parent_ref_ok('m', gates)}",
+            )
+        )
+    return parts
+
+
+def _where(
+    trio: Trio, gates: Gates, model: str, *, parent_alt_screen: bool = False
+) -> str:
     """Shared WHERE clause: the genotype model plus the quality / rarity
     gates, scoped to this proband and ingest."""
     from storage import sql_quote_str
-    from storage.sql import af_gate_sql
 
-    parts = [
-        model,
-        _quality_gate("g", gates.min_gq, gates.min_dp),
-        _quality_gate("f", gates.min_gq, gates.min_dp),
-        _quality_gate("m", gates.min_gq, gates.min_dp),
-        _het_ab_gate("g", gates.min_ab, gates.max_ab),
-    ]
-    if gates.af_gate != AF_GATE_SKIPPED:
-        parts.append(af_gate_sql("v.info_AF", gates.max_af))
-    predicate = " AND ".join(parts)
+    parts = _where_parts(trio, gates, model, parent_alt_screen=parent_alt_screen)
+    predicate = " AND ".join(sql for _, sql in parts)
     return (
         f"g.ingest_id = {sql_quote_str(trio.ingest_id)} "
         f"AND g.sample_id = {sql_quote_str(trio.proband)} AND {predicate}"
@@ -230,7 +292,14 @@ def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> st
         raise ValueError(f"unknown category {category!r}")
 
     joins = _parent_joins(trio.father, trio.mother)
-    where = _where(trio, gates, model)
+    # parent_alt_screen is about a parent's ABSENCE, so only the model that
+    # claims a variant is new in the child reads it.
+    where = _where(
+        trio,
+        gates,
+        model,
+        parent_alt_screen=gates.parent_alt_screen and category == "denovo",
+    )
     if count_only:
         return f"SELECT {count_expr()} FROM genotypes g {joins} WHERE {where}"
     return (
@@ -344,20 +413,31 @@ def _has_reference_rows(sess) -> bool:
     return int(json.loads(raw)["data"][0][0]) > 0
 
 
-def _gnomad_filter(rows: list, max_af: float) -> list:
+def _gnomad_filter(rows: list, max_af: float, stats: dict | None = None) -> list:
     """The rows (chrom, pos, ref, alt, ...) whose gnomAD popmax AF is
     <= max_af, or that are absent from the loaded gnomAD slice: absence is
     treated as rare (the slice may simply not cover the locus), never as
     AF 0. One batched lookup for all rows, not one per row: with the AF
-    gate skipped on a family VCF, a trio has thousands of candidates."""
+    gate skipped on a family VCF, a trio has thousands of candidates.
+
+    `stats`, when given, collects the variants kept for want of a record in
+    `stats["gnomad_absent"]` (a set of (chrom, pos, ref, alt)), so a report
+    can say how many candidates the filter could not judge."""
     from annotations import gnomad_af_many
 
+    absent = None if stats is None else stats.setdefault("gnomad_absent", set())
     found = gnomad_af_many((row[0], row[1], row[2], row[3]) for row in rows)
     if not found:
-        return list(rows)  # nothing loaded, or none of the candidates in it
+        # nothing loaded, or none of the candidates in it
+        if absent is not None:
+            absent.update((r[0], int(r[1]), r[2], r[3]) for r in rows)
+        return list(rows)
     keep = []
     for row in rows:
-        g = found.get((row[0], int(row[1]), row[2], row[3]))
+        key = (row[0], int(row[1]), row[2], row[3])
+        g = found.get(key)
+        if g is None and absent is not None:
+            absent.add(key)
         if g is None or g.popmax is None or g.popmax <= max_af:
             keep.append(row)
     return keep
@@ -375,11 +455,18 @@ class TrioAnalysis:
     # The proband's siblings as (sample, kind) pairs, kind being `full`,
     # `half_paternal` or `half_maternal`. Reported, never queried.
     siblings: tuple[tuple[str, str], ...] = ()
+    # Facts about this run that a report reads back: the preset echo and the
+    # effective-gate report `db trio` computed up front, the variants the
+    # gnomAD filter kept for want of a record. A deliberate exception to the
+    # frozen dataclass (a mutable dict, not part of equality), written by the
+    # command and by the filter that has the fact, read by the document and
+    # text decorators.
+    stats: dict = field(default_factory=dict, compare=False)
 
     def _gnomad(self, rows: list) -> list:
         if self.gnomad_max_af is None:
             return rows
-        return _gnomad_filter(rows, self.gnomad_max_af)
+        return _gnomad_filter(rows, self.gnomad_max_af, self.stats)
 
     def detail_rows(self, category: str) -> list:
         sql = trio_sql(category, self.trio, self.gates, count_only=False)
