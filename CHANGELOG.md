@@ -48,6 +48,54 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   old keys are byte-stable. `/api/meta` gains `families` (per family its
   probands and trios with siblings), and the MCP briefing explains families,
   `affected = NULL` as unknown, and probands.
+- Filter presets (`docs/PRESETS.md`). `db trio --preset NAME` applies a named
+  set of filters: the four built-in starting points `broad-first-pass`,
+  `strict-denovo`, `rare-recessive` and `rare-dominant` (each with
+  covers / does-not-cover text, revision 1, a fingerprint, and labelled
+  `starting point, not validated`), or your own. A flag typed next to
+  `--preset` wins over it, and `--preset-ignore KEY` switches one key off for
+  one run. `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, also for a
+  path) fails the run if the preset's content is not the pinned one;
+  `--preset-skip-unavailable` applies the keys this version knows and reports
+  the rest. A preset is a JSON file in `$VCFCLICK_HOME/presets`, in a read-only
+  directory on `VCFCLICK_PRESET_PATH`, or built in; it holds filter values and
+  no sample, path or database.
+- `vcfclick preset list | show | save | set | unset | edit | rename | rm |
+  export | import | validate | path`. `save` takes the filter flags `db trio`
+  takes, `--from-preset`, `--from-result` (rebuilds a preset from a saved
+  `db trio --format json` result, and says when a built-in it used has changed
+  revision) and `--from-json`. Names are lowercase and never look like a path;
+  writes are atomic; a locked preset (`meta.locked`) needs `--force`; import
+  and export are all-or-nothing and strip patient-specific keys on export.
+- The effective-gate report. A run with a preset says, per gate, whether the
+  field it reads is in this data: GQ, DP and AD on the proband's and parents'
+  rows, `INFO/AF`, gnomAD. A gate binds at 90% of its rows. Gates that cannot
+  bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
+  so is `NO population frequency filter applied` (the cohort-derived-AF case
+  with no gnomAD loaded), a median proband depth under 1.5 x `min_dp`, and a
+  requested `--gnomad-max-af` with gnomAD not loaded.
+- New opt-in gates on `db trio`, all off by default: `--strict-missing` (a
+  missing GQ, DP or het AD counts as a fail), `--pass-only` (VCF `FILTER` is
+  PASS or unset), `--parent-alt-screen` with `--max-parent-alt-frac` (the de
+  novo model distrusts a parent's stored 0/0 that has alt reads) and
+  `--require-bound-gates` (an error, not a warning, when a gate cannot bind or no
+  population-frequency filter is in effect). `strict-denovo` turns the strict
+  ones on, so it refuses to run, with the remedy, on data it cannot be strict
+  about; `--no-require-bound-gates` overrides that for one run. With a preset or
+  `--parent-alt-screen`, de novo candidates show the parents' read counts
+  (`parent_alt_reads`).
+- `db trio --category` takes a comma list (`recessive,comphet`). `all` and a
+  single name behave as before, with the same metavar and the same message for
+  an unknown name; a list prints one summary line per model.
+- `db trio --format json`: a run with a preset ends with `preset` and
+  `effective` objects (`effective` alone with `--strict-missing` or
+  `--require-bound-gates`), and `gates` reports `strict_missing`, `pass_only`,
+  `parent_alt_screen` and `max_parent_alt_frac` when they are on. Additive only: a run without them is
+  byte-identical, which the goldens pin (they gain one preset run).
+- `cli/filter_registry.py` declares every filter once (file key, Click
+  parameter, flag, type, range, default, owner, commands); the options of
+  `db trio` are generated from it, and `tests/test_filter_registry_drift.py`
+  fails when an option is added without being registered.
 
 ### Changed
 
@@ -120,6 +168,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   states the CLI's NULL-tolerant gates against the stricter generic rule,
   lists `comphet` among the models, warns about a cohort-derived `INFO/AF`
   and says how a haploid call is stored.
+- `db trio` decides whether `--max-af` was typed from where the value came from
+  (the command line or the environment), not from "not the default". With no
+  preset this is the same test; with one, a preset's `max_af` is never typed, so it
+  cannot defeat the cohort-derived-AF skip. The `--help` text of the gate options
+  is longer.
 
 ### Fixed
 

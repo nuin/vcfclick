@@ -29,6 +29,8 @@ vcfclick db ped fam1 fam1.ped
 # 4. Report candidates.
 vcfclick db trio fam1 --proband PROBAND
 vcfclick db trio fam1 --proband PROBAND --category denovo
+vcfclick db trio fam1 --proband PROBAND --category recessive,comphet
+vcfclick db trio fam1 --proband PROBAND --preset rare-recessive
 ```
 
 If your trio was already joint-called into one multi-sample VCF, skip
@@ -110,6 +112,10 @@ Defaults follow common rare-disease practice and are all tunable:
 | `--min-ab` / `--max-ab` | 0.25 / 0.75 | het allele balance `ad_alt/(ad_ref+ad_alt)`, expected ≈0.5 |
 | `--max-af` | 0.01 | keep variants with the VCF's own `info_AF` at or below this (a site exactly at the threshold is kept; see [below](#cohort-derived-infoaf)) |
 | `--gnomad-max-af` | off | additionally drop candidates whose **gnomAD popmax** AF exceeds this; needs `vcfclick annotations load-gnomad`. Variants absent from the loaded gnomAD slice are kept as rare. |
+| `--strict-missing` | off | a missing GQ, DP or (for a het call) AD on the proband or a parent counts as a **fail**, not a pass |
+| `--pass-only` | off | keep only variants whose VCF `FILTER` is `PASS` or unset |
+| `--parent-alt-screen` / `--max-parent-alt-frac` | off / 0.05 | de novo only: a parent's stored 0/0 is trusted only while its alt reads stay under the fraction (two or more alt reads and a higher fraction exclude the site); shows the parents' read counts |
+| `--require-bound-gates` | off | an error, instead of a warning, when a requested gate cannot bind in this data (see [Presets](PRESETS.md#does-the-gate-actually-bind)) |
 
 `--max-af` filters on the cohort VCF's `info_AF` (often missing on small
 cohorts); `--gnomad-max-af` adds a true population-frequency filter from
@@ -129,6 +135,13 @@ zeroed out — the gate simply doesn't filter on the missing field. (That is
 the CLI's rule. The generic `gq >= 20 AND dp >= 10` an SQL query would write
 drops those rows instead; to reproduce a `db trio` count by hand, use
 `(gq IS NULL OR gq >= 20) AND (dp IS NULL OR dp >= 10)`.)
+
+Whether a gate does anything depends on the data: with no GQ, DP or allele
+depths the tolerant gates remove nothing. A run that uses a [filter
+preset](PRESETS.md) (`--preset NAME`) says, per gate, whether the field it
+reads exists in this data, and the opt-in `--strict-missing` and
+`--require-bound-gates` turn that into a refusal. The four built-in presets are
+starting points, not validated standards.
 
 ### The `--max-af` boundary
 
@@ -158,7 +171,8 @@ of 0.01 or more (a writer that prints three decimals turns 1/6 into
 the cohort's own frequency of a rare site is 0.005 or less, and a real
 population frequency such as 0.0001 must not be mistaken for it. Then:
 
-- without `--max-af` on the command line, the AF gate is **skipped** and a
+- without `--max-af` on the command line (a `--max-af` that a preset supplies
+  does not count as typed), the AF gate is **skipped** and a
   `note:` on stderr says so (and points at `--gnomad-max-af`, which is a real
   population frequency);
 - with `--max-af` given explicitly, the gate is **applied as asked** and the
@@ -445,8 +459,9 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   `{"sample", "kind"}` with `kind` one of `full`, `half_paternal` or
   `half_maternal` (an empty list for an only child). They come after the four
   original keys, in that order.
-- `models` lists the models of `--category`, in the order `denovo`,
-  `recessive`, `dominant`, `comphet`.
+- `models` lists the models of `--category` (a name, `all`, or a comma list
+  such as `recessive,comphet`), in the order `denovo`, `recessive`, `dominant`,
+  `comphet`.
 - `blocked` is true when the model cannot be decided because the database has
   no stored hom-reference calls (see *Why `--keep-reference`*). `blocked_reason`
   says why a model has no result, and is `null` when nothing is wrong. It comes
@@ -467,6 +482,19 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
 - `gates.af_gate` is the outcome of the `--max-af` gate: `applied`,
   `cohort_derived_suspected`, `skipped_cohort_derived` or `unavailable` (see
   [Cohort-derived `INFO/AF`](#cohort-derived-infoaf)).
+- `gates` also reports `strict_missing`, `pass_only`, `parent_alt_screen` and
+  `max_parent_alt_frac` (after `af_gate`), but only for a gate that is on; the
+  seven original keys carry the values that took effect after a preset and the
+  flags were merged.
+- With a preset (`--preset`) the document ends with a `preset` object (what ran:
+  name, source, revision, fingerprint, the filters requested and the value each
+  filter took with where it came from, what a flag overrode, what was skipped)
+  and an `effective` object (per gate, how much of the data carries its field,
+  and the warnings). `--strict-missing` and `--require-bound-gates` without a
+  preset add `effective` alone. With none of them neither key is present. See [Presets](PRESETS.md#what-the-output-carries).
+- With a preset or `--parent-alt-screen`, each `denovo` candidate also carries
+  `parent_alt_reads`: `{"father": {"ref", "alt"}, "mother": {...}}`, the allele
+  depths of the parents' stored 0/0 rows (`null` counts where the call has no AD).
 - A comphet gene is `{"gene", "paternal": [...], "maternal": [...]}`. A reader
   must treat `paternal` and `maternal` as **optional**: a model that cannot tell
   parent of origin leaves them out, and may add `tier`, `k_carried` and
@@ -486,8 +514,9 @@ missing or changes type. So:
   output of the four classic models on `related.vcf`, `trio.vcf.gz` and the
   GIAB trios, text and JSON, on both backends; after removing the keys the test
   whitelists as new (`blocked_reason`, `gates.af_gate`, `trio.family_id`,
-  `trio.kind`, `trio.siblings` and the top-level `families` of a no-`--proband`
-  list) it must match byte for byte. A change that needs an old key to move has
+  `trio.kind`, `trio.siblings`, the top-level `families` of a no-`--proband`
+  list, and the `preset` and `effective` objects of a run that uses a preset)
+  it must match byte for byte. A change that needs an old key to move has
   to say so in its commit and regenerate those goldens deliberately. The
   complete document of one proband, new keys included, is pinned separately
   (`tests/goldens/trio_full/`), and the `db families` document too

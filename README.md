@@ -138,6 +138,9 @@ Start here:
 - [Trio / family analysis](docs/TRIO.md) - merge per-sample VCFs, load
   a pedigree, and report de-novo / recessive / dominant / compound-het
   candidates.
+- [Filter presets](docs/PRESETS.md) - named, shareable `db trio` filter
+  sets (built-in starting points or your own), and a report of which
+  gates actually bind in your data.
 - [Trio validation](docs/VALIDATION.md) - de-novo recovery against the
   GIAB benchmark trio with its high-confidence BED as ground truth,
   cross-checked with `bcftools +mendelian2`.
