@@ -55,6 +55,7 @@ from cli.preset_schema import (
     Problem,
     fingerprint,
     name_problem,
+    named,
     now_utc,
     parse_json,
     to_text,
@@ -200,6 +201,7 @@ def read_preset_file(path: Path, source: str) -> Preset:
         return fail("invalid_json", str(e))
     checked = validate_document(doc, allow_unknown=True)
     problems.extend(checked.problems)
+    doc = checked.doc
     if source in (USER, SHARED):
         why = name_problem(name)
         if why:
@@ -223,9 +225,12 @@ def read_preset_file(path: Path, source: str) -> Preset:
                     "name",
                 )
             )
-    return Preset(
-        name, source, checked.doc, path, tuple(problems), checked.unknown_keys
-    )
+        if doc and not why:
+            # the file name decides what a stored preset is called, so every
+            # writer (set, edit, rename, export) must write that name, not the
+            # one a copied file still declares
+            doc = named(doc, name)
+    return Preset(name, source, doc, path, tuple(problems), checked.unknown_keys)
 
 
 def _scan(directory: Path, source: str) -> list[Preset]:

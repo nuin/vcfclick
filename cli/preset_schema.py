@@ -524,6 +524,22 @@ def fingerprint(doc: dict) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
+def named(doc: dict, name: str) -> dict:
+    """`doc` with its `name` set, in the envelope's place (after the schema)."""
+    out: dict = {}
+    placed = False
+    for key, value in doc.items():
+        if key == "name":
+            continue
+        if not placed and key not in ("schema", "schema_version"):
+            out["name"] = name
+            placed = True
+        out[key] = value
+    if not placed:
+        out["name"] = name
+    return out
+
+
 def to_text(doc: dict) -> str:
     """The file text: indented, UTF-8, one trailing newline. A NaN or infinity
     is never written (it would be a file this program then refuses to read)."""

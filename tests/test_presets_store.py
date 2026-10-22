@@ -530,6 +530,63 @@ def test_edit_revalidates_and_does_not_save_an_invalid_file(
     assert "no changes" in run("edit", "p").output
 
 
+def test_a_file_copied_in_under_another_name_is_the_preset_its_file_name_says(
+    run, vcfclick_home, tmp_path, monkeypatch
+):
+    """A colleague's `q1.json` copied in as `lab-q.json` still declares `q1`. The
+    file name is what the preset is called, so every writer must write that name:
+    `set` must not leave the old one, `export` must not hand on a file that imports
+    as `q1` (and replaces another preset with --force), and `edit` must be able to
+    save without being told to rename."""
+    d = vcfclick_home / "presets"
+    run("save", "q1", "--min-gq", "21")
+    shutil.copy(d / "q1.json", d / "lab-q.json")
+    (d / "q1.json").unlink()
+    mismatched = (d / "lab-q.json").read_text()
+    assert json.loads(mismatched)["name"] == "q1"
+
+    (row,) = store.list_presets("user")
+    assert (row.name, row.doc["name"]) == ("lab-q", "lab-q")
+    assert [p.code for p in row.problems] == ["name_mismatch"]  # still said, a warning
+    assert list(row.doc)[:3] == ["schema", "schema_version", "name"]  # in its place
+
+    run("set", "lab-q", "min_gq=22")
+    assert saved(vcfclick_home, "lab-q")["name"] == "lab-q"
+
+    (d / "lab-q.json").write_text(mismatched)  # declares q1 again
+    exported = json.loads(run("export", "lab-q").output)
+    assert exported["name"] == "lab-q"  # a plain import elsewhere gives lab-q back
+    incoming = tmp_path / "in.json"
+    incoming.write_text(json.dumps(exported))
+    (item,) = exchange.read_incoming([str(incoming)], as_name=None, allow_unknown=False)
+    assert item.name == "lab-q"
+
+    shown: list[str] = []
+
+    def editor(text, **kwargs):
+        shown.append(json.loads(text)["name"])
+        edited = json.loads(text)
+        edited["filters"]["min_gq"] = 24
+        return json.dumps(edited)
+
+    monkeypatch.setattr("click.edit", editor)
+    run("edit", "lab-q")  # not "the name cannot change here"
+    assert shown == ["lab-q"]
+    again = saved(vcfclick_home, "lab-q")
+    assert (again["name"], again["filters"]["min_gq"]) == ("lab-q", 24)
+
+    # no name at all, and a shared directory's file: the same rule
+    bare = {"schema": ps.SCHEMA, "schema_version": 1, "filters": {"min_gq": 20}}
+    (d / "bare.json").write_text(json.dumps(bare))
+    assert store.find_preset("bare")[0].doc["name"] == "bare"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "team-q.json").write_text(mismatched)
+    monkeypatch.setenv("VCFCLICK_PRESET_PATH", str(shared))
+    (found,) = store.list_presets("shared")
+    assert (found.name, found.doc["name"]) == ("team-q", "team-q")
+
+
 # ───────────────────────── atomic writes, corrupt files ─────────────────────────
 
 

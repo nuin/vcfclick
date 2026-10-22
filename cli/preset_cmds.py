@@ -45,6 +45,7 @@ from cli.preset_schema import (
     Problem,
     fingerprint,
     name_problem,
+    named,
     parse_json,
     to_text,
     validate_document,
@@ -450,6 +451,23 @@ def _file_of(p: Preset) -> Path:
     return p.path
 
 
+def _editor_text(path: Path, name: str) -> str:
+    """The file as `edit` shows it. A file copied in under another name still
+    declares the old one; the preset is used as `name`, so that is the name the
+    editor shows (leaving it alone must not read as a rename)."""
+    try:
+        text = path.read_text("utf-8")
+    except OSError as e:
+        raise PresetError(f"cannot read the preset ({e.strerror})") from None
+    try:
+        doc = parse_json(text)
+        if isinstance(doc, dict) and doc.get("name") not in (None, name):
+            return to_text(named(doc, name))
+    except PresetError:
+        pass  # a file that is not valid yet is shown as it is: edit is the repair
+    return text
+
+
 def _change(name: str, force: bool, edit: Callable[[dict], dict]) -> Preset:
     """Apply `edit` to the filters of a user preset and write it back."""
     p = get_user_preset(name)
@@ -500,10 +518,7 @@ def edit(name: str, force: bool) -> None:
         p = get_user_preset(name)
         require_editable(p, force=force)
         path = _file_of(p)
-        try:
-            text = path.read_text("utf-8")
-        except OSError as e:
-            raise PresetError(f"cannot read the preset ({e.strerror})") from None
+        text = _editor_text(path, name)
         try:
             edited = click.edit(text, extension=".json", require_save=True)
         except click.ClickException:
@@ -521,7 +536,7 @@ def edit(name: str, force: bool) -> None:
             raise PresetError(
                 "not saved: the name cannot change here; use `vcfclick preset rename`"
             )
-        doc = touch({**checked.doc, "name": name})
+        doc = touch(named(checked.doc, name))
         write_text_atomic(path, to_text(doc))
     click.echo(f"saved {name!r} (fingerprint {fingerprint(doc)})")
 

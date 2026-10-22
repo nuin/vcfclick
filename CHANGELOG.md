@@ -75,7 +75,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   listed as an error and never breaks `preset list`. `export -o DIR` writes
   `DIR/NAME.vcfclick-preset.json`, which a directory on `VCFCLICK_PRESET_PATH`
   reads as `NAME`, and which `save`, `import` and `rename` count as the existing
-  preset `NAME` (`--force` replaces that file).
+  preset `NAME` (`--force` replaces that file). The file name is the preset's
+  name: a file copied in as `lab-q.json` that still declares `q1` is used as
+  `lab-q` (with a `name_mismatch` warning), and `set`, `edit`, `rename` and
+  `export` write `lab-q`.
 - The effective-gate report. A run with a preset says, per gate, whether the
   field it reads is in this data: GQ, DP and AD on the proband's and parents'
   rows, `INFO/AF`, gnomAD (loaded, with records on the chromosomes of 90% of

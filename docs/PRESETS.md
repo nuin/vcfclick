@@ -243,6 +243,12 @@ and `--force` replaces that file rather than adding a second one beside it.
 
 ```json
 {
+The file name is what a stored preset is called. A colleague's `q1.json` copied in
+as `lab-q.json` still says `"name": "q1"` inside: it is listed with a
+`name_mismatch` warning and used as `lab-q`, and `set`, `edit`, `rename` and
+`export` all write `lab-q`, so an export imports back as `lab-q` and `edit` is not
+asked to rename it. (A file with no `name` at all gets the same treatment.)
+
   "schema": "vcfclick.preset",
   "schema_version": 1,
   "name": "id-panel",
