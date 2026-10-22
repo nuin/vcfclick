@@ -869,11 +869,12 @@ Options:
   --require-bound-gates / --no-require-bound-gates
                                   Error, instead of a warning, when a
                                   requested gate cannot bind in this data (the
-                                  field is missing on too many rows) or no
-                                  population-frequency filter is in effect.
-                                  --strict-missing implies it for the GQ, DP
-                                  and AD gates; --no-require-bound-gates
-                                  overrides both for this run.
+                                  field is missing on too many rows), a
+                                  selected model cannot run on this database,
+                                  or no population-frequency filter is in
+                                  effect. --strict-missing implies it for the
+                                  GQ, DP and AD gates; --no-require-bound-
+                                  gates overrides both for this run.
   --format [text|json]            json: every model's count and candidates
                                   (with gene, gnomAD and ClinVar when loaded)
                                   in one document; without --proband, a
@@ -1106,11 +1107,12 @@ Options:
   --require-bound-gates / --no-require-bound-gates
                                   Error, instead of a warning, when a
                                   requested gate cannot bind in this data (the
-                                  field is missing on too many rows) or no
-                                  population-frequency filter is in effect.
-                                  --strict-missing implies it for the GQ, DP
-                                  and AD gates; --no-require-bound-gates
-                                  overrides both for this run.
+                                  field is missing on too many rows), a
+                                  selected model cannot run on this database,
+                                  or no population-frequency filter is in
+                                  effect. --strict-missing implies it for the
+                                  GQ, DP and AD gates; --no-require-bound-
+                                  gates overrides both for this run.
   --help                          Show this message and exit.
 ```
 

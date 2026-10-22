@@ -8,6 +8,11 @@ hooks of `cli.trio_gate_output` (the `preset` and `effective` JSON objects, the
 text header). A plain run never gets here, so its output and its queries are
 unchanged.
 
+A model the run selected that cannot run on this database (no stored hom-reference
+calls, no gene table) is a `model_blocked` warning, and an error for a run that
+insists: a clean "0 candidates" from a model that could not run is the quiet
+result this report exists to prevent.
+
 `--parent-alt-screen` typed alone is an opt-in gate that exists to catch false
 de novos, and on a VCF without allele depths it screens nothing: every parent
 0/0 is trusted. `--pass-only` typed alone keeps FILTER = PASS, and on a VCF whose
@@ -43,7 +48,13 @@ from cli.preset_echo import header_lines, preset_block, skipped_items
 from cli.preset_options import PresetState, is_explicit
 from cli.trio_analysis import TrioAnalysis
 from cli.trio_gate_output import gnomad_footer
-from cli.trio_output import MODELS, _annotation_status, selected_categories
+from cli.trio_output import (
+    MODELS,
+    _annotation_status,
+    _applicable,
+    model_blockers,
+    selected_categories,
+)
 
 # info-level codes the user does not need to see twice
 _SILENT_NOTES = ("preset_max_af_not_applied",)
@@ -122,7 +133,9 @@ def attach_gate_reports(
 
     filter_present = "filter" in set(table_columns("variants"))
     variants = collect_variant_stats(sess, ingest_id, filter_present=filter_present)
-    gnomad_loaded = bool(_annotation_status()["gnomad"])
+    status = _annotation_status()
+    gnomad_loaded = bool(status["gnomad"])
+    genes_loaded = bool(status["genes"])
     wants_gnomad = first.gnomad_max_af is not None
     # --no-require-bound-gates typed on the command line overrides both kinds
     # of refusal for this run
@@ -165,6 +178,15 @@ def attach_gate_reports(
         for c in collect_sample_stats(sess, ingest_id, [(s, "") for s in unique])
     }
 
+    def blocked_models(analysis: TrioAnalysis) -> list[tuple[str, str]]:
+        """(model, reason) for each selected model that cannot run on this
+        database: its count would be 0 for a reason that is not the genome."""
+        return [
+            (spec.name, reason)
+            for spec in _applicable(analysis, options.category)
+            for reason in model_blockers(analysis, spec, genes_loaded)
+        ]
+
     def make_report(analysis: TrioAnalysis, gates):
         trio = analysis.trio
         roles = (
@@ -182,6 +204,7 @@ def attach_gate_reports(
             gnomad_probe=gnomad_probe,
             filter_present=filter_present,
             categories=selected_categories(options.category),
+            blocked_models=blocked_models(analysis),
             assay=state.located.preset.assay if state else None,
             subject="preset" if state else "gates",
             skipped=skipped,

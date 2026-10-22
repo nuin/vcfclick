@@ -34,6 +34,9 @@ CODES: dict[str, str] = {
     "gnomad_no_coverage": WARNING,
     # after the run: the gnomAD filter found a record for none of the candidates
     "gnomad_no_record": WARNING,
+    # a model the run selected cannot run on this database (no stored hom-ref
+    # calls, no gene table): its count is 0 for a reason that is not the genome
+    "model_blocked": WARNING,
     # pass_only is on, and the data has no FILTER label other than PASS or unset
     # for it to act on (a warning, not a refusal: a VCF hard-filtered before it
     # was ingested is all PASS)

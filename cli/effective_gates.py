@@ -74,6 +74,7 @@ GNOMAD_FIELD = "popmax (grpmax else AF)"
 # which warning codes a refusal is made of
 _BOUND_CODES = (
     "gate_unbound",
+    "model_blocked",
     "gnomad_not_loaded",
     "gnomad_no_coverage",
     "no_population_frequency_filter",
@@ -81,6 +82,13 @@ _BOUND_CODES = (
 # the gates strict_missing turns into "fail when the field is missing": the
 # GQ / DP / AD gates and the parent-allele screen
 STRICT_KEYS = ("min_gq", "min_dp", "min_ab", "parent_alt_screen")
+# why a model cannot run (the `blocked_reason` values a run can have), said as
+# the end of "<model> cannot run: ..."
+_BLOCKED_WHY = {
+    "needs_keep_reference": "this database has no stored hom-reference calls; "
+    "re-ingest with --keep-reference",
+    "needs_genes": "no gene annotations are loaded (`vcfclick annotations load`)",
+}
 _NAMES_SHOWN = 4  # chromosome names listed in a message
 
 
@@ -306,6 +314,7 @@ def build_report(
     gnomad_probe: GnomadProbe | None = None,
     filter_present: bool = True,
     categories: Sequence[str] = ("all",),
+    blocked_models: Sequence[tuple[str, str]] = (),
     assay: str | None = None,
     subject: str = "preset",
     skipped: Sequence[dict] = (),
@@ -324,6 +333,10 @@ def build_report(
     The warnings are those about these keys, and in the document every `bound`
     (and `population_filter`) of a gate outside them is null: it was not
     examined, which is not the same as bound.
+    `blocked_models` are the (model, reason) pairs of the models the run selected
+    that cannot run on this database (reasons from `BLOCKED_REASONS`): an empty
+    model is not a clean result, so each is a `model_blocked` warning, and an
+    error for a run that insists on its gates.
     `skipped` are the preset's skipped keys (from the echo); `preset_max_af` is
     the max_af a preset supplied, set only so a skip of it can be explained;
     `enforce_bound` / `enforce_format` choose which warnings are also errors
@@ -524,6 +537,14 @@ def build_report(
                 f"median proband DP is {_num(median):g} but min_dp is "
                 f"{gates.min_dp}; this assay may be too thin for the "
                 f"{subject}{hint}",
+            )
+        )
+    for model, reason in blocked_models:
+        warnings.append(
+            warning(
+                "model_blocked",
+                "category",
+                f"{model} cannot run: {_BLOCKED_WHY.get(reason, reason)}",
             )
         )
     for item in skipped:
@@ -804,12 +825,21 @@ _REMEDY = {
     "gnomad_not_loaded": _POPULATION_REMEDY,
     "gnomad_no_coverage": _POPULATION_REMEDY,
     "no_population_frequency_filter": _POPULATION_REMEDY,
+    "model_blocked": (
+        "re-ingest the cohort with --keep-reference (a de novo, dominant or "
+        "compound-het call needs the parents' stored 0/0), load gene annotations "
+        "with `vcfclick annotations load` for compound het, or leave the model "
+        "out with --category"
+    ),
 }
 
 
 def refusal_message(errors: Sequence[dict], *, subject: str) -> str:
     """The text of the error that stops a run whose gates cannot bind."""
-    lines = [f"{subject} needs every gate to bind, and these cannot in this data:"]
+    needs = "every gate to bind"
+    if any(e["code"] == "model_blocked" for e in errors):
+        needs += " and every model it selects to run"
+    lines = [f"{subject} needs {needs}, and these cannot in this data:"]
     lines += [f"  - {e['message']}" for e in errors]
     remedies = list(dict.fromkeys(_REMEDY[e["code"]] for e in errors))
     lines += [f"Remedy: {r}." for r in remedies]

@@ -393,6 +393,8 @@ class ModelSpec:
     # Needs stored hom-reference calls to prove a parent is 0/0 (the
     # `--keep-reference` note, and the `blocked` flag, key off this).
     needs_reference: bool = False
+    # Needs the gene table (compound het groups candidates by gene).
+    needs_genes: bool = False
 
 
 MODELS: dict[str, ModelSpec] = {}
@@ -411,6 +413,20 @@ def _legacy_blocked(needs_reference: bool, analysis: TrioAnalysis) -> bool:
     """The `blocked` flag of the four classic models: no stored hom-ref rows
     anywhere in the database (cli/trio_analysis._has_reference_rows)."""
     return needs_reference and not analysis.has_reference
+
+
+def model_blockers(
+    analysis: TrioAnalysis, spec: ModelSpec, genes_loaded: bool
+) -> list[str]:
+    """Every `blocked_reason` that stops `spec` from running on this database,
+    the reference requirement first (the JSON reports only that one when both
+    apply). Empty when the model can run."""
+    out = []
+    if _legacy_blocked(spec.needs_reference, analysis):
+        out.append("needs_keep_reference")
+    if spec.needs_genes and not genes_loaded:
+        out.append("needs_genes")
+    return out
 
 
 def _model_reason(blocked: bool, extra: str | None = None) -> str | None:
@@ -536,6 +552,7 @@ register_model(
         _summary_comphet,
         _detail_comphet,
         needs_reference=True,
+        needs_genes=True,
     )
 )
 

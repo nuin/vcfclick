@@ -129,6 +129,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gnomad_no_coverage` | gnomAD is loaded but cannot judge the cohort: it has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere), or a record for under 10% of a sample of the cohort's own variants (a one-row test load, a slice of one gene, another genome build) |
 | `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare (novel variants, which is what de novo candidates are; the text says how much of the cohort gnomAD does reach) |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
+| `model_blocked` | a model the run selected cannot run on this database: it has no stored hom-reference calls (`denovo`, `dominant` and `comphet` need `--keep-reference`) or no gene table is loaded (`comphet`). The model's count is 0 because of the database, not the genome. Named per model, in the text and in `effective.warnings`; not reported in a run limited to the gates it typed |
 | `skipped_widening` | a preset key was skipped and skipping widens the search |
 | `preset_max_af_not_applied` | the preset's `max_af` was skipped as cohort-derived (`info`) |
 
@@ -140,7 +141,9 @@ Warnings do not stop a run, so a broad preset still works on data without GQ or
 DP. Two opt-in gates turn the warnings into refusals:
 
 - `--require-bound-gates` (`require_bound`): an error, with the remedy, when a
-  requested gate cannot bind or when no population-frequency filter is in effect.
+  requested gate cannot bind, when a model the run selected cannot run on this
+  database (`model_blocked`), or when no population-frequency filter is in
+  effect.
 - `--strict-missing` (`strict_missing`): a missing GQ, DP or (for a het call) AD
   on the proband or a parent **counts as a fail**, not a pass, for each of those
   gates that is asked for: `min_gq` or `min_dp` above 0, an allele-balance band
@@ -150,8 +153,10 @@ DP. Two opt-in gates turn the warnings into refusals:
   same run as without it. A requested gate that cannot bind is then an error too
   (a field missing everywhere would fail everything).
 
-`strict-denovo` turns both on, so on a family VCF with no gnomAD loaded it
-**refuses to run** and says why. `--no-require-bound-gates` overrides both
+`strict-denovo` turns both on, so on a family VCF with no gnomAD loaded, or on a
+database ingested without `--keep-reference` (where its one model cannot prove a
+parent is 0/0 and would print `denovo candidates: 0`), it **refuses to run** and
+says why. `--no-require-bound-gates` overrides both
 refusals for one run; the warnings stay in the output. For that run,
 `strict_missing` is **not applied to the gates that cannot bind**: a call
 without GQ passes the `min_gq` gate rather than failing it, so the run reports

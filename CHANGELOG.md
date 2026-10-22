@@ -94,8 +94,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   missing GQ, DP or het AD counts as a fail), `--pass-only` (VCF `FILTER` is
   PASS or unset), `--parent-alt-screen` with `--max-parent-alt-frac` (the de
   novo model distrusts a parent's stored 0/0 that has alt reads) and
-  `--require-bound-gates` (an error, not a warning, when a gate cannot bind or no
-  population-frequency filter is in effect). `--pass-only` on a VCF whose
+  `--require-bound-gates` (an error, not a warning, when a gate cannot bind, a
+  selected model cannot run on the database, or no population-frequency filter
+  is in effect). A model the run selected that cannot run (no stored
+  hom-reference calls, no gene table) is a `model_blocked` warning per model, on
+  stdout and in `effective.warnings`, and so `strict-denovo` refuses a database
+  ingested without `--keep-reference` instead of printing `denovo candidates: 0`. `--pass-only` on a VCF whose
   FILTER column carries no label other than PASS or unset says it removes
   nothing (`pass_only_no_labels`, a warning and never a refusal), and a typed
   `--pass-only` is reported like `--parent-alt-screen`. `--parent-alt-screen`

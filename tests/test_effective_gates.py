@@ -536,6 +536,47 @@ def test_the_json_effective_object_carries_the_counts_and_the_late_warning():
     assert "gnomad_no_record" not in [w["code"] for w in doc["warnings"]]
 
 
+# ─────────────────────── a selected model that cannot run ───────────────────────
+
+
+NO_REF = ("denovo", "needs_keep_reference")
+NO_GENES = ("comphet", "needs_genes")
+
+
+def test_a_selected_model_that_cannot_run_is_a_warning_and_a_refusal_when_insisted():
+    """Its count is 0 because of the database and not the genome: that is never
+    a quiet result. It is a warning, and an error for a run that insists."""
+    rep = report(blocked_models=[NO_REF, NO_GENES])
+    assert [w["message"] for w in by_code(rep, "model_blocked")] == [
+        "denovo cannot run: this database has no stored hom-reference calls; "
+        "re-ingest with --keep-reference",
+        "comphet cannot run: no gene annotations are loaded "
+        "(`vcfclick annotations load`)",
+    ]
+    for w in by_code(rep, "model_blocked"):
+        assert (w["level"], w["key"]) == ("warning", "category")
+    assert rep.errors == () and rep.document["warnings"] == list(rep.warnings)
+    insisting = report(blocked_models=[NO_REF, NO_GENES], enforce_bound=True)
+    assert [e["code"] for e in insisting.errors] == ["model_blocked"] * 2
+    text = refusal_message(insisting.errors, subject="preset 'strict-denovo'")
+    assert text.startswith("preset 'strict-denovo' needs every gate to bind and")
+    assert "denovo cannot run" in text and text.count("Remedy:") == 1
+    assert "--keep-reference" in text and "--no-require-bound-gates" in text
+    # strict_missing alone is about the format fields, not about the models
+    assert report(blocked_models=[NO_REF], enforce_format=True).errors == ()
+    # no model blocked: nothing said
+    assert not by_code(report(), "model_blocked")
+
+
+def test_a_report_limited_to_one_gate_does_not_speak_for_the_models():
+    rep = report(
+        gates=GATES._replace(parent_alt_screen=True),
+        blocked_models=[NO_REF],
+        only={"parent_alt_screen"},
+    )
+    assert not by_code(rep, "model_blocked")
+
+
 # ───────────────────────────── the other warnings ─────────────────────────────
 
 
@@ -741,7 +782,7 @@ def test_warning_codes_are_a_closed_list():
         "gate_unbound", "gate_partial", "thin_coverage", "gnomad_not_loaded",
         "no_population_frequency_filter", "skipped_widening",
         "preset_max_af_not_applied", "gnomad_no_coverage", "gnomad_no_record",
-        "pass_only_no_labels",
+        "pass_only_no_labels", "model_blocked",
     }  # fmt: skip
     # a code is registered by the change that first emits it: none for a run that
     # `db trio` refuses (a duo's de novo answer comes with duo analysis)

@@ -141,6 +141,14 @@ def world(backend, tmp_path_factory):
             "--cohort", "fam", "--ingest-id", "fam1", "--serial", "--keep-reference",
         )  # fmt: skip
         run_cli(home, backend, "db", "ped", name, str(pedigree))
+    # the planted sites ingested WITHOUT --keep-reference: no stored 0/0 calls, so a
+    # parent cannot be shown to be 0/0 and the models that need one cannot run
+    run_cli(home, backend, "db", "create", "r")
+    run_cli(
+        home, backend, "db", "ingest", "r", str(FIXTURES / "presets.vcf.gz"),
+        "--cohort", "fam", "--ingest-id", "fam1", "--serial",
+    )  # fmt: skip
+    run_cli(home, backend, "db", "ped", "r", str(ped))
     return World(home, backend, ann)
 
 
@@ -456,6 +464,70 @@ def test_a_typed_pass_only_is_told_about_and_only_about_that_gate(world):
     plain = jtrio(world, "f", "--category", "denovo")
     assert "effective" not in plain
     assert warning_lines(trio(world, "f", "--category", "denovo").stdout) == []
+
+
+NO_REFERENCE = (
+    "denovo cannot run: this database has no stored hom-reference calls; "
+    "re-ingest with --keep-reference"
+)
+
+
+def test_a_strict_preset_refuses_a_database_its_model_cannot_run_on(world):
+    """No stored 0/0 calls: strict-denovo would print `denovo candidates: 0`, exit 0
+    and look like a clean result. It refuses, with the remedy."""
+    r = trio(world, "r", "--preset", "strict-denovo", ok=False)
+    assert r.stdout == ""
+    for text in ("preset 'strict-denovo' needs every gate to bind", NO_REFERENCE,
+                 "Remedy:", "--keep-reference", "--no-require-bound-gates"):  # fmt: skip
+        assert text in r.stderr, text
+    # --no-require-bound-gates runs it, and the run says in stdout and in the document
+    out = trio(world, "r", "--preset", "strict-denovo", "--no-require-bound-gates")
+    assert f"  WARNING: {NO_REFERENCE}" in warning_lines(out.stdout)
+    assert "denovo candidates: 0" in out.stdout
+    doc = jtrio(world, "r", "--preset", "strict-denovo", "--no-require-bound-gates")
+    (w,) = [x for x in doc["effective"]["warnings"] if x["code"] == "model_blocked"]
+    assert (w["level"], w["key"], w["message"]) == ("warning", "category", NO_REFERENCE)
+    assert doc["models"]["denovo"]["blocked"] is True
+    assert doc["models"]["denovo"]["blocked_reason"] == "needs_keep_reference"
+    # the same preset on a database that does store them is not touched
+    ok = jtrio(world, "p", "--preset", "strict-denovo")
+    assert not [x for x in ok["effective"]["warnings"] if x["code"] == "model_blocked"]
+
+
+def test_a_warn_only_preset_names_each_selected_model_that_cannot_run(world):
+    """rare-recessive selects recessive (which needs no reference) and comphet
+    (which needs the reference and the gene table). Nothing is refused; the
+    models that did not run are named, and the one that did is not."""
+    r = trio(world, "r", "--preset", "rare-recessive")
+    assert [x for x in warning_lines(r.stdout) if "cannot run" in x] == [
+        "  WARNING: comphet cannot run: this database has no stored hom-reference "
+        "calls; re-ingest with --keep-reference"
+    ]
+    assert "denovo cannot run" not in r.stdout  # not selected: not mentioned
+    doc = jtrio(world, "r", "--preset", "rare-recessive")
+    assert names(doc, "recessive") == {"rec_ok"}
+    # no gene table: comphet cannot run on a database that does store the 0/0 calls
+    genes = trio(world, "p", "--preset", "rare-recessive", ann="empty")
+    assert any(
+        x.startswith("  WARNING: comphet cannot run: no gene annotations")
+        for x in warning_lines(genes.stdout)
+    )
+    gdoc = jtrio(world, "p", "--preset", "rare-recessive", ann="empty")
+    assert gdoc["models"]["comphet"]["blocked_reason"] == "needs_genes"
+    assert [
+        x["message"]
+        for x in gdoc["effective"]["warnings"]
+        if x["code"] == "model_blocked"
+    ] == [
+        "comphet cannot run: no gene annotations are loaded "
+        "(`vcfclick annotations load`)"
+    ]
+    # a run that insists on its gates refuses for it too
+    refused = trio(
+        world, "p", "--preset", "rare-recessive", "--require-bound-gates", ann="empty",
+        ok=False,
+    )  # fmt: skip
+    assert "comphet cannot run: no gene annotations are loaded" in refused.stderr
 
 
 def test_a_warn_only_preset_runs_on_data_without_gq_dp_ad_and_says_so(world):
