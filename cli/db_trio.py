@@ -33,25 +33,32 @@ import json
 from dataclasses import dataclass
 
 import click
-from click.core import ParameterSource
 
 from cli.family_checks import trio_af_gate
 from cli.main import _set_db, db
 from cli.options import command_options
-from cli.trio_analysis import CATEGORY_CHOICES, DEFAULT_MAX_AF
+from cli.preset_options import (
+    PresetCommand,
+    gate_options,
+    is_explicit,
+    preset_option,
+    preset_state,
+    resolve_filters,
+)
+from cli.trio_analysis import DEFAULT_MAX_AF as DEFAULT_MAX_AF
 from cli.trio_analysis import Gates as Gates
 from cli.trio_analysis import Trio as Trio
 from cli.trio_analysis import (
     TrioAnalysis,
-)
-from cli.trio_analysis import _comphet_genes as _comphet_genes
-from cli.trio_analysis import (
     _has_reference_rows,
     _resolve_parents,
     _sole_ingest_id,
 )
+from cli.trio_analysis import _comphet_genes as _comphet_genes
 from cli.trio_analysis import trio_sql as trio_sql
-from cli.trio_output import _trio_json, trio_text
+from cli.trio_gate_output import show_parent_reads
+from cli.trio_gate_report import attach_gate_reports, needs_report
+from cli.trio_output import _trio_json, omitted_models, trio_text
 from cli.trio_select import make_pick, select_trios
 
 
@@ -61,22 +68,41 @@ class TrioOptions:
     proband: str | None
     family: str | None
     all_trios: bool
-    category: str
+    category: tuple[str, ...]
     min_gq: int
     min_dp: int
     max_af: float
     min_ab: float
     max_ab: float
     gnomad_max_af: float | None
+    strict_missing: bool
+    pass_only: bool
+    parent_alt_screen: bool
+    max_parent_alt_frac: float
+    require_bound: bool
     out_format: str
     limit: int
+    preset: str | None
+    preset_fingerprint: str | None
+    preset_ignore: tuple[str, ...]
+    preset_skip_unavailable: bool
 
     @property
     def gates(self) -> Gates:
-        return Gates(self.min_gq, self.min_dp, self.max_af, self.min_ab, self.max_ab)
+        return Gates(
+            self.min_gq,
+            self.min_dp,
+            self.max_af,
+            self.min_ab,
+            self.max_ab,
+            max_parent_alt_frac=self.max_parent_alt_frac,
+            strict_missing=self.strict_missing,
+            pass_only=self.pass_only,
+            parent_alt_screen=self.parent_alt_screen,
+        )
 
 
-@db.command(name="trio")
+@db.command(name="trio", cls=PresetCommand)
 @click.argument("name")
 @click.option(
     "--proband",
@@ -99,35 +125,7 @@ class TrioOptions:
     "declared, including children marked unaffected and parents who have "
     "children of their own (the rule before probands were defined).",
 )
-@click.option(
-    "--category",
-    type=click.Choice(CATEGORY_CHOICES),
-    default="all",
-    show_default=True,
-    help="Inheritance model. 'all' prints per-model candidate counts.",
-)
-@click.option("--min-gq", default=20, show_default=True, type=int)
-@click.option("--min-dp", default=10, show_default=True, type=int)
-@click.option(
-    "--max-af",
-    default=DEFAULT_MAX_AF,
-    show_default=True,
-    type=float,
-    help="Keep variants with population info_AF <= this (rarity filter). "
-    "If INFO/AF turns out to be this cohort's own frequency (GATK-style "
-    "family VCFs), the filter is skipped with a note unless this option is "
-    "given explicitly.",
-)
-@click.option("--min-ab", default=0.25, show_default=True, type=float)
-@click.option("--max-ab", default=0.75, show_default=True, type=float)
-@click.option(
-    "--gnomad-max-af",
-    default=None,
-    type=float,
-    help="Additionally drop candidates whose gnomAD popmax AF exceeds this "
-    "(needs `vcfclick annotations load-gnomad`). Variants absent from the "
-    "loaded gnomAD slice are kept as rare.",
-)
+@gate_options("trio")
 @click.option(
     "--format",
     "out_format",
@@ -145,6 +143,7 @@ class TrioOptions:
     show_default=True,
     help="json: at most this many candidates per model.",
 )
+@preset_option()
 @command_options(TrioOptions)
 def db_trio(options: TrioOptions) -> None:
     """Report candidate variants under Mendelian inheritance models for
@@ -189,13 +188,11 @@ def db_trio(options: TrioOptions) -> None:
     has_ref = _has_reference_rows(sess)
     # Is INFO/AF this cohort's own frequency? Then --max-af would remove
     # every private candidate: say so, and skip the gate unless --max-af was
-    # given on the command line (an explicit threshold is always honoured).
-    explicit_af = (
-        click.get_current_context().get_parameter_source("max_af")
-        != ParameterSource.DEFAULT
-    )
+    # typed on the command line (an explicit threshold is always honoured).
+    # A value a preset supplied is not typed.
+    ctx = click.get_current_context()
     af_gate, af_message = trio_af_gate(
-        sess, ingest_id, options.max_af, explicit=explicit_af
+        sess, ingest_id, options.max_af, explicit=is_explicit(ctx, "max_af")
     )
     if af_message:
         click.echo(f"note: {af_message}", err=True)
@@ -211,6 +208,29 @@ def db_trio(options: TrioOptions) -> None:
         )
         for p in picks
     ]
+    for analysis in analyses:
+        for model in omitted_models(analysis, options.category):
+            click.echo(
+                f"note: the {model} model does not apply to proband "
+                f"{analysis.trio.proband}; left out",
+                err=True,
+            )
+    state = preset_state(ctx)
+    if state or options.parent_alt_screen:
+        for analysis in analyses:
+            show_parent_reads(analysis)
+    if needs_report(state, options.require_bound, options.strict_missing):
+        resolved, overridden = (
+            resolve_filters(ctx, "trio", state) if state else (None, [])
+        )
+        attach_gate_reports(
+            analyses,
+            ctx,
+            options=options,
+            state=state,
+            resolved=resolved,
+            overridden=overridden,
+        )
     if options.out_format == "json":
         docs = [_trio_json(a, options.category, options.limit) for a in analyses]
         if options.proband is not None:

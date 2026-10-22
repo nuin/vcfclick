@@ -447,12 +447,18 @@ def _row_model(name: str, *, needs_reference: bool) -> ModelSpec:
     def detail(analysis: TrioAnalysis) -> None:
         data = analysis.detail_rows(name)
         click.echo(f"\n{name} candidates: {len(data)}")
-        for row in data:
+        # A later feature may append to each listed row (the parents' read
+        # counts under --parent-alt-screen): stats["text_suffix"](model, rows)
+        # returns one string per row.
+        suffix = analysis.stats.get("text_suffix")
+        extra = suffix(name, data) if suffix else None
+        for i, row in enumerate(data):
             chrom, pos, ref, alt, pgt, fgt, mgt, af = row
             af_s = "NA" if af is None else f"{af}"
             click.echo(
                 f"  {chrom}:{pos} {ref}>{alt}  proband_gt={pgt} "
                 f"father_gt={fgt} mother_gt={mgt}  AF={af_s}"
+                + (extra[i] if extra else "")
             )
 
     return ModelSpec(
@@ -541,16 +547,64 @@ if tuple(MODELS) != CATEGORIES:
 # ───────────────────────────── the document ─────────────────────────────
 
 
-def _applicable(analysis: TrioAnalysis, category: str) -> list[ModelSpec]:
+def selected_categories(category: str | Sequence[str]) -> tuple[str, ...]:
+    """The models `--category` names, as a tuple of names. `all` anywhere in a
+    list means all; a single name (or `all`) behaves exactly as it always has."""
+    tokens = (category,) if isinstance(category, str) else tuple(category)
+    return ("all",) if "all" in tokens else tokens
+
+
+def _applicable(
+    analysis: TrioAnalysis, category: str | Sequence[str]
+) -> list[ModelSpec]:
+    wanted = selected_categories(category)
     return [
         spec
         for spec in MODELS.values()
-        if category in ("all", spec.name) and spec.applies(analysis.trio)
+        if ("all" in wanted or spec.name in wanted) and spec.applies(analysis.trio)
     ]
 
 
-def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
-    trio, gates = analysis.trio, analysis.gates
+def omitted_models(analysis: TrioAnalysis, category: str | Sequence[str]) -> list[str]:
+    """Models a list or `all` names that do not apply to this trio: they are
+    left out of the report, and the caller says so. (A single explicit name
+    that does not apply is not omitted quietly; that is each model's own rule.)"""
+    wanted = selected_categories(category)
+    if wanted != ("all",) and len(wanted) == 1:
+        return []
+    return [
+        spec.name
+        for spec in MODELS.values()
+        if ("all" in wanted or spec.name in wanted) and not spec.applies(analysis.trio)
+    ]
+
+
+def _gates_json(analysis: TrioAnalysis) -> dict:
+    gates = analysis.gates
+    out = {
+        "min_gq": gates.min_gq,
+        "min_dp": gates.min_dp,
+        "max_af": gates.max_af,
+        "min_ab": gates.min_ab,
+        "max_ab": gates.max_ab,
+        "gnomad_max_af": analysis.gnomad_max_af,
+        "af_gate": gates.af_gate,
+    }
+    # additive: a gate is reported only when it is on
+    if gates.strict_missing:
+        out["strict_missing"] = True
+    if gates.pass_only:
+        out["pass_only"] = True
+    if gates.parent_alt_screen:
+        out["parent_alt_screen"] = True
+        out["max_parent_alt_frac"] = gates.max_parent_alt_frac
+    return out
+
+
+def _trio_json(
+    analysis: TrioAnalysis, category: str | Sequence[str], limit: int
+) -> dict:
+    trio = analysis.trio
     with open_render(analysis, limit) as render:
         models = {
             spec.name: spec.build(render) for spec in _applicable(analysis, category)
@@ -566,15 +620,7 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
                 "siblings": [{"sample": s, "kind": k} for s, k in analysis.siblings],
             },
             "keep_reference": analysis.has_reference,
-            "gates": {
-                "min_gq": gates.min_gq,
-                "min_dp": gates.min_dp,
-                "max_af": gates.max_af,
-                "min_ab": gates.min_ab,
-                "max_ab": gates.max_ab,
-                "gnomad_max_af": analysis.gnomad_max_af,
-                "af_gate": gates.af_gate,
-            },
+            "gates": _gates_json(analysis),
             "annotations": render.have,
             "models": models,
         }
@@ -590,13 +636,17 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
     return doc
 
 
-def trio_text(analysis: TrioAnalysis, category: str) -> None:
+def trio_text(analysis: TrioAnalysis, category: str | Sequence[str]) -> None:
     trio = analysis.trio
     proband, father, mother = trio.proband, trio.father, trio.mother
     click.echo(f"trio: proband={proband} father={father} mother={mother}")
+    # lines a run with a preset adds right under `trio:` (cli/trio_gate_output.py)
+    for line in analysis.stats.get("text_header", ()):
+        click.echo(line)
+    wanted = selected_categories(category)
     needs_reference = {s.name for s in MODELS.values() if s.needs_reference}
     if not analysis.has_reference and (
-        category in needs_reference or category == "all"
+        "all" in wanted or any(c in needs_reference for c in wanted)
     ):
         click.echo(
             "  note: this database has no stored hom-reference calls, so "
@@ -605,8 +655,8 @@ def trio_text(analysis: TrioAnalysis, category: str) -> None:
             err=True,
         )
 
-    if category == "all":
-        for spec in _applicable(analysis, "all"):
-            click.echo(spec.summary(analysis))
+    if len(wanted) == 1 and wanted[0] != "all":
+        MODELS[wanted[0]].detail(analysis)  # one model: the listing
         return
-    MODELS[category].detail(analysis)
+    for spec in _applicable(analysis, wanted):  # `all` or a list: a line each
+        click.echo(spec.summary(analysis))

@@ -1,0 +1,154 @@
+"""What a trio document and listing gain when a preset or a strict gate is on.
+
+Nothing here runs for a plain `db trio`: every hook reads `analysis.stats`,
+which `db trio` fills only for a run with a preset or a strictness flag, so a
+plain run's output is the bytes it always was.
+
+  * the document decorator adds the top-level `preset` and `effective` objects;
+  * `parent_alt_reads` on each de novo candidate (and a suffix on its line in
+    the text listing): the parents' ref / alt read counts at the site, so a
+    clinician sees at a glance that a "de novo" has 4 alt reads of 40 in the
+    father. One batched lookup per rendered page, not one per candidate.
+
+Importing this module registers the hooks.
+"""
+
+from __future__ import annotations
+
+import json
+from collections.abc import Sequence
+
+from cli.trio_output import (
+    Render,
+    register_candidate_decorator,
+    register_document_decorator,
+)
+
+_CHUNK = 400  # variants per lookup statement
+
+
+def _key(row: Sequence) -> tuple[str, int, str, str]:
+    return (row[0], int(row[1]), row[2], row[3])
+
+
+def lookup_parent_reads(analysis, keys: Sequence[tuple]) -> dict:
+    """{(chrom, pos, ref, alt): {"father": {"ref", "alt"}, "mother": {...}}}
+    for the parents' stored rows at these sites (None counts where the call
+    carries no allele depths). A parent with no stored row there is absent
+    from the answer's entry; a de novo candidate always has both, because the
+    model requires the parents' stored 0/0."""
+    from storage import sql_quote_str
+
+    trio = analysis.trio
+    names = {trio.father: "father", trio.mother: "mother"}
+    listed = ", ".join(sql_quote_str(s) for s in names)
+    out: dict = {}
+    unique = list(dict.fromkeys(keys))
+    for start in range(0, len(unique), _CHUNK):
+        tuples = ", ".join(
+            f"({sql_quote_str(c)}, {int(p)}, {sql_quote_str(r)}, {sql_quote_str(a)})"
+            for c, p, r, a in unique[start : start + _CHUNK]
+        )
+        sql = (
+            "SELECT sample_id, chrom, pos, ref, alt, ad_ref, ad_alt FROM genotypes "
+            f"WHERE ingest_id = {sql_quote_str(trio.ingest_id)} "
+            f"AND sample_id IN ({listed}) "
+            f"AND (chrom, pos, ref, alt) IN ({tuples})"
+        )
+        result = json.loads(analysis.session.query(sql, "JSONCompact").bytes().decode())
+        for sample, chrom, pos, ref, alt, ad_ref, ad_alt in result["data"]:
+            entry = out.setdefault((chrom, int(pos), ref, alt), {})
+            entry[names[sample]] = {
+                "ref": None if ad_ref is None else int(ad_ref),
+                "alt": None if ad_alt is None else int(ad_alt),
+            }
+    return out
+
+
+# ───────────────────────────── candidate decorator ─────────────────────────────
+
+
+def _stats(render: Render) -> dict:
+    """The run's facts; empty for a document about something that is not a
+    TrioAnalysis (another command's rows, a test's stand-in)."""
+    return getattr(render.analysis, "stats", {})
+
+
+def _prefetch(render: Render, rows: Sequence[Sequence]) -> None:
+    analysis = render.analysis
+    if not _stats(render).get("parent_alt_reads"):
+        return
+    keys = [_key(r) for r in rows if ("parent_alt", _key(r)) not in render.cache]
+    if not keys:
+        return
+    found = lookup_parent_reads(analysis, keys)
+    for key in dict.fromkeys(keys):
+        render.cache[("parent_alt", key)] = found.get(key, {})
+
+
+def _parent_alt_reads(d: dict, row: list, model: str, render: Render) -> dict:
+    if _stats(render).get("parent_alt_reads"):
+        entry = render.cache.get(("parent_alt", _key(row)), {})
+        d["parent_alt_reads"] = {
+            side: entry.get(side, {"ref": None, "alt": None})
+            for side in ("father", "mother")
+        }
+    return d
+
+
+register_candidate_decorator(
+    _parent_alt_reads, models=frozenset({"denovo"}), prefetch=_prefetch
+)
+
+
+def show_parent_reads(analysis) -> None:
+    """Turn on the parents' read counts for this run's de novo candidates, in
+    the JSON (`parent_alt_reads`) and in the text listing. `db trio` does it
+    when a preset or --parent-alt-screen is on, and only then."""
+    analysis.stats["parent_alt_reads"] = True
+    analysis.stats["text_suffix"] = text_suffix(analysis)
+
+
+def text_suffix(analysis):
+    """`stats["text_suffix"]`: for the de novo listing, one string per row
+    saying the parents' alt / total read counts (`  parents' alt reads:
+    father 4/40, mother 0/38`); nothing for another model."""
+
+    def suffix(model: str, rows: list) -> list[str] | None:
+        if model != "denovo" or not rows:
+            return None
+        found = lookup_parent_reads(analysis, [_key(r) for r in rows])
+        out = []
+        for row in rows:
+            entry = found.get(_key(row), {})
+            bits = []
+            for side in ("father", "mother"):
+                reads = entry.get(side)
+                if reads is None or reads["alt"] is None or reads["ref"] is None:
+                    bits.append(f"{side} NA")
+                else:
+                    bits.append(f"{side} {reads['alt']}/{reads['ref'] + reads['alt']}")
+            out.append("  parents' alt reads: " + ", ".join(bits))
+        return out
+
+    return suffix
+
+
+# ───────────────────────────── document decorator ─────────────────────────────
+
+
+def _preset_document(doc: dict, render: Render) -> dict:
+    stats = _stats(render)
+    if "preset_block" in stats:
+        doc["preset"] = stats["preset_block"]
+    if "effective_block" in stats:
+        effective = json.loads(json.dumps(stats["effective_block"]))
+        if render.analysis.gnomad_max_af is not None:
+            effective["gnomad"]["candidates_without_record"] = len(
+                stats.get("gnomad_absent", ())
+            )
+        doc["effective"] = effective
+    return doc
+
+
+register_document_decorator(_preset_document)
