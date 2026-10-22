@@ -10,12 +10,26 @@ object) and, on request, into a refusal.
 A gate BINDS when its field is present on at least ENFORCEABLE_MIN of the rows
 it reads: GQ, DP and AD on the stored rows of the proband and both parents, the
 INFO/AF gate on the variants (and its probe not saying the AF is the cohort's
-own), gnomAD when any is loaded. `--require-bound-gates` makes a gate that
-cannot bind, and the absence of any population-frequency filter, an error;
-`--strict-missing` makes that error for the GQ / DP / AD gates alone, because
-it turns a missing field into a fail and a field missing everywhere would then
-fail everything. `--no-require-bound-gates` typed on the command line overrides
-both for one run.
+own), gnomAD when it is loaded and has records on the chromosomes that hold
+ENFORCEABLE_MIN of the cohort's variants (a slice on other chromosomes, or
+under another naming, judges nothing). `--require-bound-gates` makes a gate
+that cannot bind, and the absence of any population-frequency filter, an error;
+`--strict-missing` makes that error for the GQ / DP / AD gates (and the
+parent-allele screen) alone, because it turns a missing field into a fail and a
+field missing everywhere would then fail everything. `--no-require-bound-gates`
+typed on the command line overrides both for one run, and for that run
+strict_missing is not applied to the gates that cannot bind (`Gates.strict_exempt`):
+they are NULL-tolerant, as their warnings say, rather than failing every call.
+
+A strict_missing gate is judged only when it is asked for (min_gq > 0, min_dp
+> 0, an allele-balance band narrower than 0..1, the parent-allele screen on):
+an unasked-for field is not held against a call, so it cannot make a gate
+"unbound" either.
+
+What the report cannot know before the query is whether a gnomAD slice that
+covers the right chromosomes has a record for any candidate (a genome-build
+mismatch, a slice of one gene): `gnomad_record_warning` says it after the
+candidates are known.
 
 `collect_sample_stats` is the only query (one pass over the three samples'
 rows); `build_report` is pure so every threshold is a unit test. The numbers
@@ -26,7 +40,7 @@ from __future__ import annotations
 
 import json
 import math
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
 from cli.trio_analysis import AF_GATE_SKIPPED, Gates
@@ -41,8 +55,16 @@ THIN_COVERAGE_FACTOR = 1.5
 GNOMAD_FIELD = "popmax (grpmax else AF)"
 
 # which warning codes a refusal is made of
-_BOUND_CODES = ("gate_unbound", "gnomad_not_loaded", "no_population_frequency_filter")
-_FORMAT_KEYS = ("min_gq", "min_dp", "min_ab")  # the GQ / DP / AD gates
+_BOUND_CODES = (
+    "gate_unbound",
+    "gnomad_not_loaded",
+    "gnomad_no_coverage",
+    "no_population_frequency_filter",
+)
+# the gates strict_missing turns into "fail when the field is missing": the
+# GQ / DP / AD gates and the parent-allele screen
+STRICT_KEYS = ("min_gq", "min_dp", "min_ab", "parent_alt_screen")
+_NAMES_SHOWN = 4  # chromosome names listed in a message
 
 
 @dataclass(frozen=True)
@@ -134,6 +156,9 @@ class VariantStats:
 
     n: int
     with_af: int
+    # (chrom, variants on it), most variants first: where gnomAD must have
+    # records to judge anything
+    chroms: tuple[tuple[str, int], ...] = ()
 
     @property
     def af_fraction(self) -> float | None:
@@ -141,15 +166,20 @@ class VariantStats:
 
 
 def collect_variant_stats(sess, ingest_id: str) -> VariantStats:
+    """One pass over the cohort's variants: how many, how many carry INFO/AF,
+    and how many sit on each chromosome."""
     from storage import count_expr, sql_quote_str
 
     sql = (
-        f"SELECT {count_expr()}, "
+        f"SELECT chrom, {count_expr()}, "
         "sum(CASE WHEN info_AF IS NOT NULL THEN 1 ELSE 0 END) "
-        f"FROM variants WHERE ingest_id = {sql_quote_str(ingest_id)}"
+        f"FROM variants WHERE ingest_id = {sql_quote_str(ingest_id)} GROUP BY chrom"
     )
-    n, with_af = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"][0]
-    return VariantStats(int(n or 0), int(with_af or 0))
+    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    per = sorted(((c, int(n or 0)) for c, n, _ in data), key=lambda t: (-t[1], t[0]))
+    return VariantStats(
+        sum(n for _, n in per), sum(int(w or 0) for _, _, w in data), tuple(per)
+    )
 
 
 # ───────────────────────────────── the report ─────────────────────────────────
@@ -193,6 +223,7 @@ def build_report(
     gates: Gates,
     gnomad_max_af: float | None,
     gnomad_loaded: bool,
+    gnomad_chroms: Collection[str] | None = None,
     filter_present: bool = True,
     kind: str = "trio",
     categories: Sequence[str] = ("all",),
@@ -205,6 +236,8 @@ def build_report(
 ) -> EffectiveReport:
     """Whether each requested gate binds, and what to say about it.
 
+    `gnomad_chroms` are the chromosomes the loaded gnomAD data has records on
+    (None: not looked at, so any loaded gnomAD is taken to cover the cohort).
     `skipped` are the preset's skipped keys (from the echo); `preset_max_af` is
     the max_af a preset supplied, set only so a skip of it can be explained;
     `enforce_bound` / `enforce_format` choose which warnings are also errors
@@ -214,6 +247,21 @@ def build_report(
     bound: dict[str, bool] = {}
     all_roles = [s.role for s in stats]
     parents = [r for r in all_roles if r in ("father", "mother")]
+
+    def strict_note(key: str, label: str) -> str:
+        """What the gate does with a call that lacks the field, said when that
+        is not the NULL-tolerant default."""
+        if gates.strict_for(key):
+            return (
+                f"; strict_missing counts a call without {label} as a fail, so "
+                "this gate removes every candidate it cannot judge"
+            )
+        if gates.strict_missing:  # asked for, and switched off for this run
+            return (
+                f"; strict_missing is not applied to it for this run, so a call "
+                f"without {label} passes"
+            )
+        return ""
 
     def check_format(key: str, field_name: str, label: str, shown: str, roles):
         """One GQ / DP / AD gate: bound, partial or unbound."""
@@ -234,13 +282,13 @@ def build_report(
                     "gate_unbound",
                     key,
                     f"{shown} cannot be enforced: only {_pct(lowest)} of "
-                    f"{'/'.join(below)} rows carry {label}",
+                    f"{'/'.join(below)} rows carry {label}" + strict_note(key, label),
                 )
             )
         else:
             bound[key] = True
             if lowest < 1.0:
-                outcome = "fail" if gates.strict_missing else "pass"
+                outcome = "fail" if gates.strict_for(key) else "pass"
                 warnings.append(
                     warning(
                         "gate_partial",
@@ -250,13 +298,12 @@ def build_report(
                     )
                 )
 
-    ab_requested = gates.min_ab > 0 or gates.max_ab < 1
-    ab_roles = None if gates.strict_missing else ["proband"]
+    ab_roles = None if gates.strict_for("min_ab") else ["proband"]
     if gates.min_gq > 0:
         check_format("min_gq", "gq", "GQ", f"min_gq={gates.min_gq}", None)
     if gates.min_dp > 0:
         check_format("min_dp", "dp", "DP", f"min_dp={gates.min_dp}", None)
-    if ab_requested:
+    if gates.ab_requested:
         check_format(
             "min_ab",
             "ad",
@@ -276,12 +323,22 @@ def build_report(
                 if lowest is None
                 else f"only {_pct(lowest)} of {'/'.join(below)} rows carry AD"
             )
+            if gates.strict_for("parent_alt_screen"):
+                outcome = (
+                    "; strict_missing counts a parent 0/0 without allele depths "
+                    "as a fail, so no de novo candidate can pass"
+                )
+            else:
+                outcome = ", so every parent 0/0 would be trusted" + (
+                    "; strict_missing is not applied to it for this run"
+                    if gates.strict_missing
+                    else ""
+                )
             warnings.append(
                 warning(
                     "gate_unbound",
                     "parent_alt_screen",
-                    f"parent_alt_screen cannot be enforced: {why}, so every "
-                    "parent 0/0 would be trusted",
+                    f"parent_alt_screen cannot be enforced: {why}{outcome}",
                 )
             )
     if gates.pass_only:
@@ -308,8 +365,8 @@ def build_report(
             )
     elif gates.af_gate == AF_GATE_SKIPPED:
         bound["max_af"] = False
+    gnomad_bound = gnomad_loaded
     if gnomad_max_af is not None:
-        bound["gnomad_max_af"] = gnomad_loaded
         if not gnomad_loaded:
             warnings.append(
                 warning(
@@ -319,7 +376,21 @@ def build_report(
                     "gnomAD data is loaded (`vcfclick annotations load-gnomad`)",
                 )
             )
-    population = af_ok or (gnomad_max_af is not None and gnomad_loaded)
+        elif gnomad_chroms is not None:
+            share, cohort = _gnomad_coverage(variants, gnomad_chroms)
+            if share is not None and share < ENFORCEABLE_MIN:
+                gnomad_bound = False
+                warnings.append(
+                    warning(
+                        "gnomad_no_coverage",
+                        "gnomad_max_af",
+                        _no_coverage_message(
+                            gnomad_max_af, share, cohort, gnomad_chroms
+                        ),
+                    )
+                )
+        bound["gnomad_max_af"] = gnomad_bound
+    population = af_ok or (gnomad_max_af is not None and gnomad_bound)
     if not population:
         warnings.append(
             warning(
@@ -327,7 +398,7 @@ def build_report(
                 None,
                 "NO population frequency filter applied: "
                 + _why_no_population(
-                    gates, af_run, af_share, gnomad_max_af, gnomad_loaded
+                    gates, af_run, af_share, gnomad_max_af, gnomad_loaded, gnomad_bound
                 ),
             )
         )
@@ -378,13 +449,14 @@ def build_report(
         w
         for w in warnings
         if (enforce_bound and w["code"] in _BOUND_CODES)
-        or (enforce_format and w["code"] == "gate_unbound" and w["key"] in _FORMAT_KEYS)
+        or (enforce_format and w["code"] == "gate_unbound" and w["key"] in STRICT_KEYS)
     )
     document = _document(
         stats,
         variants,
         gates,
         gnomad_loaded,
+        gnomad_bound,
         filter_present,
         bound,
         population,
@@ -393,12 +465,90 @@ def build_report(
     return EffectiveReport(document, tuple(warnings), bound, errors)
 
 
+def unbound_strict_keys(report: EffectiveReport) -> tuple[str, ...]:
+    """The strict_missing gates whose field the data lacks: the keys a run that
+    was told to go ahead anyway exempts from strict_missing (`Gates.strict_exempt`)."""
+    return tuple(
+        dict.fromkeys(
+            w["key"]
+            for w in report.warnings
+            if w["code"] == "gate_unbound" and w["key"] in STRICT_KEYS
+        )
+    )
+
+
+def _gnomad_coverage(
+    variants: VariantStats, gnomad_chroms: Collection[str]
+) -> tuple[float | None, list[str]]:
+    """(the share of the cohort's variants on a chromosome gnomAD has records
+    on, the cohort's chromosomes most variants first); None for the share when
+    the cohort has no variants to judge it by."""
+    if not variants.n or not variants.chroms:
+        return None, []
+    covered = sum(n for chrom, n in variants.chroms if chrom in gnomad_chroms)
+    return covered / variants.n, [c for c, _ in variants.chroms]
+
+
+def _names(names: Sequence[str]) -> str:
+    shown = ", ".join(n[:20] for n in list(names)[:_NAMES_SHOWN])
+    return shown + (", ..." if len(names) > _NAMES_SHOWN else "")
+
+
+def _no_coverage_message(
+    gnomad_max_af: float,
+    share: float,
+    cohort_chroms: Sequence[str],
+    gnomad_chroms: Collection[str],
+) -> str:
+    head = f"gnomad_max_af={gnomad_max_af:g} cannot be enforced: "
+    if share == 0:
+        return (
+            head + "the loaded gnomAD data has no record on any chromosome this "
+            f"cohort has variants on (cohort: {_names(cohort_chroms)}; gnomAD: "
+            f"{_names(sorted(gnomad_chroms))}). Check the chromosome naming "
+            "(chr1 against 1) and the genome build"
+        )
+    return (
+        head + f"the loaded gnomAD data has records on chromosomes that hold only "
+        f"{_pct(share)} of this cohort's variants, so the rest are kept as rare "
+        "without being judged"
+    )
+
+
+def gnomad_record_warning(
+    *, checked: int, without_record: int, max_af: float, info_af_bound: bool
+) -> dict | None:
+    """After the gnomAD filter has run: None, or the warning that it found a
+    record for none of the `checked` candidates (a slice that does not reach
+    them, another build). The pre-run report cannot see this; a filter that
+    judged nothing must not read as "all rare"."""
+    if not checked or without_record < checked:
+        return None
+    one = checked == 1
+    tail = (
+        ""
+        if info_af_bound
+        else ", and INFO/AF is not applied either, so no population frequency "
+        "filter took effect"
+    )
+    return warning(
+        "gnomad_no_record",
+        "gnomad_max_af",
+        f"gnomad_max_af={max_af:g} judged none of the {checked} "
+        f"candidate{'' if one else 's'}: the loaded gnomAD data has no record for "
+        f"{'it' if one else 'any of them'}, so {'it is' if one else 'all are'} "
+        f"kept as rare{tail}. Check that its genome build and chromosome naming "
+        "match the cohort's",
+    )
+
+
 def _why_no_population(
     gates: Gates,
     af_run: bool,
     af_share: float | None,
     gnomad_max_af: float | None,
     gnomad_loaded: bool,
+    gnomad_bound: bool,
 ) -> str:
     if gates.af_gate == AF_GATE_SKIPPED:
         af = "INFO/AF is this cohort's own frequency, so the --max-af gate was skipped"
@@ -410,6 +560,8 @@ def _why_no_population(
         gn = "--gnomad-max-af is not set" + (
             "" if gnomad_loaded else " and no gnomAD data is loaded"
         )
+    elif gnomad_loaded and not gnomad_bound:
+        gn = "the loaded gnomAD data does not cover this cohort's variants"
     else:
         gn = "no gnomAD data is loaded"
     return f"{af}, and {gn}"
@@ -420,6 +572,7 @@ def _document(
     variants: VariantStats,
     gates: Gates,
     gnomad_loaded: bool,
+    gnomad_bound: bool,
     filter_present: bool,
     bound: dict[str, bool],
     population: bool,
@@ -447,9 +600,10 @@ def _document(
         "filter_column": {"present": filter_present},
         "gnomad": {
             "loaded": gnomad_loaded,
-            "bound": gnomad_loaded,
+            "bound": gnomad_bound,
             "field": GNOMAD_FIELD,
             "version": None,
+            "candidates_checked": None,
             "candidates_without_record": None,
         },
         "population_filter": population,
@@ -464,8 +618,9 @@ def _round(v: float | None) -> float | None:
 # ───────────────────────────────── refusal ─────────────────────────────────
 
 _POPULATION_REMEDY = (
-    "load gnomAD with `vcfclick annotations load-gnomad` and set "
-    "--gnomad-max-af, or use broad-first-pass"
+    "load gnomAD for this cohort's chromosomes and genome build with "
+    "`vcfclick annotations load-gnomad` and set --gnomad-max-af, or use "
+    "broad-first-pass"
 )
 _REMEDY = {
     "gate_unbound": (
@@ -473,6 +628,7 @@ _REMEDY = {
         "(for example broad-first-pass), or ingest a VCF that carries it"
     ),
     "gnomad_not_loaded": _POPULATION_REMEDY,
+    "gnomad_no_coverage": _POPULATION_REMEDY,
     "no_population_frequency_filter": _POPULATION_REMEDY,
 }
 
@@ -484,7 +640,8 @@ def refusal_message(errors: Sequence[dict], *, subject: str) -> str:
     remedies = list(dict.fromkeys(_REMEDY[e["code"]] for e in errors))
     lines += [f"Remedy: {r}." for r in remedies]
     lines.append(
-        "To run anyway, pass --no-require-bound-gates (the warnings stay in the "
-        "output)."
+        "To run anyway, pass --no-require-bound-gates: the warnings stay in the "
+        "output, and a call whose field is missing passes the gate instead of "
+        "failing it."
     )
     return "\n".join(lines)

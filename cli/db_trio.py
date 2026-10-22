@@ -223,7 +223,7 @@ def db_trio(options: TrioOptions) -> None:
         resolved, overridden = (
             resolve_filters(ctx, "trio", state) if state else (None, [])
         )
-        attach_gate_reports(
+        analyses = attach_gate_reports(
             analyses,
             ctx,
             options=options,

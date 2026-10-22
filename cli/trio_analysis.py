@@ -122,6 +122,22 @@ class Gates(NamedTuple):
     strict_missing: bool = False
     pass_only: bool = False
     parent_alt_screen: bool = False
+    # The gates strict_missing is NOT applied to in this run, by file key
+    # (min_gq, min_dp, min_ab, parent_alt_screen). Set only by a run told to go
+    # ahead anyway (`--no-require-bound-gates`) for a gate whose field the data
+    # lacks: strict there would fail every call, and the run would report "no
+    # candidates" for a reason that has nothing to do with the genome.
+    strict_exempt: tuple[str, ...] = ()
+
+    def strict_for(self, key: str) -> bool:
+        """Does strict_missing apply to the gate `key`?"""
+        return self.strict_missing and key not in self.strict_exempt
+
+    @property
+    def ab_requested(self) -> bool:
+        """Is the allele-balance band a gate at all? A band of 0..1 excludes
+        nothing."""
+        return self.min_ab > 0 or self.max_ab < 1
 
 
 def _sole_ingest_id(name: str) -> str | None:
@@ -139,18 +155,25 @@ def _sole_ingest_id(name: str) -> str | None:
     return ids[0] if len(ids) == 1 else None
 
 
-def _quality_gate(alias: str, min_gq: int, min_dp: int, *, strict: bool = False) -> str:
+def _quality_gate(
+    alias: str,
+    min_gq: int,
+    min_dp: int,
+    *,
+    strict_gq: bool = False,
+    strict_dp: bool = False,
+) -> str:
     """GQ and DP gate. Tolerant by default: a call with no GQ (or DP) passes.
-    `strict` (strict_missing) counts a NULL as a fail."""
-    if strict:
-        return (
-            f"({alias}.gq IS NOT NULL AND {alias}.gq >= {min_gq}) "
-            f"AND ({alias}.dp IS NOT NULL AND {alias}.dp >= {min_dp})"
-        )
-    return (
-        f"({alias}.gq IS NULL OR {alias}.gq >= {min_gq}) "
-        f"AND ({alias}.dp IS NULL OR {alias}.dp >= {min_dp})"
-    )
+    `strict_gq` / `strict_dp` (strict_missing) count a NULL as a fail, but only
+    for a gate that is asked for (a minimum above 0): a field nobody asked
+    about is not held against the call."""
+
+    def one(column: str, minimum: int, strict: bool) -> str:
+        if strict and minimum > 0:
+            return f"({alias}.{column} IS NOT NULL AND {alias}.{column} >= {minimum})"
+        return f"({alias}.{column} IS NULL OR {alias}.{column} >= {minimum})"
+
+    return f"{one('gq', min_gq, strict_gq)} AND {one('dp', min_dp, strict_dp)}"
 
 
 def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
@@ -165,9 +188,9 @@ def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
 
 
 def _het_ad_present(alias: str) -> str:
-    """strict_missing: a het call must carry allele depths. Only the proband
-    is held to the allele-balance band; this asks that no het call, the
-    proband's or a parent's, has its depths missing."""
+    """strict_missing with an allele-balance band: a het call must carry allele
+    depths. Only the proband is held to the band; this asks that no het call,
+    the proband's or a parent's, has its depths missing."""
     return (
         f"({alias}.gt != 1 OR "
         f"({alias}.ad_ref IS NOT NULL AND {alias}.ad_alt IS NOT NULL))"
@@ -235,30 +258,42 @@ def _where_parts(
     unused today; the scope predicate of a later step needs it.)"""
     from storage.sql import af_gate_sql
 
-    strict = gates.strict_missing
+    def quality(alias: str) -> str:
+        return _quality_gate(
+            alias,
+            gates.min_gq,
+            gates.min_dp,
+            strict_gq=gates.strict_for("min_gq"),
+            strict_dp=gates.strict_for("min_dp"),
+        )
+
     allele_balance = _het_ab_gate("g", gates.min_ab, gates.max_ab)
-    if strict:
+    if gates.ab_requested and gates.strict_for("min_ab"):
         allele_balance += " AND " + " AND ".join(
             _het_ad_present(alias) for alias in ("g", "f", "m")
         )
     parts = [
         ("model", model),
-        ("quality_proband", _quality_gate("g", gates.min_gq, gates.min_dp, strict=strict)),
-        ("quality_father", _quality_gate("f", gates.min_gq, gates.min_dp, strict=strict)),
-        ("quality_mother", _quality_gate("m", gates.min_gq, gates.min_dp, strict=strict)),
+        ("quality_proband", quality("g")),
+        ("quality_father", quality("f")),
+        ("quality_mother", quality("m")),
         ("allele_balance", allele_balance),
-    ]  # fmt: skip
+    ]
     if gates.af_gate != AF_GATE_SKIPPED:
         parts.append(("population_af", af_gate_sql("v.info_AF", gates.max_af)))
     if gates.pass_only:
         parts.append(("pass_only", PASS_ONLY_SQL))
     if parent_alt_screen:
-        parts.append(
-            (
-                "parent_alt_screen",
-                f"{parent_ref_ok('f', gates)} AND {parent_ref_ok('m', gates)}",
+        screen = f"{parent_ref_ok('f', gates)} AND {parent_ref_ok('m', gates)}"
+        if gates.strict_for("parent_alt_screen"):
+            # the screen reads the parents' allele depths: a 0/0 without them
+            # cannot be screened, and strict_missing counts that as a fail
+            present = " AND ".join(
+                f"({alias}.ad_ref IS NOT NULL AND {alias}.ad_alt IS NOT NULL)"
+                for alias in ("f", "m")
             )
-        )
+            screen = f"{present} AND {screen}"
+        parts.append(("parent_alt_screen", screen))
     return parts
 
 
@@ -420,12 +455,16 @@ def _gnomad_filter(rows: list, max_af: float, stats: dict | None = None) -> list
     AF 0. One batched lookup for all rows, not one per row: with the AF
     gate skipped on a family VCF, a trio has thousands of candidates.
 
-    `stats`, when given, collects the variants kept for want of a record in
-    `stats["gnomad_absent"]` (a set of (chrom, pos, ref, alt)), so a report
-    can say how many candidates the filter could not judge."""
+    `stats`, when given, collects every variant the filter looked at in
+    `stats["gnomad_seen"]` and those it kept for want of a record in
+    `stats["gnomad_absent"]` (sets of (chrom, pos, ref, alt)), so a report can
+    say how many candidates the filter could not judge, out of how many."""
     from annotations import gnomad_af_many
 
+    seen = None if stats is None else stats.setdefault("gnomad_seen", set())
     absent = None if stats is None else stats.setdefault("gnomad_absent", set())
+    if seen is not None:
+        seen.update((r[0], int(r[1]), r[2], r[3]) for r in rows)
     found = gnomad_af_many((row[0], row[1], row[2], row[3]) for row in rows)
     if not found:
         # nothing loaded, or none of the candidates in it

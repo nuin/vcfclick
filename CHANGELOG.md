@@ -74,7 +74,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `VCFCLICK_PRESET_PATH` reads as `NAME`.
 - The effective-gate report. A run with a preset says, per gate, whether the
   field it reads is in this data: GQ, DP and AD on the proband's and parents'
-  rows, `INFO/AF`, gnomAD. A gate binds at 90% of its rows. Gates that cannot
+  rows, `INFO/AF`, gnomAD (loaded, and with records on the chromosomes of 90% of
+  the cohort's variants; after the run, a warning when it found a record for none
+  of the candidates). A gate binds at 90% of its rows. Gates that cannot
   bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
   so is `NO population frequency filter applied` (the cohort-derived-AF case
   with no gnomAD loaded), a median proband depth under 1.5 x `min_dp`, and a
@@ -86,7 +88,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `--require-bound-gates` (an error, not a warning, when a gate cannot bind or no
   population-frequency filter is in effect). `strict-denovo` turns the strict
   ones on, so it refuses to run, with the remedy, on data it cannot be strict
-  about; `--no-require-bound-gates` overrides that for one run. With a preset or
+  about; `--no-require-bound-gates` overrides that for one run, and for that run
+  `--strict-missing` is not applied to the gates that cannot bind (a call
+  without GQ passes `min_gq`, as the warning says, instead of failing every
+  call). `--strict-missing` is held against a gate only when the gate is asked
+  for (`--min-gq 0` asks nothing of GQ). With a preset or
   `--parent-alt-screen`, de novo candidates show the parents' read counts
   (`parent_alt_reads`).
 - `db trio --category` takes a comma list (`recessive,comphet`). `all` and a
@@ -94,9 +100,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   an unknown name; a list prints one summary line per model.
 - `db trio --format json`: a run with a preset ends with `preset` and
   `effective` objects (`effective` alone with `--strict-missing` or
-  `--require-bound-gates`), and `gates` reports `strict_missing`, `pass_only`,
-  `parent_alt_screen` and `max_parent_alt_frac` when they are on. Additive only: a run without them is
-  byte-identical, which the goldens pin (they gain one preset run).
+  `--require-bound-gates`), and `gates` reports `strict_missing` (and
+  `strict_exempt`), `pass_only`, `parent_alt_screen` and `max_parent_alt_frac`
+  when they are on. Additive only: a run without them is byte-identical, which
+  the goldens pin (they gain one preset run).
 - `cli/filter_registry.py` declares every filter once (file key, Click
   parameter, flag, type, range, default, owner, commands); the options of
   `db trio` are generated from it, and `tests/test_filter_registry_drift.py`

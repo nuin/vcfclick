@@ -35,6 +35,7 @@ BACKENDS = ("chdb", "duckdb")
 TRUTH = json.loads((FIXTURES / "presets_truth.json").read_text())
 POS: dict[str, int] = TRUTH["positions"]
 NAME_AT = {v: k for k, v in POS.items()}
+DE_NOVO = {name for name in POS if name.startswith("dn_")}
 KEPT = TRUTH["kept"]
 ENGINE_NOISE = re.compile(r"^Default dirty pages decay period: \d+ms\n", re.M)
 
@@ -58,7 +59,14 @@ def world(backend, tmp_path_factory):
     base = tmp_path_factory.mktemp(f"presets-{backend}")
     home = base / "home"
     home.mkdir()
-    ann = {"loaded": base / "loaded.duckdb", "empty": base / "empty.duckdb"}
+    ann = {
+        "loaded": base / "loaded.duckdb",
+        "empty": base / "empty.duckdb",
+        # one gnomAD record that reaches no candidate: on a chromosome the
+        # cohort does not have, and on its chromosome at a position it does not
+        "wrong": base / "wrong.duckdb",
+        "far": base / "far.duckdb",
+    }
     with mock.patch.dict(os.environ, {"VCFCLICK_ANNOTATIONS_DB": str(ann["loaded"])}):
         conn = get_connection()  # in-process DuckDB, never a chDB session
         sym, chrom, start, end = (
@@ -76,6 +84,13 @@ def world(backend, tmp_path_factory):
         conn.close()
     with mock.patch.dict(os.environ, {"VCFCLICK_ANNOTATIONS_DB": str(ann["empty"])}):
         get_connection().close()
+    for key, chrom in (("wrong", "chr9"), ("far", "chr1")):
+        with mock.patch.dict(os.environ, {"VCFCLICK_ANNOTATIONS_DB": str(ann[key])}):
+            conn = get_connection()
+            conn.execute(
+                "INSERT INTO gnomad_af VALUES (?, 5, 'A', 'G', 0.0001, 0.0002)", [chrom]
+            )
+            conn.close()
 
     ped = FIXTURES / "presets.ped"
     cohort = write_vcf(
@@ -291,6 +306,8 @@ def test_text_has_the_preset_and_gates_lines_after_the_trio_line(world):
     assert "chr1:7100 A>G" in out
     assert "parents' alt reads: father 1/40, mother 0/40" in out
     assert "chr1:6000" not in out  # AF 0.0009 is over the typed 0.0005
+    # the gnomAD slice holds two of the candidates: the rest it cannot judge
+    assert lines[-1] == "  gnomAD: no record for 6 of 8 candidates (kept as rare)"
 
 
 def test_parent_allele_depths_are_shown_on_de_novo_rows(preset_runs):
@@ -339,7 +356,11 @@ def test_a_warn_only_preset_runs_on_data_without_gq_dp_ad_and_says_so(world):
     assert len(warnings) == 3  # on stdout, not only stderr
     for field in ("GQ", "DP", "AD"):
         assert any(f"carry {field}" in x for x in warnings), field
-    counts = {x.split()[0]: x.split()[1] for x in r.stdout.splitlines()[-4:]}
+    counts = {
+        x.split()[0]: x.split()[1]
+        for x in r.stdout.splitlines()
+        if x.split()[:1] in (["denovo"], ["recessive"], ["dominant"], ["comphet"])
+    }
     assert counts["denovo"] == "17"  # tolerant gates: it ran, and removed nothing
 
 
@@ -350,6 +371,8 @@ def test_a_strict_preset_refuses_to_run_when_a_gate_cannot_bind(world):
                  "min_dp=20", "parent_alt_screen", "Remedy:", "broad-first-pass",
                  "--no-require-bound-gates"):  # fmt: skip
         assert text in r.stderr, text
+    # ... and says what the gate does with a call that lacks the field
+    assert "strict_missing counts a call without GQ as a fail" in r.stderr
     # strict_missing alone insists on the GQ / DP / AD gates, with no preset
     alone = trio(world, "n", "--strict-missing", ok=False)
     assert "this run needs every gate to bind" in alone.stderr
@@ -365,15 +388,47 @@ def test_no_require_bound_gates_overrides_the_refusal_for_one_run(world):
     assert {"key": "require_bound", "preset": True, "flag": False} in doc["preset"][
         "overridden"
     ]
-    assert (
-        doc["models"]["denovo"]["count"] == 0
-    )  # a missing GQ is a fail: nothing passes
+    # "run anyway" is not "fail every call": the gates that cannot bind are
+    # exempt from strict_missing, so the other gates decide, as they would on
+    # data that carries the fields
+    assert names(doc, "denovo") == DE_NOVO - {
+        "dn_nonpass",  # pass_only still binds
+        "dn_af0011",  # so does max_af
+        "dn_gnomad_common",  # and gnomAD
+    }
+    assert doc["gates"]["strict_missing"] is True
+    assert doc["gates"]["strict_exempt"] == [
+        "min_gq", "min_dp", "min_ab", "parent_alt_screen"
+    ]  # fmt: skip
     eff = doc["effective"]
     assert [eff[k]["bound"] for k in ("gq", "dp", "ad")] == [False, False, False]
     assert (
         eff["info_af"]["bound"] is True
     )  # INFO/AF is there; the format fields are not
     assert {w["code"] for w in eff["warnings"]} == {"gate_unbound"}
+    for w in eff["warnings"]:  # and each says the gate lets the call through
+        assert "strict_missing is not applied to it for this run" in w["message"]
+    text = trio(world, "n", "--preset", "strict-denovo", "--no-require-bound-gates")
+    assert "a call without GQ passes" in text.stdout
+    assert "denovo candidates: 14" in text.stdout
+
+
+def test_strict_missing_is_only_held_against_the_gates_that_are_asked_for(world):
+    """The store has no GQ, DP or AD at all. Asking for none of them, strict_missing
+    must change nothing, and must not claim a gate it cannot judge."""
+    none = ["--min-gq", "0", "--min-dp", "0", "--min-ab", "0", "--max-ab", "1"]
+    plain = jtrio(world, "n", "--category", "denovo", *none)
+    strict = jtrio(world, "n", "--category", "denovo", "--strict-missing", *none)
+    assert names(strict, "denovo") == names(plain, "denovo") == DE_NOVO
+    assert strict["effective"]["warnings"] == []
+    assert "strict_exempt" not in strict["gates"]
+    # the way out the refusal gives (flags that do not need the fields) works
+    via_flags = jtrio(
+        world, "n", "--preset", "strict-denovo", *none, "--no-parent-alt-screen",
+        "--preset-ignore", "gnomad_max_af",
+    )  # fmt: skip
+    assert names(via_flags, "denovo") == DE_NOVO - {"dn_nonpass", "dn_af0011"}
+    assert via_flags["effective"]["warnings"] == []
 
 
 def test_depth_missing_on_a_few_rows_binds_and_is_reported_as_partial(preset_runs):
@@ -400,6 +455,38 @@ def test_gnomad_asked_for_and_not_loaded(world):
     r = trio(world, "p", "--preset", "strict-denovo", ann="empty", ok=False)
     assert "gnomad_max_af=0.0001 cannot be enforced" in r.stderr
     assert "annotations load-gnomad" in r.stderr
+
+
+def test_a_gnomad_slice_on_other_chromosomes_is_not_a_gate_that_binds(world):
+    r = trio(world, "c", "--preset", "strict-denovo", ann="wrong", ok=False)
+    assert "no record on any chromosome this cohort has variants on" in r.stderr
+    assert "(cohort: chr1; gnomAD: chr9)" in r.stderr
+    assert "Remedy: load gnomAD for this cohort's chromosomes" in r.stderr
+    doc = jtrio(world, "c", "--preset", "broad-first-pass", ann="wrong")  # warns
+    eff = doc["effective"]
+    assert (eff["gnomad"]["loaded"], eff["gnomad"]["bound"]) == (True, False)
+    assert "gnomad_no_coverage" in [w["code"] for w in eff["warnings"]]
+    assert eff["population_filter"] is False
+
+
+def test_a_gnomad_slice_that_reaches_no_candidate_is_said_after_the_run(world):
+    """The chromosome matches, so the gate binds; the slice still judges nothing.
+    No report made before the query can see that, so the run says it."""
+    doc = jtrio(world, "c", "--preset", "strict-denovo", ann="far")
+    eff = doc["effective"]
+    assert eff["gnomad"]["bound"] is True
+    assert eff["gnomad"]["candidates_checked"] == 15
+    assert eff["gnomad"]["candidates_without_record"] == 15
+    (late,) = [w for w in eff["warnings"] if w["code"] == "gnomad_no_record"]
+    assert "judged none of the 15 candidates" in late["message"]
+    assert eff["population_filter"] is False  # INFO/AF is the cohort's own
+    out = trio(world, "c", "--preset", "strict-denovo", ann="far").stdout
+    last = out.splitlines()[-1]
+    assert last.startswith("  WARNING: gnomad_max_af=0.0001 judged none of the 15")
+    # a slice that does reach some candidates is not that warning
+    ok = jtrio(world, "p", "--preset", "strict-denovo")
+    assert "gnomad_no_record" not in [w["code"] for w in ok["effective"]["warnings"]]
+    assert ok["effective"]["gnomad"]["candidates_checked"] == 8 + 1  # the common one
 
 
 def test_preset_ignore_switches_one_key_off_for_one_run(world):

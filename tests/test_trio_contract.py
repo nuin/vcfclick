@@ -29,8 +29,11 @@ BACKENDS = ("chdb", "duckdb")
 TOP_LEVEL = ["trio", "keep_reference", "gates", "annotations", "models"]
 GATE_KEYS = ["min_gq", "min_dp", "max_af", "min_ab", "max_ab", "gnomad_max_af"]
 # reported after af_gate, in this order, and only for a gate that is on
+# (strict_exempt: the strict_missing gates a `--no-require-bound-gates` run did
+# not apply it to, only with strict_missing)
 OPT_IN_GATE_KEYS = [
     "strict_missing",
+    "strict_exempt",
     "pass_only",
     "parent_alt_screen",
     "max_parent_alt_frac",
@@ -100,8 +103,11 @@ def assert_preset_objects(doc: dict) -> None:
         assert e["info_af"]["state"] in AF_GATE_VALUES
         assert isinstance(e["filter_column"]["present"], bool)
         assert list(e["gnomad"]) == [
-            "loaded", "bound", "field", "version", "candidates_without_record"
+            "loaded", "bound", "field", "version", "candidates_checked",
+            "candidates_without_record",
         ]  # fmt: skip
+        for k in ("candidates_checked", "candidates_without_record"):
+            assert e["gnomad"][k] is None or _is_int(e["gnomad"][k]), k
         assert isinstance(e["population_filter"], bool)
         for w in e["warnings"]:
             assert list(w) == ["code", "level", "key", "message"]
@@ -136,8 +142,18 @@ def assert_trio_document(doc: dict) -> None:
     assert gates["af_gate"] in AF_GATE_VALUES
     opt_in = list(gates)[len(GATE_KEYS) + 1 :]
     assert opt_in == [k for k in OPT_IN_GATE_KEYS if k in gates], opt_in
-    assert all(gates[k] is True for k in opt_in if k != "max_parent_alt_frac")
+    assert all(
+        gates[k] is True
+        for k in opt_in
+        if k not in ("max_parent_alt_frac", "strict_exempt")
+    )
     assert ("max_parent_alt_frac" in gates) == ("parent_alt_screen" in gates)
+    if "strict_exempt" in gates:
+        assert "strict_missing" in gates
+        exempt = gates["strict_exempt"]
+        assert exempt and all(
+            k in ("min_gq", "min_dp", "min_ab", "parent_alt_screen") for k in exempt
+        )
     # annotations stays {string: bool}: an app decodes it as a dictionary
     # of booleans and throws on any other value.
     assert doc["annotations"], "annotations is never empty"
@@ -201,7 +217,8 @@ _EFFECTIVE = {
     "filter_column": {"present": True},
     "gnomad": {
         "loaded": False, "bound": False, "field": "popmax (grpmax else AF)",
-        "version": None, "candidates_without_record": None,
+        "version": None, "candidates_checked": None,
+        "candidates_without_record": None,
     },
     "population_filter": True,
     "warnings": [
@@ -258,6 +275,7 @@ def test_contract_checker_rejects_what_would_blank_an_app():
     broken(lambda d: d["trio"]["siblings"][0].pop("kind"))
     broken(lambda d: d["gates"].update(pass_only=False))  # reported only when on
     broken(lambda d: d["gates"].update(max_parent_alt_frac=0.05))  # alone: no screen
+    broken(lambda d: d["gates"].update(strict_exempt=["min_gq"]))  # alone: no strict
     broken(lambda d: d.update(effective={}))
     broken(lambda d: d.update(preset={}))
     broken(lambda d: d.update(surprise=1, effective=_EFFECTIVE))
@@ -266,6 +284,16 @@ def test_contract_checker_rejects_what_would_blank_an_app():
     assert_trio_document(with_effective)
     assert_trio_document(
         {**with_effective, "gates": {**good["gates"], "strict_missing": True}}
+    )
+    assert_trio_document(
+        {
+            **with_effective,
+            "gates": {
+                **good["gates"],
+                "strict_missing": True,
+                "strict_exempt": ["min_gq", "parent_alt_screen"],
+            },
+        }
     )
 
     def broken_effective(mutate):

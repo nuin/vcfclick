@@ -7,12 +7,19 @@ cannot bind, and leaves the answers in each analysis' `stats` for the output
 hooks of `cli.trio_gate_output` (the `preset` and `effective` JSON objects, the
 text header). A plain run never gets here, so its output and its queries are
 unchanged.
+
+A run told to go ahead anyway (`--no-require-bound-gates`) does not fail every
+call on a field the data lacks: for each strict_missing gate that cannot bind,
+the analysis is re-made with that gate exempt from strict_missing
+(`Gates.strict_exempt`), and the report says so. Without that, "run anyway"
+would mean "no candidates", whatever the genome holds.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
+from functools import partial
 
 import click
 
@@ -22,10 +29,12 @@ from cli.effective_gates import (
     collect_sample_stats,
     collect_variant_stats,
     refusal_message,
+    unbound_strict_keys,
 )
 from cli.preset_echo import header_lines, preset_block, skipped_items
 from cli.preset_options import PresetState, is_explicit
 from cli.trio_analysis import TrioAnalysis
+from cli.trio_gate_output import gnomad_footer
 from cli.trio_output import MODELS, _annotation_status, selected_categories
 
 # info-level codes the user does not need to see twice
@@ -36,6 +45,24 @@ def needs_report(state: PresetState | None, require_bound: bool, strict: bool) -
     return state is not None or require_bound or strict
 
 
+def _gnomad_chromosomes() -> frozenset[str] | None:
+    """The chromosomes the loaded gnomAD data has records on; None when the
+    store cannot be read (the coverage is then not judged)."""
+    try:
+        from annotations.db import get_connection
+
+        conn = get_connection()
+    except Exception:  # noqa: BLE001 - no annotation store at all
+        return None
+    try:
+        rows = conn.execute("SELECT DISTINCT chrom FROM gnomad_af").fetchall()
+    except Exception:  # noqa: BLE001 - table absent in an older store
+        return None
+    finally:
+        conn.close()
+    return frozenset(r[0] for r in rows)
+
+
 def attach_gate_reports(
     analyses: Sequence[TrioAnalysis],
     ctx: click.Context,
@@ -44,13 +71,18 @@ def attach_gate_reports(
     state: PresetState | None,
     resolved: dict[str, fr.Resolved] | None,
     overridden: list[dict],
-) -> None:
+) -> list[TrioAnalysis]:
     """Fill `analysis.stats` for every trio, or raise a ClickException naming
-    the gates that cannot bind when the run insists on it."""
+    the gates that cannot bind when the run insists on it. Returns the analyses
+    to run: the ones given, except that a trio whose strict_missing gates could
+    not bind under `--no-require-bound-gates` comes back with those gates
+    exempt."""
     first = analyses[0]
     sess, ingest_id = first.session, first.trio.ingest_id
     variants = collect_variant_stats(sess, ingest_id)
     gnomad_loaded = bool(_annotation_status()["gnomad"])
+    wants_gnomad = first.gnomad_max_af is not None
+    gnomad_chroms = _gnomad_chromosomes() if wants_gnomad and gnomad_loaded else None
     from storage import table_columns
 
     filter_present = "filter" in set(table_columns("variants"))
@@ -83,21 +115,20 @@ def attach_gate_reports(
         for c in collect_sample_stats(sess, ingest_id, [(s, "") for s in unique])
     }
 
-    printed: set[str] = set()
-    refusals: list[str] = []
-    for analysis in analyses:
+    def make_report(analysis: TrioAnalysis, gates):
         trio = analysis.trio
         roles = (
             (trio.proband, "proband"),
             (trio.father, "father"),
             (trio.mother, "mother"),
         )
-        report = build_report(
+        return build_report(
             stats=[replace(counted[s], role=role) for s, role in roles if s],
             variants=variants,
-            gates=analysis.gates,
+            gates=gates,
             gnomad_max_af=analysis.gnomad_max_af,
             gnomad_loaded=gnomad_loaded,
+            gnomad_chroms=gnomad_chroms,
             filter_present=filter_present,
             kind=trio.kind,
             categories=selected_categories(options.category),
@@ -108,6 +139,22 @@ def attach_gate_reports(
             enforce_bound=enforce_bound,
             enforce_format=enforce_format,
         )
+
+    printed: set[str] = set()
+    refusals: list[str] = []
+    ready: list[TrioAnalysis] = []
+    for analysis in analyses:
+        trio = analysis.trio
+        report = make_report(analysis, analysis.gates)
+        if overridden_off and analysis.gates.strict_missing:
+            exempt = unbound_strict_keys(report)
+            if exempt:
+                gates = analysis.gates._replace(strict_exempt=exempt)
+                analysis = replace(analysis, gates=gates)
+                report = make_report(analysis, gates)
+        ready.append(analysis)
+        if wants_gnomad:
+            analysis.stats["text_footer"] = partial(gnomad_footer, analysis)
         if report.errors:
             who = f" (proband {trio.proband})" if len(analyses) > 1 else ""
             refusals.append(refusal_message(report.errors, subject=subject + who))
@@ -147,3 +194,4 @@ def attach_gate_reports(
         raise click.ClickException("\n\n".join(refusals))
     for note in state.notes if state else ():
         click.echo(f"note: {note}", err=True)
+    return ready

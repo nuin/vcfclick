@@ -7,16 +7,22 @@ with synthetic counts. The DB-backed behaviour is in tests/test_presets_db.py.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
+from cli import trio_gate_output as tgo
 from cli.effective_gates import (
     ENFORCEABLE_MIN,
+    STRICT_KEYS,
     THIN_COVERAGE_FACTOR,
     SampleGateStats,
     VariantStats,
     build_report,
+    gnomad_record_warning,
     median_from_histogram,
     refusal_message,
+    unbound_strict_keys,
 )
 from cli.trio_analysis import Gates
 from cli.warning_codes import CODES, warning
@@ -178,8 +184,165 @@ def test_gnomad_asked_for_and_not_loaded():
     assert rep.bound["gnomad_max_af"] is False
     assert rep.document["gnomad"] == {
         "loaded": False, "bound": False, "field": "popmax (grpmax else AF)",
-        "version": None, "candidates_without_record": None,
+        "version": None, "candidates_checked": None,
+        "candidates_without_record": None,
     }  # fmt: skip
+
+
+def cohort(**per_chrom):
+    """VariantStats for a cohort with this many variants on each chromosome."""
+    chroms = tuple(sorted(per_chrom.items(), key=lambda t: (-t[1], t[0])))
+    n = sum(per_chrom.values())
+    return VariantStats(n, n, chroms)
+
+
+def gnomad_report(variants, chroms, **kw):
+    return report(
+        variants=variants,
+        gates=GATES._replace(af_gate="skipped_cohort_derived"),
+        gnomad_max_af=0.001,
+        gnomad_loaded=True,
+        gnomad_chroms=chroms,
+        **kw,
+    )
+
+
+def test_gnomad_binds_where_it_has_records_for_ninety_percent_of_the_cohort():
+    v = cohort(chr1=90, chr2=10)
+    both = gnomad_report(v, {"chr1", "chr2"})
+    at = gnomad_report(v, {"chr1"})  # 90%: inclusive
+    for rep in (both, at):
+        assert rep.bound["gnomad_max_af"] is True and rep.warnings == ()
+        assert rep.document["gnomad"]["bound"] is True
+    # not looked at (None): any loaded gnomAD is taken to cover the cohort
+    assert gnomad_report(v, None).bound["gnomad_max_af"] is True
+    # no variants to judge by: not a reason to refuse
+    assert gnomad_report(VariantStats(0, 0), {"chr9"}).bound["gnomad_max_af"] is True
+
+
+def test_a_gnomad_with_no_record_on_the_cohorts_chromosomes_binds_nothing():
+    rep = gnomad_report(cohort(chr1=90, chr2=10), {"9"}, enforce_bound=True)
+    (w,) = by_code(rep, "gnomad_no_coverage")
+    assert w["level"] == "warning" and w["key"] == "gnomad_max_af"
+    assert "no record on any chromosome this cohort has variants on" in w["message"]
+    assert "(cohort: chr1, chr2; gnomAD: 9)" in w["message"]
+    assert "chr1 against 1" in w["message"]
+    assert rep.bound["gnomad_max_af"] is False
+    assert rep.document["gnomad"]["loaded"] is True
+    assert rep.document["gnomad"]["bound"] is False
+    # so it is no population filter either, and the reason says gnomAD does not reach
+    assert rep.document["population_filter"] is False
+    (none,) = by_code(rep, "no_population_frequency_filter")
+    assert "does not cover this cohort's variants" in none["message"]
+    assert {e["code"] for e in rep.errors} == {
+        "gnomad_no_coverage",
+        "no_population_frequency_filter",
+    }
+    text = refusal_message(rep.errors, subject="preset 'strict-denovo'")
+    assert text.count("Remedy:") == 1  # one remedy for both, said once
+    assert "this cohort's chromosomes and genome build" in text
+    assert gnomad_report(cohort(chr1=90, chr2=10), {"9"}).errors == ()  # warn only
+
+
+def test_a_gnomad_on_few_of_the_cohorts_chromosomes_says_how_few():
+    rep = gnomad_report(cohort(chr1=90, chr2=10), {"chr2"})
+    (w,) = by_code(rep, "gnomad_no_coverage")
+    assert "chromosomes that hold only 10% of this cohort's variants" in w["message"]
+    assert rep.bound["gnomad_max_af"] is False
+    many = gnomad_report(cohort(**{f"chr{i}": 100 - i for i in range(1, 9)}), {"x"})
+    assert (
+        "chr1, chr2, chr3, chr4, ..."
+        in by_code(many, "gnomad_no_coverage")[0]["message"]
+    )
+
+
+def test_gnomad_not_asked_for_is_not_judged_for_coverage():
+    rep = report(variants=cohort(chr1=10), gnomad_loaded=True, gnomad_chroms={"9"})
+    assert not by_code(rep, "gnomad_no_coverage") and "gnomad_max_af" not in rep.bound
+
+
+# ───────────────────── after the run: a filter that judged nothing ─────────────────────
+
+
+def test_a_gnomad_filter_that_found_no_record_for_any_candidate_is_a_warning():
+    w = gnomad_record_warning(
+        checked=15, without_record=15, max_af=0.0001, info_af_bound=False
+    )
+    assert (w["code"], w["level"], w["key"]) == (
+        "gnomad_no_record", "warning", "gnomad_max_af",
+    )  # fmt: skip
+    assert "judged none of the 15 candidates" in w["message"]
+    assert "all are kept as rare" in w["message"]
+    assert "INFO/AF is not applied either" in w["message"]
+    assert "genome build and chromosome naming" in w["message"]
+    covered = gnomad_record_warning(
+        checked=15, without_record=15, max_af=0.0001, info_af_bound=True
+    )
+    assert "INFO/AF" not in covered["message"]
+    one = gnomad_record_warning(
+        checked=1, without_record=1, max_af=0.0001, info_af_bound=True
+    )
+    assert (
+        "none of the 1 candidate:" in one["message"] and "it is kept" in one["message"]
+    )
+    for checked, without in ((15, 14), (15, 0), (0, 0)):
+        assert (
+            gnomad_record_warning(
+                checked=checked, without_record=without, max_af=0.1, info_af_bound=False
+            )
+            is None
+        )
+
+
+def stub_analysis(seen, absent, *, loaded=True, af_bound=False, max_af=0.001):
+    """What the gnomAD hooks read from a finished run."""
+    effective = report(
+        gates=GATES._replace(af_gate="skipped_cohort_derived"),
+        gnomad_max_af=max_af,
+        gnomad_loaded=loaded,
+    ).document
+    effective["gnomad"]["loaded"] = loaded
+    effective["info_af"]["bound"] = af_bound
+    stats = {
+        "effective_block": effective,
+        "gnomad_seen": set(range(seen)),
+        "gnomad_absent": set(range(absent)),
+    }
+    return SimpleNamespace(gnomad_max_af=max_af, stats=stats)
+
+
+def test_the_text_footer_says_what_the_gnomad_filter_could_not_judge():
+    (all_lost,) = tgo.gnomad_footer(stub_analysis(15, 15))
+    assert all_lost.startswith("  WARNING: gnomad_max_af=0.001 judged none of the 15")
+    assert tgo.gnomad_footer(stub_analysis(15, 3)) == [
+        "  gnomAD: no record for 3 of 15 candidates (kept as rare)"
+    ]
+    assert tgo.gnomad_footer(stub_analysis(15, 0)) == []
+    assert tgo.gnomad_footer(stub_analysis(0, 0)) == []
+    # not loaded: its own warning says so, the footer does not repeat it
+    assert tgo.gnomad_footer(stub_analysis(15, 15, loaded=False)) == []
+    assert tgo.gnomad_footer(stub_analysis(15, 15, max_af=None)) == []
+    bare = SimpleNamespace(gnomad_max_af=0.001, stats={})
+    assert tgo.gnomad_footer(bare) == []
+
+
+def test_the_json_effective_object_carries_the_counts_and_the_late_warning():
+    analysis = stub_analysis(15, 15)
+    doc = tgo._preset_document({}, SimpleNamespace(analysis=analysis))["effective"]
+    assert doc["gnomad"]["candidates_checked"] == 15
+    assert doc["gnomad"]["candidates_without_record"] == 15
+    assert [w["code"] for w in doc["warnings"]][-1] == "gnomad_no_record"
+    assert doc["population_filter"] is False
+    # the stored block is not changed by a render
+    assert analysis.stats["effective_block"]["gnomad"]["candidates_checked"] is None
+    partial = stub_analysis(15, 2)
+    doc = tgo._preset_document({}, SimpleNamespace(analysis=partial))["effective"]
+    assert doc["gnomad"]["candidates_without_record"] == 2
+    assert "gnomad_no_record" not in [w["code"] for w in doc["warnings"]]
+    # no --gnomad-max-af: the placeholders stay None
+    off = stub_analysis(0, 0, max_af=None)
+    doc = tgo._preset_document({}, SimpleNamespace(analysis=off))["effective"]
+    assert doc["gnomad"]["candidates_checked"] is None
 
 
 # ───────────────────────────── the other warnings ─────────────────────────────
@@ -263,6 +426,75 @@ def test_strict_missing_alone_refuses_only_for_the_gq_dp_ad_gates():
     rep = report(broken(), gates, enforce_format=True)
     assert {e["key"] for e in rep.errors} == {"min_gq", "min_dp", "min_ab"}
     assert "no_population_frequency_filter" not in {e["code"] for e in rep.errors}
+    # ... and the parent-allele screen, which reads the same field
+    screen = report(
+        broken(), gates._replace(parent_alt_screen=True), enforce_format=True
+    )
+    assert {e["key"] for e in screen.errors} == set(STRICT_KEYS)
+
+
+def test_strict_missing_is_judged_only_for_the_gates_that_are_asked_for():
+    """A field nobody asked about is not held against a call, so it cannot make
+    a gate unbound (and the run refuse) either."""
+    nothing = GATES._replace(
+        min_gq=0, min_dp=0, min_ab=0.0, max_ab=1.0, strict_missing=True
+    )
+    rep = report(broken(), nothing, enforce_format=True)
+    assert rep.errors == () and not by_code(rep, "gate_unbound")
+    assert unbound_strict_keys(rep) == ()
+    only_gq = report(broken(), nothing._replace(min_gq=20), enforce_format=True)
+    assert [e["key"] for e in only_gq.errors] == ["min_gq"]
+
+
+def test_an_unbound_gate_says_what_strict_missing_does_to_it():
+    strict = GATES._replace(strict_missing=True)
+    rep = report(broken(), strict)
+    for key, label in (("min_gq", "GQ"), ("min_dp", "DP"), ("min_ab", "AD")):
+        (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == key]
+        assert f"strict_missing counts a call without {label} as a fail" in w["message"]
+        assert "removes every candidate it cannot judge" in w["message"]
+        assert "passes" not in w["message"]
+    # without strict_missing, the message is the tolerant one it always was
+    plain = report(broken())
+    assert not any("strict_missing" in w["message"] for w in plain.warnings)
+    # exempted for a run that goes ahead anyway: said the other way round
+    gone = strict._replace(strict_exempt=("min_gq", "min_dp", "min_ab"))
+    rep = report(broken(), gone)
+    for key, label in (("min_gq", "GQ"), ("min_dp", "DP"), ("min_ab", "AD")):
+        (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == key]
+        assert "strict_missing is not applied to it for this run" in w["message"]
+        assert f"a call without {label} passes" in w["message"]
+    assert (
+        "counts as a pass"
+        in by_code(
+            report(trio(father=sample("father", rows=1000, dp=980)), gone),
+            "gate_partial",
+        )[0]["message"]
+    )
+
+
+def test_the_parent_alt_screen_says_what_strict_missing_does_to_it():
+    gates = GATES._replace(parent_alt_screen=True, strict_missing=True)
+    stats = trio(father=sample("father", ad=0))
+    (w,) = [w for w in by_code(report(stats, gates), "gate_unbound")
+            if w["key"] == "parent_alt_screen"]  # fmt: skip
+    assert "no de novo candidate can pass" in w["message"]
+    gone = gates._replace(strict_exempt=("parent_alt_screen",))
+    (w,) = [w for w in by_code(report(stats, gone), "gate_unbound")
+            if w["key"] == "parent_alt_screen"]  # fmt: skip
+    assert "every parent 0/0 would be trusted" in w["message"]
+    assert "strict_missing is not applied to it for this run" in w["message"]
+
+
+def test_the_strict_gates_a_go_ahead_run_exempts_are_the_unbound_ones():
+    gates = GATES._replace(strict_missing=True, parent_alt_screen=True)
+    assert unbound_strict_keys(report(broken(), gates)) == STRICT_KEYS
+    # a gate whose field is there is not exempted
+    mixed = trio(
+        proband=sample("proband", gq=0), father=sample("father", gq=0),
+        mother=sample("mother", gq=0),
+    )  # fmt: skip
+    assert unbound_strict_keys(report(mixed, gates)) == ("min_gq",)
 
 
 def test_the_refusal_names_each_problem_once_and_says_how_to_run_anyway():
@@ -281,7 +513,7 @@ def test_warning_codes_are_a_closed_list():
     assert set(CODES) >= {
         "gate_unbound", "gate_partial", "thin_coverage", "gnomad_not_loaded",
         "no_population_frequency_filter", "skipped_widening", "duo_denovo",
-        "preset_max_af_not_applied",
+        "preset_max_af_not_applied", "gnomad_no_coverage", "gnomad_no_record",
     }  # fmt: skip
     assert warning("gate_unbound", "min_gq", "m") == {
         "code": "gate_unbound", "level": "warning", "key": "min_gq", "message": "m",

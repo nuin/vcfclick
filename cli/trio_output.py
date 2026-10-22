@@ -593,6 +593,8 @@ def _gates_json(analysis: TrioAnalysis) -> dict:
     # additive: a gate is reported only when it is on
     if gates.strict_missing:
         out["strict_missing"] = True
+        if gates.strict_exempt:
+            out["strict_exempt"] = list(gates.strict_exempt)
     if gates.pass_only:
         out["pass_only"] = True
     if gates.parent_alt_screen:
@@ -657,6 +659,10 @@ def trio_text(analysis: TrioAnalysis, category: str | Sequence[str]) -> None:
 
     if len(wanted) == 1 and wanted[0] != "all":
         MODELS[wanted[0]].detail(analysis)  # one model: the listing
-        return
-    for spec in _applicable(analysis, wanted):  # `all` or a list: a line each
-        click.echo(spec.summary(analysis))
+    else:
+        for spec in _applicable(analysis, wanted):  # `all` or a list: a line each
+            click.echo(spec.summary(analysis))
+    # what only the finished run knows (cli/trio_gate_output.py)
+    footer = analysis.stats.get("text_footer")
+    for line in footer() if footer else ():
+        click.echo(line)

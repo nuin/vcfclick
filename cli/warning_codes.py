@@ -29,6 +29,11 @@ CODES: dict[str, str] = {
     "no_population_frequency_filter": WARNING,
     # --gnomad-max-af was asked for and no gnomAD data is loaded
     "gnomad_not_loaded": WARNING,
+    # gnomAD is loaded but has records on chromosomes that hold too little of
+    # the cohort's variants (another naming, a slice elsewhere): it judges nothing
+    "gnomad_no_coverage": WARNING,
+    # after the run: the gnomAD filter found a record for none of the candidates
+    "gnomad_no_record": WARNING,
     # a preset key this command does not take was skipped, and skipping it
     # makes the search wider
     "skipped_widening": WARNING,

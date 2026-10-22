@@ -112,7 +112,7 @@ Defaults follow common rare-disease practice and are all tunable:
 | `--min-ab` / `--max-ab` | 0.25 / 0.75 | het allele balance `ad_alt/(ad_ref+ad_alt)`, expected ≈0.5 |
 | `--max-af` | 0.01 | keep variants with the VCF's own `info_AF` at or below this (a site exactly at the threshold is kept; see [below](#cohort-derived-infoaf)) |
 | `--gnomad-max-af` | off | additionally drop candidates whose **gnomAD popmax** AF exceeds this; needs `vcfclick annotations load-gnomad`. Variants absent from the loaded gnomAD slice are kept as rare. |
-| `--strict-missing` | off | a missing GQ, DP or (for a het call) AD on the proband or a parent counts as a **fail**, not a pass |
+| `--strict-missing` | off | a missing GQ, DP or (for a het call) AD on the proband or a parent counts as a **fail**, not a pass, for each gate that is asked for (`--min-gq` / `--min-dp` above 0, an allele-balance band narrower than 0..1, the parent-allele screen); a field nobody asked about is not held against a call |
 | `--pass-only` | off | keep only variants whose VCF `FILTER` is `PASS` or unset |
 | `--parent-alt-screen` / `--max-parent-alt-frac` | off / 0.05 | de novo only: a parent's stored 0/0 is trusted only while its alt reads stay under the fraction (two or more alt reads and a higher fraction exclude the site); shows the parents' read counts |
 | `--require-bound-gates` | off | an error, instead of a warning, when a requested gate cannot bind in this data (see [Presets](PRESETS.md#does-the-gate-actually-bind)) |
@@ -482,10 +482,11 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
 - `gates.af_gate` is the outcome of the `--max-af` gate: `applied`,
   `cohort_derived_suspected`, `skipped_cohort_derived` or `unavailable` (see
   [Cohort-derived `INFO/AF`](#cohort-derived-infoaf)).
-- `gates` also reports `strict_missing`, `pass_only`, `parent_alt_screen` and
-  `max_parent_alt_frac` (after `af_gate`), but only for a gate that is on; the
-  seven original keys carry the values that took effect after a preset and the
-  flags were merged.
+- `gates` also reports `strict_missing` (then `strict_exempt`, the gates
+  `--no-require-bound-gates` did not apply it to, only when there are any),
+  `pass_only`, `parent_alt_screen` and `max_parent_alt_frac` (after `af_gate`),
+  but only for a gate that is on; the seven original keys carry the values that
+  took effect after a preset and the flags were merged.
 - With a preset (`--preset`) the document ends with a `preset` object (what ran:
   name, source, revision, fingerprint, the filters requested and the value each
   filter took with where it came from, what a flag overrode, what was skipped)

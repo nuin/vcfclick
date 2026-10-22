@@ -115,6 +115,8 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gate_partial` | the gate binds but not on every row (a note on stderr, `info`) |
 | `thin_coverage` | the proband's median DP is under 1.5 x `min_dp` |
 | `gnomad_not_loaded` | `--gnomad-max-af` was asked for and no gnomAD data is loaded |
+| `gnomad_no_coverage` | gnomAD is loaded but has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere): it judges nothing |
+| `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates (a slice that does not reach them, another genome build); all are kept as rare |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
 | `skipped_widening` | a preset key was skipped and skipping widens the search |
 | `duo_denovo` | one parent: the de novo answer is `possible_denovo`, weaker evidence |
@@ -130,22 +132,43 @@ DP. Two opt-in gates turn the warnings into refusals:
 - `--require-bound-gates` (`require_bound`): an error, with the remedy, when a
   requested gate cannot bind or when no population-frequency filter is in effect.
 - `--strict-missing` (`strict_missing`): a missing GQ, DP or (for a het call) AD
-  on the proband or a parent **counts as a fail**, not a pass. A GQ, DP or AD
-  gate that cannot bind is then an error too (a field missing everywhere would
-  fail everything).
+  on the proband or a parent **counts as a fail**, not a pass, for each of those
+  gates that is asked for: `min_gq` or `min_dp` above 0, an allele-balance band
+  narrower than 0..1, the parent-allele screen on (a parent 0/0 without allele
+  depths cannot be screened). A field nobody asked about is not held against a
+  call, so `--strict-missing --min-gq 0 --min-dp 0 --min-ab 0 --max-ab 1` is the
+  same run as without it. A requested gate that cannot bind is then an error too
+  (a field missing everywhere would fail everything).
 
 `strict-denovo` turns both on, so on a family VCF with no gnomAD loaded it
 **refuses to run** and says why. `--no-require-bound-gates` overrides both
-refusals for one run; the warnings stay in the output:
+refusals for one run; the warnings stay in the output. For that run,
+`strict_missing` is **not applied to the gates that cannot bind**: a call
+without GQ passes the `min_gq` gate rather than failing it, so the run reports
+what the other gates leave and not "no candidates" for a reason that has nothing
+to do with the genome. The warnings say so ("strict_missing is not applied to it
+for this run"), and `gates.strict_exempt` lists the gates in the JSON:
 
 ```
 $ vcfclick db trio fam1 --proband C1 --preset strict-denovo
 Error: preset 'strict-denovo' needs every gate to bind, and these cannot in this data:
   - gnomad_max_af=0.0001 cannot be enforced: no gnomAD data is loaded (...)
   - NO population frequency filter applied: INFO/AF is this cohort's own frequency, ...
-Remedy: load gnomAD with `vcfclick annotations load-gnomad` and set --gnomad-max-af, or use broad-first-pass.
-To run anyway, pass --no-require-bound-gates (the warnings stay in the output).
+Remedy: load gnomAD for this cohort's chromosomes and genome build with `vcfclick annotations load-gnomad` and set --gnomad-max-af, or use broad-first-pass.
+To run anyway, pass --no-require-bound-gates: the warnings stay in the output, and a call whose field is missing passes the gate instead of failing it.
 ```
+
+gnomAD **binds** when it is loaded and has records on the chromosomes that hold
+at least 90% of the cohort's variants. A slice on other chromosomes, or under
+another naming (`1` against `chr1`), applies no frequency filter at all, and
+`strict-denovo` refuses it as it refuses an unloaded one. Whether a slice that
+covers the right chromosomes has a record for any candidate (a build mismatch, a
+slice of one gene) cannot be known before the query: the run says so afterwards,
+with a `WARNING:` line at the end of the text (and `gnomad_no_record` plus
+`gnomad.candidates_checked` / `candidates_without_record` in `effective`), and
+the candidates the filter kept for want of a record are counted
+(`gnomAD: no record for 6 of 8 candidates (kept as rare)`). This one is a
+warning, not a refusal, because the run is already done.
 
 ### The other new gates
 
@@ -248,6 +271,11 @@ vcfclick preset export a b --bundle -o lab-presets.json      # several in one fi
 vcfclick preset import id-panel.vcfclick-preset.json [--as NAME] [--force]
 ```
 
+`export -o DIR` writes `DIR/NAME.vcfclick-preset.json`; in a preset directory
+that file is the preset `NAME` (a preset cannot itself be named `...vcfclick-preset`,
+and if `NAME.json` sits beside it, `NAME.json` is the one used and the other is
+listed with a `duplicate_name` warning).
+
 Export leaves out patient-specific keys unless `--with-patient-data`. Import is
 all or nothing: every file is parsed and validated, every name checked (a
 built-in name and an existing name are refused without `--as` / `--force`)
@@ -275,11 +303,6 @@ With a preset, `db trio --format json` adds two top-level objects after
 `models`; with none, the document is byte-identical to what it was.
 
 - `preset`: `name`, `source` (`builtin`, `user`, `shared`, `file`), `revision`,
-`export -o DIR` writes `DIR/NAME.vcfclick-preset.json`; in a preset directory
-that file is the preset `NAME` (a preset cannot itself be named `...vcfclick-preset`,
-and if `NAME.json` sits beside it, `NAME.json` is the one used and the other is
-listed with a `duplicate_name` warning).
-
   `status` (`starting_point` for built-ins), `schema_version`, `fingerprint`,
   `pinned`, `meta`, `path` (a file name only), `requested` (the preset's
   filters), `resolved` (per filter: `value`, `from` = `preset` / `flag` /
@@ -288,11 +311,13 @@ listed with a `duplicate_name` warning).
   `does_not_cover`, `notes`.
 - `effective`: `rows`, `gq`, `dp`, `ad` (the share of rows carrying each, per
   sample, and `bound`), `median_dp`, `info_af` (`state` is `gates.af_gate`),
-  `filter_column`, `gnomad` (`loaded`, `bound`, `candidates_without_record`),
-  `population_filter` and `warnings` (`{code, level, key, message}`).
+  `filter_column`, `gnomad` (`loaded`, `bound`, `candidates_checked`,
+  `candidates_without_record`), `population_filter` and `warnings` (`{code,
+  level, key, message}`).
 
-`gates` also reports `strict_missing`, `pass_only`, `parent_alt_screen` and
-`max_parent_alt_frac`, but only when they are on. See
+`gates` also reports `strict_missing` (and, after it, `strict_exempt`: the gates
+a `--no-require-bound-gates` run did not apply it to), `pass_only`,
+`parent_alt_screen` and `max_parent_alt_frac`, but only when they are on. See
 [TRIO.md](TRIO.md#machine-readable-output).
 
 ## Not in this release
