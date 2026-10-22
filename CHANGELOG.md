@@ -64,9 +64,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   export | import | validate | path`. `save` takes the filter flags `db trio`
   takes, `--from-preset`, `--from-result` (rebuilds a preset from a saved
   `db trio --format json` result, and says when a built-in it used has changed
-  revision) and `--from-json`. Names are lowercase and never look like a path;
-  writes are atomic; a locked preset (`meta.locked`) needs `--force`; import
-  and export are all-or-nothing and strip patient-specific keys on export.
+  revision) and `--from-json`. Names are lowercase and never look like a path
+  (and no command takes a path where a name goes: `preset rm ../x` is refused
+  before the file system is touched); writes are atomic; a locked preset
+  (`meta.locked`) needs `--force`; import and export are all-or-nothing and strip
+  patient-specific keys on export. A preset carries no sample, family, path or
+  database identity in any key of the file, no number that is not finite, and
+  `export -o DIR` writes `DIR/NAME.vcfclick-preset.json`, which a directory on
+  `VCFCLICK_PRESET_PATH` reads as `NAME`.
 - The effective-gate report. A run with a preset says, per gate, whether the
   field it reads is in this data: GQ, DP and AD on the proband's and parents'
   rows, `INFO/AF`, gnomAD. A gate binds at 90% of its rows. Gates that cannot

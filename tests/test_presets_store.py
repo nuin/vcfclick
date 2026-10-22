@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 
 import pytest
 from click.testing import CliRunner
 
+from cli import preset_exchange as exchange
 from cli import preset_schema as ps
 from cli import presets as store
 from cli.main import cli
@@ -194,6 +196,154 @@ def test_locked_blocks_changes_without_force(run, vcfclick_home):
     run("set", "p", "min_gq=22", "--force")
     assert saved(vcfclick_home, "p")["filters"]["min_gq"] == 22
     assert saved(vcfclick_home, "p")["meta"]["locked"] is True
+
+
+# ───────────────────── a name is a name, never a path ─────────────────────
+
+
+def test_a_name_that_is_a_path_never_reaches_the_file_system(
+    run, vcfclick_home, tmp_path
+):
+    """`preset set ../../victim/ok`, `rm /abs/path/ok` and the rest must leave
+    every file outside the presets directory exactly as it was."""
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    run("save", "mine", "--min-gq", "25")
+    shutil.copy(vcfclick_home / "presets" / "mine.json", victim / "ok.json")
+    (victim / "doc.json").write_text("not a preset\n")
+    before = {p.name: p.read_bytes() for p in victim.iterdir()}
+    out = tmp_path / "out"
+    out.mkdir()
+    for target in (f"../../{victim.name}/ok", str(victim / "ok"), "../../victim/doc"):
+        for verb in (
+            ["set", target, "max_af=0.1"],
+            ["unset", target, "max_af"],
+            ["rename", target, "moved"],
+            ["rm", target, "--yes"],
+            ["export", target, "-o", str(out)],
+            ["save", "copy", "--from-preset", target],
+        ):
+            assert run(*verb, ok=False).exit_code != 0, verb
+    assert {p.name: p.read_bytes() for p in victim.iterdir()} == before
+    assert files(vcfclick_home) == ["mine.json"] and list(out.iterdir()) == []
+    assert "not a preset name" in run("rm", "../x", "--yes", ok=False).output
+    # the store functions refuse too, whoever calls them
+    for name in ("../x", "/abs/x", "a/b", ""):
+        assert store.find_preset(name) == (None, [])
+        with pytest.raises(ps.PresetError, match="not a preset name"):
+            store.user_path(name)
+        with pytest.raises(ps.PresetError, match="not a preset name"):
+            store.get_user_preset(name)
+
+
+# ─────────────────────── a file the checks cannot digest ───────────────────────
+
+
+def test_a_file_with_a_400_digit_number_is_listed_not_a_crash(run, vcfclick_home):
+    d = vcfclick_home / "presets"
+    d.mkdir(parents=True)
+    body = (
+        '{"schema": "vcfclick.preset", "schema_version": 1, '
+        '"filters": {"max_af": 1%s}}' % ("0" * 400)
+    )
+    (d / "big.json").write_text(body)
+    rows = json.loads(run("list", "--format", "json").stdout)["presets"]
+    big = next(p for p in rows if p["name"] == "big")
+    assert big["available"] is False and big["problems"][0]["code"] == "bad_value"
+    assert store.read_preset_file(d / "big.json", store.USER).has_errors
+    r = run("validate", str(d / "big.json"), ok=False)
+    assert isinstance(r.exception, SystemExit)  # a clean exit 1, no traceback
+    assert "finite number" in r.output
+    run("show", "big", ok=True)  # listed, shown, never applied
+    assert "cannot be used" in str(
+        pytest.raises(ps.PresetError, store.load_named, "big").value
+    )
+
+
+# ─────────────────── a file that leaves and comes back unchanged ───────────────────
+
+
+def test_import_refuses_a_number_that_is_not_finite_before_writing(
+    run, vcfclick_home, tmp_path
+):
+    f = tmp_path / "inf.json"
+    f.write_text(
+        '{"schema": "vcfclick.preset", "schema_version": 1, "name": "inf", '
+        '"filters": {"x_k": 1e999}}'
+    )
+    r = run("import", str(f), ok=False)
+    assert "out of range" in r.output and files(vcfclick_home) == []
+    assert "out of range" in run("validate", str(f), ok=False).output
+
+
+def test_a_preset_carries_no_identity_through_save_import_or_export(
+    run, vcfclick_home, tmp_path
+):
+    base = {
+        "schema": ps.SCHEMA, "schema_version": 1, "name": "idp",
+        "filters": {"min_gq": 20},
+    }  # fmt: skip
+    f = tmp_path / "idp.json"
+    for extra in (
+        {"proband": "NA12878"},
+        {"db": "/home/me/cohort"},
+        {"family": "F1"},
+        {"meta": {"family": "F1"}},
+    ):
+        f.write_text(json.dumps({**base, **extra}))
+        key = next(iter(extra if "meta" not in extra else extra["meta"]))
+        if "meta" in extra:  # `save` writes its own meta and never copies one
+            run("save", "idp", "--from-json", str(f))
+            assert "family" not in saved(vcfclick_home, "idp")["meta"]
+            run("rm", "idp", "--yes")
+        else:
+            assert key in run("save", "idp", "--from-json", str(f), ok=False).output
+        assert key in run("import", str(f), ok=False).output
+        assert key in run("validate", str(f), ok=False).output
+    assert files(vcfclick_home) == []
+    # a key that names no identity is still carried (forward compatibility)
+    f.write_text(json.dumps({**base, "lab_note": 1}))
+    run("save", "idp", "--from-json", str(f))
+    assert saved(vcfclick_home, "idp")["lab_note"] == 1
+    # whatever a Preset object holds, an export does not carry an identity key
+    tainted = store.Preset(
+        "idp", store.USER, {**saved(vcfclick_home, "idp"), "proband": "NA12878"}
+    )
+    exported = exchange.export_document(tainted)
+    assert "proband" not in exported and exported["lab_note"] == 1
+
+
+def test_an_exported_file_in_a_shared_directory_is_found_by_its_name_and_pin(
+    run, vcfclick_home, tmp_path, monkeypatch
+):
+    """The lab git-folder workflow: `export -o DIR`, DIR on VCFCLICK_PRESET_PATH,
+    `--preset NAME@FINGERPRINT`."""
+    run("save", "sd2", "--from-preset", "strict-denovo")
+    fingerprint = ps.fingerprint(saved(vcfclick_home, "sd2"))
+    lab = tmp_path / "lab"
+    lab.mkdir()
+    run("export", "sd2", "-o", str(lab))
+    assert [p.name for p in lab.iterdir()] == ["sd2.vcfclick-preset.json"]
+    (vcfclick_home / "presets" / "sd2.json").unlink()
+    monkeypatch.setenv("VCFCLICK_PRESET_PATH", str(lab))
+
+    found = store.load_named(f"sd2@{fingerprint}")
+    assert (found.preset.name, found.preset.source) == ("sd2", "shared")
+    assert found.pinned and found.preset.problems == ()
+    (row,) = store.list_presets("shared")
+    assert row.name == "sd2" and row.problems == ()
+    assert "sd2" in run("list", "--source", "shared").output
+
+    # NAME.json next to it is the same name; the plain file is the one used
+    shutil.copy(lab / "sd2.vcfclick-preset.json", lab / "sd2.json")
+    assert store.find_preset("sd2")[0].path.name == "sd2.json"
+    rows = store.list_presets("shared")
+    assert [p.name for p in rows] == ["sd2", "sd2"]
+    assert "duplicate_name" in [x.code for x in rows[1].problems]
+    assert rows[0].problems == ()
+    # a preset cannot be named so that its own export file reads back as another
+    assert ps.name_problem("sd2.vcfclick-preset")
+    assert "vcfclick-preset" in run("save", "x.vcfclick-preset", ok=False).output
 
 
 def test_edit_revalidates_and_does_not_save_an_invalid_file(

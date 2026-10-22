@@ -52,6 +52,7 @@ def test_good_names(name):
         "com1",
         "lpt9",
         "con.txt",
+        "sd2.vcfclick-preset",  # `NAME.vcfclick-preset.json` is NAME, exported
         None,
         7,
     ],
@@ -87,15 +88,38 @@ def test_parse_has_a_size_cap():
         ps.parse_json(b" " * (ps.MAX_BYTES + 1))
 
 
-def test_1e999_parses_to_infinity_and_validation_refuses_it():
-    doc = ps.parse_json(
+def test_1e999_is_refused_at_parse_and_an_infinity_built_in_code_by_validation():
+    text = (
         '{"schema": "vcfclick.preset", "schema_version": 1, '
-        '"filters": {"max_af": 1e999}}'
+        '"filters": {"max_af": 1e999, "x_k": 1e999}}'
     )
-    assert "bad_value" in codes(doc)
+    with pytest.raises(ps.PresetError, match="out of range"):
+        ps.parse_json(text)
+    # a document that did not come from parse_json is held to the same rule,
+    # under a filter key and under an extension key alike
+    for key in ("max_af", "x_k"):
+        assert "bad_value" in codes(envelope({key: float("inf")}))
+    assert "bad_value" in codes(envelope(lab={"deep": [1, float("nan")]}))
+    with pytest.raises(ps.PresetError, match="not finite"):
+        ps.to_text({"x": float("inf")})
 
 
 # ───────────────────────────────── validation ─────────────────────────────────
+
+
+def test_a_number_too_big_for_a_float_is_a_value_error_not_a_crash():
+    big = 10**400
+    assert codes(envelope({"max_af": big})) == ["bad_value"]
+    assert codes(envelope({"min_gq": big})) == ["bad_value"]
+    assert codes(envelope({"x_k": big})) == []  # an extension value is kept as is
+
+    # and validate_document never raises, whatever it is handed
+    class Odd(dict):
+        def get(self, *a):
+            raise RuntimeError("boom")
+
+    checked = ps.validate_document(Odd(schema=ps.SCHEMA))
+    assert [p.code for p in checked.problems] == ["not_a_preset"] and checked.doc == {}
 
 
 def test_a_minimal_preset_is_valid_and_normalised():
@@ -181,6 +205,37 @@ def test_extension_keys_are_kept_and_ignored():
     assert ps.fingerprint(checked.doc) == ps.fingerprint(
         ps.validate_document(envelope({"min_gq": 20})).doc
     )
+
+
+@pytest.mark.parametrize(
+    "extra,key",
+    [
+        ({"proband": "NA12878"}, "proband"),
+        ({"family": "F1"}, "family"),
+        ({"db": "/home/me/cohort"}, "db"),
+        ({"path": "/home/me"}, "path"),
+        ({"sample_id": "S1"}, "sample_id"),
+        ({"format": "json"}, "format"),  # a key a preset may never carry
+        ({"meta": {"family": "F1"}}, "meta.family"),
+        ({"meta": {"proband": "P"}}, "meta.proband"),
+        ({"meta": {"db": "x"}}, "meta.db"),
+    ],
+)
+def test_a_preset_carries_no_identity_at_the_top_level_or_in_meta(extra, key):
+    checked = ps.validate_document(envelope(**extra))
+    (problem,) = checked.errors
+    assert problem.code == "never_presettable" and problem.key == key
+    assert key.split(".")[-1] in problem.message
+    assert not any(k in checked.doc for k in extra if k != "meta")
+    assert "meta" not in extra or key.split(".")[-1] not in checked.doc.get("meta", {})
+
+
+def test_the_envelopes_own_keys_and_other_unknown_ones_are_not_identity():
+    doc = envelope(name="id-panel", title="t", lab_note=1, meta={"locked": True})
+    assert ps.validate_document(doc).problems == ()
+    assert ps.identity_problem("name") is None
+    assert ps.identity_problem("name", envelope=False)  # in meta it is NEVER_PRESET
+    assert ps.identity_problem("lab_note") is None
 
 
 def test_unknown_envelope_keys_survive_a_load_and_a_save():

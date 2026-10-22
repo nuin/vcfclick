@@ -425,11 +425,14 @@ def check_value(key: FilterKey, value: Any) -> tuple[Any, str | None]:
     if key.type == "int":
         if isinstance(value, bool) or not isinstance(value, int):
             return None, "must be an integer"
-        number: float = value
+        number: float = value  # compared as it is: an int of any size is exact
     elif key.type == "float":
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return None, "must be a number"
-        number = float(value)
+        try:
+            number = float(value)  # an int of 400 digits does not fit a float
+        except OverflowError:
+            return None, "must be a finite number"
         if not math.isfinite(number):
             return None, "must be a finite number"
         value = number

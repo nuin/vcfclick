@@ -265,6 +265,18 @@ def test_the_path_form_reads_a_file_and_bypasses_the_lookup(tmp_path, put):
     )
 
 
+def test_an_empty_preset_value_is_a_preset_option_with_no_name_not_no_preset(
+    vcfclick_home,
+):
+    """`--preset "$P"` with P unset must fail, not run with no preset."""
+    for args in (["--preset", ""], ["--preset=", "--min-gq", "5"]):
+        assert scan_preset_args(args).any
+        r = invoke(*args, ok=False)
+        assert "'' is not a preset name" in r.output
+    assert scan_preset_args(["--preset-fingerprint", ""]).any
+    assert not scan_preset_args(["--min-gq", "5"]).any
+
+
 def test_preset_companions_without_a_preset_are_a_usage_error():
     for opt in (("--preset-ignore", "min_gq"), ("--preset-skip-unavailable",)):
         r = invoke(*opt, ok=False)

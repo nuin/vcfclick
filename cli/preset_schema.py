@@ -1,7 +1,8 @@
 """What a preset file is: its envelope, validation, versioning, fingerprint.
 
 A preset is a small JSON document of filter values, with no sample, family,
-path or database identity:
+path or database identity (a key of that kind anywhere in the envelope, at the
+top level or in `meta`, is an error, not a thing to preserve):
 
     {"schema": "vcfclick.preset", "schema_version": 1, "name": "id-panel",
      "title": "...", "description": "...", "applies_to": ["trio"],
@@ -41,6 +42,9 @@ SCHEMA_VERSION = 1  # the newest envelope this vcfclick reads
 MAX_BYTES = 2 * 1024 * 1024
 ASSAYS = ("genome", "exome", "panel")
 EXTENSION_PREFIX = "x_"  # a free namespace: kept in the file, never applied
+# `NAME.vcfclick-preset.json` is what `preset export -o DIR` writes: the name of
+# the preset in such a file is NAME, so a name may not end in the stem itself.
+EXPORT_STEM = ".vcfclick-preset"
 
 NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,62}$")
 _WINDOWS_DEVICES = frozenset(
@@ -63,6 +67,25 @@ _ENVELOPE_ORDER = (
     "assay",
     "filters",
     "meta",
+)
+# Envelope or meta keys that would carry who or where: never kept, whatever the
+# file says (NEVER_PRESET's keys are refused too, bar the envelope's own `name`).
+IDENTITY_KEYS = frozenset(
+    {
+        "db",
+        "database",
+        "path",
+        "sample",
+        "samples",
+        "sample_id",
+        "proband_id",
+        "family_id",
+        "patient",
+        "patient_id",
+        "mrn",
+        "vcf",
+        "ped",
+    }
 )
 _META_STRINGS = (
     "created_with",
@@ -109,8 +132,30 @@ def name_problem(name: object) -> str | None:
         )
     if name.endswith(".json"):
         return "a preset name may not end in .json (it would be read as a file)"
+    if name.endswith(EXPORT_STEM):
+        return (
+            f"a preset name may not end in {EXPORT_STEM} (that is the suffix of an "
+            "exported file, whose name is what comes before it)"
+        )
     if name.split(".")[0] in _WINDOWS_DEVICES:
         return "a preset name may not be a Windows device name"
+    return None
+
+
+def identity_problem(key: str, *, envelope: bool = True) -> str | None:
+    """Why a top-level (`envelope`) or `meta` key may not be in a preset file,
+    or None: it names a sample, family, path or database (a preset carries
+    none), or is one of the keys a preset may never carry. The envelope's own
+    keys (`name`, `filters`, ...) are not in question."""
+    if envelope and key in _ENVELOPE_ORDER:
+        return None
+    if key in fr.NEVER_PRESET:
+        return f"can never be part of a preset: {fr.NEVER_PRESET[key]}"
+    if key in IDENTITY_KEYS:
+        return (
+            "can never be part of a preset: it would carry a sample, family, "
+            "path or database identity"
+        )
     return None
 
 
@@ -119,6 +164,14 @@ def name_problem(name: object) -> str | None:
 
 def _reject_constant(token: str) -> Any:
     raise ValueError(f"{token} is not allowed in a preset")
+
+
+def _reject_nonfinite(text: str) -> float:
+    """`1e999` parses to infinity, which `parse_constant` never sees."""
+    value = float(text)
+    if not math.isfinite(value):
+        raise ValueError("a number is out of range")
+    return value
 
 
 def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict:
@@ -131,9 +184,9 @@ def _no_duplicates(pairs: list[tuple[str, Any]]) -> dict:
 
 
 def parse_json(data: bytes | str) -> Any:
-    """Parse preset JSON: no NaN or Infinity, no duplicate keys, at most
-    MAX_BYTES. Raises PresetError (the message names the position, not the
-    content)."""
+    """Parse preset JSON: no NaN or Infinity (or a number too large for a
+    float, which `1e999` is), no duplicate keys, at most MAX_BYTES. Raises
+    PresetError (the message names the position, not the content)."""
     raw = data.encode() if isinstance(data, str) else data
     if len(raw) > MAX_BYTES:
         raise PresetError(f"file is larger than {MAX_BYTES // (1024 * 1024)} MiB")
@@ -141,6 +194,7 @@ def parse_json(data: bytes | str) -> Any:
         return json.loads(
             raw.decode("utf-8"),
             parse_constant=_reject_constant,
+            parse_float=_reject_nonfinite,
             object_pairs_hook=_no_duplicates,
         )
     except UnicodeDecodeError:
@@ -209,13 +263,44 @@ def _author_note(doc: dict) -> str:
 
 def validate_document(doc: object, *, allow_unknown: bool = False) -> Validated:
     """Check a parsed preset and return it normalised, with every problem.
+    Never raises: a document the checks themselves cannot digest is reported
+    as not a readable preset, so a bad file in the presets directory can be
+    listed (`preset list` shows it with its problem) instead of crashing every
+    command that reads the directory.
 
     A filter key this binary does not know is an error with a did-you-mean
     (`allow_unknown` downgrades it to a warning, for a file that was stored
     on purpose with `import --allow-unknown-keys` and for reading a stored
     preset, where such a key is "unavailable" at apply time instead). A key in
     `NEVER_PRESET`, a wrong type, an out-of-range number and a null are errors
-    in every mode."""
+    in every mode. So is any key, at the top level or in `meta`, that would
+    carry a sample, family, path or database identity, and a number anywhere
+    in the file that is not finite."""
+    try:
+        return _validate_document(doc, allow_unknown)
+    except Exception:  # noqa: BLE001 - whatever the file held, it is a problem
+        return Validated(
+            {},
+            (Problem(ERROR, "not_a_preset", "not a readable preset"),),
+            (),
+        )
+
+
+def _has_nonfinite(value: Any) -> bool:
+    """Does a NaN or infinity sit anywhere in this parsed value?"""
+    stack = [value]
+    while stack:
+        v = stack.pop()
+        if isinstance(v, float) and not math.isfinite(v):
+            return True
+        if isinstance(v, dict):
+            stack.extend(v.values())
+        elif isinstance(v, (list, tuple)):
+            stack.extend(v)
+    return False
+
+
+def _validate_document(doc: object, allow_unknown: bool) -> Validated:
     problems: list[Problem] = []
 
     def bad(code: str, message: str, key: str | None = None, level: str = ERROR):
@@ -244,9 +329,16 @@ def validate_document(doc: object, *, allow_unknown: bool = False) -> Validated:
     out["filters"], unknown = _check_filters(doc, allow_unknown, bad)
     out["meta"] = _check_meta(doc.get("meta"), bad)
     for key, value in doc.items():  # unknown envelope keys survive a rewrite
+        why = identity_problem(key)
+        if why:
+            bad("never_presettable", f"{key[:40]} {why}", key[:40])
+            continue
         out.setdefault(key, value)
     ordered = {k: out[k] for k in _ENVELOPE_ORDER if k in out}
     ordered.update({k: v for k, v in out.items() if k not in ordered})
+    for key, value in ordered.items():  # x_ values, unknown and meta keys too
+        if _has_nonfinite(value):
+            bad("bad_value", f"{key[:40]} holds a number that is not finite", key[:40])
 
     if not any(p.level == ERROR for p in problems):
         for message in fr.cross_key_problems(ordered["filters"]):
@@ -357,6 +449,15 @@ def _check_meta(meta: object, bad: Callable) -> dict:
             if not isinstance(value, bool):
                 bad("bad_type", "meta.locked must be true or false", "meta.locked")
                 continue
+        else:
+            why = identity_problem(key, envelope=False)
+            if why:
+                bad(
+                    "never_presettable",
+                    f"meta.{key[:40]} {why}",
+                    f"meta.{key[:40]}",
+                )
+                continue
         out[key] = value
     return out
 
@@ -395,5 +496,9 @@ def fingerprint(doc: dict) -> str:
 
 
 def to_text(doc: dict) -> str:
-    """The file text: indented, UTF-8, one trailing newline."""
-    return json.dumps(doc, indent=2, ensure_ascii=False) + "\n"
+    """The file text: indented, UTF-8, one trailing newline. A NaN or infinity
+    is never written (it would be a file this program then refuses to read)."""
+    try:
+        return json.dumps(doc, indent=2, ensure_ascii=False, allow_nan=False) + "\n"
+    except ValueError:
+        raise PresetError("the preset holds a number that is not finite") from None

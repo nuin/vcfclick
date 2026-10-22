@@ -20,9 +20,11 @@ from cli import filter_registry as fr
 from cli.builtin_presets import BUILTINS
 from cli.preset_schema import (
     BUNDLE_SCHEMA,
+    EXPORT_STEM,
     SCHEMA_VERSION,
     PresetError,
     fingerprint,
+    identity_problem,
     name_problem,
     now_utc,
     parse_json,
@@ -37,7 +39,7 @@ from cli.presets import (
     write_text_atomic,
 )
 
-EXPORT_SUFFIX = ".vcfclick-preset.json"
+EXPORT_SUFFIX = EXPORT_STEM + ".json"  # NAME.vcfclick-preset.json
 BUNDLE_NAME = "presets.vcfclick-bundle.json"
 
 
@@ -48,7 +50,9 @@ def export_document(preset: Preset, *, with_patient_data: bool = False) -> dict:
     """The preset as a file to hand to a colleague: without the patient-specific
     keys (unless asked), without where it was imported from, with its
     approval metadata."""
-    doc = dict(preset.doc)
+    # a loaded preset has no identity keys (validation refuses them); drop any
+    # anyway, so nothing can leave through an export
+    doc = {k: v for k, v in preset.doc.items() if identity_problem(k) is None}
     doc["filters"] = {
         k: v
         for k, v in preset.filters.items()
@@ -88,6 +92,8 @@ def export_target(
 
 
 def load_for_export(name: str) -> Preset:
+    if name_problem(name):
+        raise PresetError(f"{name[:40]!r} is not a preset name")
     preset, _ = find_preset(name)
     if preset is None:
         raise PresetError(f"no preset named {name!r}")

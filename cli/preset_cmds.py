@@ -441,6 +441,14 @@ def _known_key(key: str) -> fr.FilterKey:
     raise PresetError(f"unknown filter key {key[:40]!r}.{hint}")
 
 
+def _file_of(p: Preset) -> Path:
+    """The file a user preset lives in (`NAME.json`, or the exported
+    `NAME.vcfclick-preset.json` someone dropped in the directory)."""
+    if p.path is None:
+        raise PresetError(f"preset {p.name!r} has no file to change")
+    return p.path
+
+
 def _change(name: str, force: bool, edit: Callable[[dict], dict]) -> Preset:
     """Apply `edit` to the filters of a user preset and write it back."""
     p = get_user_preset(name)
@@ -452,7 +460,7 @@ def _change(name: str, force: bool, edit: Callable[[dict], dict]) -> Preset:
         )
     doc = touch({**p.doc, "filters": edit(dict(p.filters))})
     checked = validated_or_raise(doc, allow_unknown=True)
-    write_text_atomic(user_path(name), to_text(checked))
+    write_text_atomic(_file_of(p), to_text(checked))
     return p
 
 
@@ -490,7 +498,7 @@ def edit(name: str, force: bool) -> None:
     with _errors():
         p = get_user_preset(name)
         require_editable(p, force=force)
-        path = user_path(name)
+        path = _file_of(p)
         try:
             text = path.read_text("utf-8")
         except OSError as e:
@@ -535,7 +543,7 @@ def rename(old: str, new: str, force: bool) -> None:
             raise PresetError(f"a preset named {new!r} already exists")
         doc = validated_or_raise(touch({**p.doc, "name": new}), allow_unknown=True)
         write_text_atomic(user_path(new), to_text(doc))
-        user_path(old).unlink()
+        _file_of(p).unlink()
     click.echo(f"renamed {old!r} to {new!r}")
 
 
@@ -550,7 +558,7 @@ def rm_cmd(name: str, yes: bool, force: bool) -> None:
         require_editable(p, force=force)
         if not yes:
             click.confirm(f"Delete preset {name!r}?", abort=True)
-        user_path(name).unlink()
+        _file_of(p).unlink()
     click.echo(f"deleted {name!r}")
 
 

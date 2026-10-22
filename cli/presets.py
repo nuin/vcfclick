@@ -5,7 +5,8 @@ one) in one of these places, looked up in this order for a bare name:
 
   * the user's directory, `$VCFCLICK_HOME/presets/<name>.json` (read-write);
   * every directory on `VCFCLICK_PRESET_PATH` (os.pathsep-separated; a lab's git
-    folder; read-only here);
+    folder; read-only here), where `<name>.vcfclick-preset.json` (what
+    `preset export -o DIR` writes) is the same preset as `<name>.json`;
   * the built-ins compiled into the CLI (`cli.builtin_presets`; read-only).
 
 A built-in name belongs to the built-in: a user or shared file with that name
@@ -15,6 +16,11 @@ a shared one resolves to the user's with a note. An explicit file path
 command line only: the name-only resolver the web and MCP front ends use
 (`load_named`) rejects anything that is not a name before it touches the file
 system, and no error message quotes a file's content.
+
+Every lookup, rewrite and delete takes a NAME that has passed `name_problem`,
+whatever the command: a value with a separator, a leading dot or an absolute
+path never reaches the file system, so `preset rm ../x` cannot leave the
+presets directory.
 
 Writes are atomic (a temp file in the same directory, fsync, os.replace); there
 is no lock and the last writer wins. A corrupt file is reported by `list` and
@@ -39,6 +45,7 @@ from cli import filter_registry as fr
 from cli.builtin_presets import BUILTINS, BuiltinPreset
 from cli.preset_schema import (
     ERROR,
+    EXPORT_STEM,
     EXTENSION_PREFIX,
     MAX_BYTES,
     SCHEMA,
@@ -149,11 +156,23 @@ def shared_dirs() -> list[Path]:
     return [Path(p).expanduser() for p in raw.split(os.pathsep) if p.strip()]
 
 
+def preset_name_of(path: Path) -> str:
+    """The name a preset file stands for: its name without `.json`, and
+    without `.vcfclick-preset` (the suffix `preset export -o DIR` adds)."""
+    return path.stem.removesuffix(EXPORT_STEM)
+
+
+def candidate_files(directory: Path, name: str) -> list[Path]:
+    """The files in `directory` that are the preset `name`, the plain one
+    first. `name` must already have passed `name_problem`."""
+    return [directory / f"{name}.json", directory / f"{name}{EXPORT_STEM}.json"]
+
+
 def read_preset_file(path: Path, source: str) -> Preset:
     """Read and validate one file. Never raises for a bad file: the problems
     are on the result. (Unknown filter keys are warnings here: the preset is
     stored, and `plan_apply` decides what to do about them.)"""
-    name = path.stem
+    name = preset_name_of(path)
     problems: list[Problem] = []
 
     def fail(code: str, message: str) -> Preset:
@@ -209,7 +228,23 @@ def _scan(directory: Path, source: str) -> list[Preset]:
         )
     except OSError:
         return []
-    return [read_preset_file(p, source) for p in files]
+    out: list[Preset] = []
+    taken: dict[str, str] = {}
+    for p in files:
+        found = read_preset_file(p, source)
+        if found.name in taken:  # NAME.json and NAME.vcfclick-preset.json
+            found = _with_problem(
+                found,
+                Problem(
+                    WARN,
+                    "duplicate_name",
+                    f"the same preset name as {taken[found.name]}, which is used",
+                ),
+            )
+        else:
+            taken[found.name] = p.name
+        out.append(found)
+    return out
 
 
 def list_presets(source: str = "all") -> list[Preset]:
@@ -247,18 +282,28 @@ def all_names() -> list[str]:
     return [p.name for p in list_presets()]
 
 
+def _first_file(directory: Path, name: str) -> Path | None:
+    for candidate in candidate_files(directory, name):
+        if candidate.is_file():
+            return candidate
+    return None
+
+
 def find_preset(name: str) -> tuple[Preset | None, list[str]]:
     """The preset a bare name means, and notes to show: built-in, else the
-    user's, else the first shared directory that has it."""
+    user's, else the first shared directory that has it. A value that is not a
+    valid name finds nothing, without touching the file system."""
+    if name_problem(name):
+        return None, []
     if name in BUILTINS:
         return builtin_preset(name), []
     notes: list[str] = []
-    mine = user_dir() / f"{name}.json"
-    user = read_preset_file(mine, USER) if mine.is_file() else None
+    mine = _first_file(user_dir(), name)
+    user = read_preset_file(mine, USER) if mine is not None else None
     shared = None
     for directory in shared_dirs():
-        candidate = directory / f"{name}.json"
-        if candidate.is_file():
+        candidate = _first_file(directory, name)
+        if candidate is not None:
             shared = read_preset_file(candidate, SHARED)
             break
     if user is not None and shared is not None:
@@ -313,6 +358,8 @@ def _check_pin(preset: Preset, pin: str) -> None:
 
 
 def _not_found(name: str) -> PresetError:
+    if name_problem(name):
+        return PresetError(f"{name[:40]!r} is not a preset name")
     near = difflib.get_close_matches(name, all_names(), n=3, cutoff=0.6)
     hint = f" Did you mean {', '.join(near)}?" if near else ""
     return PresetError(
@@ -451,6 +498,12 @@ def write_text_atomic(path: Path, text: str) -> None:
 
 
 def user_path(name: str) -> Path:
+    """Where the user's preset `name` is written. Refuses anything that is not
+    a preset name, so no caller can aim a write or a delete outside the
+    presets directory."""
+    why = name_problem(name)
+    if why:
+        raise PresetError(f"{str(name)[:40]!r} is not a preset name: {why}")
     return user_dir() / f"{name}.json"
 
 

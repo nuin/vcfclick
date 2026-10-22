@@ -56,6 +56,9 @@ def test_suggest_finds_a_misspelt_key_and_a_hyphenated_one():
         ("max_af", 1.0001, False),
         ("max_af", float("nan"), False),
         ("max_af", float("inf"), False),
+        ("max_af", 10**400, False),  # does not fit a float: a value error, not a crash
+        ("min_gq", 10**400, False),
+        ("min_gq", -(10**400), False),
         ("max_af", "0.1", False),
         ("strict_missing", True, True),
         ("strict_missing", 1, False),

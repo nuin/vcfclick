@@ -208,12 +208,16 @@ device name or a built-in's name. Writes are atomic.
   `pass_only`, `parent_alt_screen`, `max_parent_alt_frac`, `require_bound`. A key
   not in that list is an error with a did-you-mean (and the vcfclick version
   recorded in `meta.created_with`, if different); `x_...` keys are kept and
-  ignored. A `null`, a boolean where a number goes, `NaN` or an out-of-range
-  number is an error. `min_ab` above `max_ab` is checked on the resolved values, so
+  ignored. A `null`, a boolean where a number goes, `NaN`, an infinity (or a
+  number too large for a float, anywhere in the file, `x_` keys included) or an
+  out-of-range number is an error. `min_ab` above `max_ab` is checked on the resolved values, so
   a flag can repair it.
 - **Never in a preset** (an error with the reason): which sample or family is
   analysed, output control (`format`, `limit`), paths and environment, safety
-  checks (`parentage`, the X guard) and attestations. A preset can only make a
+  checks (`parentage`, the X guard) and attestations. This holds for any key of
+  the file, not only those under `filters`: `proband`, `family`, `db`, `path`,
+  `sample` and the like at the top level or in `meta` are errors too (other
+  unknown top-level keys are kept for forward compatibility). A preset can only make a
   run stricter or equal, so nothing in it can switch off a check.
 - `applies_to` (`trio`, `segregate`, `case`) and `assay` (`genome`, `exome`,
   `panel`) are hints for pickers and for the median-depth warning.
@@ -259,7 +263,11 @@ presets are looked up, `preset validate FILE` checks a file (exit 1 on error).
 
 A preset file is data. It is parsed and validated, never executed; its values
 reach the database only as typed numbers and names; no error message quotes the
-file's content.
+file's content. A preset is always addressed by a name: a value with a path
+separator or a leading dot never reaches the file system for `set`, `unset`,
+`edit`, `rename`, `rm`, `export` or `save --from-preset`, so `preset rm ../x`
+cannot leave the presets directory. `--preset ""` (an unset shell variable) is an
+error, not "no preset".
 
 ## What the output carries
 
@@ -267,6 +275,11 @@ With a preset, `db trio --format json` adds two top-level objects after
 `models`; with none, the document is byte-identical to what it was.
 
 - `preset`: `name`, `source` (`builtin`, `user`, `shared`, `file`), `revision`,
+`export -o DIR` writes `DIR/NAME.vcfclick-preset.json`; in a preset directory
+that file is the preset `NAME` (a preset cannot itself be named `...vcfclick-preset`,
+and if `NAME.json` sits beside it, `NAME.json` is the one used and the other is
+listed with a `duplicate_name` warning).
+
   `status` (`starting_point` for built-ins), `schema_version`, `fingerprint`,
   `pinned`, `meta`, `path` (a file name only), `requested` (the preset's
   filters), `resolved` (per filter: `value`, `from` = `preset` / `flag` /

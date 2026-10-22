@@ -71,8 +71,14 @@ class PresetScan:
 
     @property
     def any(self) -> bool:
-        return bool(
-            self.preset or self.fingerprint or self.ignore or self.skip_unavailable
+        # `is not None`, not truthiness: `--preset ""` (an unset shell variable)
+        # is a preset option with an empty name, and must fail as one rather
+        # than run with no preset at all
+        return (
+            self.preset is not None
+            or self.fingerprint is not None
+            or bool(self.ignore)
+            or self.skip_unavailable
         )
 
 
