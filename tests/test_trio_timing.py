@@ -352,3 +352,35 @@ def test_gnomad_filter_on_a_synthetic_wgs_store(
             assert 0.6 * base_counts["dominant"] < counts["dominant"]
             assert counts["dominant"] < 0.9 * base_counts["dominant"]
             assert counts["recessive"] < base_counts["recessive"]
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_preset_adds_a_bounded_cost_on_a_synthetic_wgs_store(
+    backend, vcfclick_home, tmp_path, monkeypatch
+):
+    """`--preset` adds the effective-gate report: one pass over the three
+    samples' rows and one count over the variants, and no query per candidate.
+    Timed against the same call without a preset on the same store, and against
+    the full-scan baseline the other gates here use."""
+    n, _ = _wgs_store("population", backend, vcfclick_home, tmp_path, monkeypatch)
+    budget = _synthetic_budget(n, _baseline(vcfclick_home, backend))
+    trio = ("db", "trio", "t", "--proband", "CHILD", "--format", "json")
+
+    plain, _ = _best_of_two(vcfclick_home, backend, *trio)
+    took, result = _best_of_two(
+        vcfclick_home, backend, *trio, "--preset", "broad-first-pass"
+    )
+    doc = json.loads(result.stdout)
+    print(
+        f"\n[timing] {n} sites, --preset broad-first-pass, {backend}: {took:.2f}s "
+        f"(plain {plain:.2f}s, budget {budget:.1f}s)"
+    )
+    # the scenario is what it says: the report read every row of the trio
+    assert doc["preset"]["name"] == "broad-first-pass"
+    assert doc["effective"]["rows"] == {"proband": n, "father": n, "mother": n}
+    assert took < budget, (
+        f"`db trio --preset` on {n} synthetic sites ({backend}) took {took:.1f}s, "
+        f"budget {budget:.1f}s. The effective-gate report is one pass over the "
+        "samples' rows; a query per candidate or a second pass shows up here."
+    )
+    assert took < 3 * plain + 1.0, (took, plain)
