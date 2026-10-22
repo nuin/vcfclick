@@ -132,7 +132,8 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "De novo single-nucleotide and indel calls in the proband "
                 "where both parents have a stored 0/0 with under 5% alt "
                 "reads, or fewer than 2 alt reads, FILTER=PASS (a FILTER that "
-                'is unset or "." counts as PASS), GQ >= 30, DP >= 20, '
+                'is unset or "." counts as PASS, so a VCF with no FILTER '
+                "label is not narrowed by it), GQ >= 30, DP >= 20, "
                 "allele balance 0.30-0.70 for a heterozygous proband call, INFO/AF "
                 "<= 0.001 and gnomAD popmax <= 0.0001. A missing GQ or DP "
                 "counts as a fail, and so does a missing allele depth on a "
