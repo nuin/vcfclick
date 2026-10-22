@@ -30,7 +30,13 @@ from cli.builtin_presets import BUILTINS
 from cli.main import cli
 from tests.conftest import FIXTURES, run_cli
 from tests.fixtures import make_preset_vcf
-from tests.fixtures._vcfgen import TRIO_PED, TRIO_SAMPLES, trio_sites, write_vcf
+from tests.fixtures._vcfgen import (
+    TRIO_PED,
+    TRIO_SAMPLES,
+    Site,
+    trio_sites,
+    write_vcf,
+)
 from tests.test_trio_contract import assert_trio_document
 
 BACKENDS = ("chdb", "duckdb")
@@ -40,6 +46,25 @@ NAME_AT = {v: k for k, v in POS.items()}
 DE_NOVO = {name for name in POS if name.startswith("dn_")}
 KEPT = TRUTH["kept"]
 ENGINE_NOISE = re.compile(r"^Default dirty pages decay period: \d+ms\n", re.M)
+
+
+def mismatch_sites() -> list[Site]:
+    """10 de novo hets whose parents' 0/0 rows have GQ and DP but no AD, then 200
+    hom-alt sites where both parents are het, with AD. INFO/AF is a population
+    frequency, so no other gate gets in the way."""
+    de_novo = [
+        Site("chr1", 1000 * (i + 1), "A", "G",
+             ("0/1:15,15:99:30", "0/0:.:99:30", "0/0:.:99:30"),
+             info="AF=0.0005", fmt="GT:AD:GQ:DP")
+        for i in range(10)
+    ]  # fmt: skip
+    inherited = [
+        Site("chr1", 20000 + 100 * i, "A", "G",
+             ("1/1:0,30:99:30", "0/1:15,15:99:30", "0/1:15,15:99:30"),
+             info="AF=0.002", fmt="GT:AD:GQ:DP")
+        for i in range(200)
+    ]  # fmt: skip
+    return de_novo + inherited
 
 
 @dataclass
@@ -128,11 +153,16 @@ def world(backend, tmp_path_factory):
         [dataclasses.replace(x, filter=".") for x in make_preset_vcf.sites()],
         filter_header=make_preset_vcf.FILTERS,
     )
+    # a caller whose reference calls carry no allele depths while its het calls do:
+    # over ALL the parents' rows AD is on 95.2%, and on the 0/0 rows a de novo call
+    # rests on it is on none
+    mismatch = write_vcf(base / "mismatch.vcf", TRIO_SAMPLES, mismatch_sites())
     stores = (
         ("p", FIXTURES / "presets.vcf.gz", ped),
         ("n", FIXTURES / "presets_nogq.vcf.gz", ped),
         ("c", cohort, cohort_ped),
         ("f", unlabelled, ped),
+        ("m", mismatch, cohort_ped),
     )
     for name, vcf, pedigree in stores:
         run_cli(home, backend, "db", "create", name)
@@ -464,6 +494,51 @@ def test_a_typed_pass_only_is_told_about_and_only_about_that_gate(world):
     plain = jtrio(world, "f", "--category", "denovo")
     assert "effective" not in plain
     assert warning_lines(trio(world, "f", "--category", "denovo").stdout) == []
+
+
+def test_a_gate_is_judged_on_the_rows_it_reads_so_a_strict_preset_refuses(world):
+    """The parents' 0/0 rows (10) carry no allele depths and their het rows (200)
+    do: AD is on 95.2% of the parents' rows and on none of the rows the parent-allele
+    screen reads. strict_missing then fails every de novo candidate, so a strict
+    preset used to run, say every gate bound, and print `denovo candidates: 0`."""
+    ignore = ("--preset-ignore", "gnomad_max_af")
+    r = trio(world, "m", "--preset", "strict-denovo", *ignore, ok=False)
+    assert r.stdout == ""
+    for text in ("parent_alt_screen cannot be enforced",
+                 "only 0% of father/mother 0/0 rows carry AD",
+                 "no de novo candidate can pass", "Remedy:",
+                 "--no-require-bound-gates"):  # fmt: skip
+        assert text in r.stderr, text
+    # the gates that do bind are not blamed
+    assert "min_gq" not in r.stderr and "min_ab" not in r.stderr
+    # run anyway: the gate that cannot bind is exempt, and the others decide
+    doc = jtrio(
+        world, "m", "--preset", "strict-denovo", *ignore, "--no-require-bound-gates"
+    )
+    assert doc["models"]["denovo"]["count"] == 10
+    eff = doc["effective"]
+    assert eff["ad"]["father"] == eff["ad"]["mother"] == 0.9524  # the misleading share
+    assert eff["ad"]["bound"] is False  # ... which no longer decides
+    assert (eff["gq"]["bound"], eff["dp"]["bound"]) == (True, True)
+    assert doc["gates"]["strict_exempt"] == ["parent_alt_screen"]
+    assert doc["preset"]["resolved"]["parent_alt_screen"]["bound"] is False
+    assert doc["preset"]["resolved"]["min_ab"]["bound"] is True
+
+
+def test_a_typed_parent_alt_screen_that_screens_nothing_says_so_whatever_the_other_rows(
+    world,
+):
+    doc = jtrio(world, "m", "--category", "denovo", "--parent-alt-screen")
+    assert doc["models"]["denovo"]["count"] == 10  # nothing was screened out
+    (w,) = doc["effective"]["warnings"]
+    assert (w["code"], w["key"]) == ("gate_unbound", "parent_alt_screen")
+    assert "only 0% of father/mother 0/0 rows carry AD" in w["message"]
+    assert "every parent 0/0 would be trusted" in w["message"]
+    out = trio(world, "m", "--category", "denovo", "--parent-alt-screen").stdout
+    assert warning_lines(out) == [f"  WARNING: {w['message']}"]
+    # a model that never reads the parents' 0/0 rows is not blamed for them
+    rec = jtrio(world, "m", "--category", "recessive", "--parent-alt-screen")
+    assert rec["effective"]["warnings"] == []
 
 
 NO_REFERENCE = (

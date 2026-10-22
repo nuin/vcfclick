@@ -18,6 +18,7 @@ from cli.effective_gates import (
     GNOMAD_PROBE_SIZE,
     STRICT_KEYS,
     THIN_COVERAGE_FACTOR,
+    GenotypeClassStats,
     GnomadProbe,
     SampleGateStats,
     VariantStats,
@@ -39,6 +40,17 @@ def sample(role, rows=100, gq=None, dp=None, ad=None, depths=((40, 100),)):
         role, role, rows,
         rows if gq is None else gq, rows if dp is None else dp,
         rows if ad is None else ad, depths,
+    )  # fmt: skip
+
+
+def split(role, **classes):
+    """A sample whose stored rows are split by genotype class: `ref=(rows, gq, dp,
+    ad)` is the number of its 0/0 rows and how many of them carry each field (`het`
+    is 0/1, `alt` is 1/1). The whole-sample totals are the sums."""
+    parts = tuple(GenotypeClassStats(c, *counts) for c, counts in classes.items())
+    return SampleGateStats(
+        role, role, *(sum(p[i] for p in classes.values()) for i in range(4)),
+        ((40, sum(p[0] for p in classes.values())),), parts,
     )  # fmt: skip
 
 
@@ -181,6 +193,119 @@ def test_a_report_limited_to_pass_only_says_only_that():
     assert [w["code"] for w in scoped.warnings] == ["pass_only_no_labels"]
     assert scoped.bound == {"pass_only": False}
     assert scoped.document["gq"]["bound"] is None
+
+
+# ─────────────────── a gate is judged on the rows it reads ───────────────────
+
+
+def mismatched(field):
+    """A trio whose parents' 0/0 rows lack `field` (10 rows) while their 0/1 rows
+    carry it (200 rows): over all rows the share is 95.2%, over the 0/0 rows a de
+    novo gate reads it is 0%. The proband's rows are complete."""
+    have = {"gq": 0, "dp": 1, "ad": 2}[field]
+    ref = [10, 10, 10, 10]
+    ref[1 + have] = 0
+    parent = dict(ref=tuple(ref), het=(200, 200, 200, 200))
+    return [
+        split("proband", het=(10, 10, 10, 10), alt=(5, 5, 5, 5), ref=(200, 200, 200, 200)),
+        split("father", **parent),
+        split("mother", **parent),
+    ]  # fmt: skip
+
+
+def test_the_whole_sample_share_hides_a_field_missing_where_the_gate_reads():
+    """Over every stored row of the parents the share is 95.2% and the old report
+    called the gate bound; at the sites a de novo call is made the parents are 0/0
+    and none of those rows carries the field."""
+    stats = mismatched("ad")
+    assert stats[1].fraction("ad") > ENFORCEABLE_MIN  # the number that misled
+    gates = GATES._replace(parent_alt_screen=True)
+    rep = report(stats, gates, categories=["denovo"], enforce_bound=True)
+    assert rep.bound["parent_alt_screen"] is False
+    (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == "parent_alt_screen"]
+    assert "only 0% of father/mother 0/0 rows carry AD" in w["message"]
+    assert [e["key"] for e in rep.errors] == ["parent_alt_screen"]
+    # the other models never read it, and the document keeps the whole-sample facts
+    assert report(stats, gates, categories=["recessive"]).bound["parent_alt_screen"]
+    assert report(stats, gates, categories=["all"]).bound["parent_alt_screen"] is False
+    # AD is read by two gates: the document's ad.bound is bound only if both are
+    assert rep.bound["min_ab"] is True
+    assert rep.document["ad"]["bound"] is False
+    assert report(stats, gates, categories=["recessive"]).document["ad"]["bound"]
+    assert rep.document["ad"]["father"] == round(200 / 210, 4)
+    # allele balance (strict: the parents' het calls too) is judged on het rows,
+    # which have their depths
+    strict = GATES._replace(strict_missing=True)
+    denovo = report(stats, strict, categories=["denovo"])
+    assert denovo.bound["min_ab"] is True
+    # a de novo candidate's parents are 0/0: their het rows are not asked for, so
+    # the 95.2% over all their rows is not quoted as the gate's share either
+    assert not [w for w in denovo.warnings if w["key"] == "min_ab"]
+    assert report(stats, strict, categories=["recessive"]).bound["min_ab"] is True
+
+
+def test_gq_and_dp_are_judged_on_the_class_each_model_reads():
+    for field, key, label in (("gq", "min_gq", "GQ"), ("dp", "min_dp", "DP")):
+        stats = mismatched(field)
+        denovo = report(stats, categories=["denovo"])
+        assert denovo.bound[key] is False, key
+        (w,) = [w for w in by_code(denovo, "gate_unbound") if w["key"] == key]
+        assert f"only 0% of father/mother 0/0 rows carry {label}" in w["message"]
+        # recessive reads the parents' 0/1 rows, dominant both: the 0/1 rows are
+        # complete, and dominant's share is over the pooled classes
+        assert report(stats, categories=["recessive"]).bound[key] is True
+        assert report(stats, categories=["dominant"]).bound[key] is True
+        # a run of all models is only as bound as its weakest
+        assert report(stats, categories=["all"]).bound[key] is False
+        assert report(stats, categories=["recessive", "denovo"]).bound[key] is False
+        assert report(stats, categories=["recessive", "dominant"]).bound[key] is True
+
+
+def test_the_proband_is_judged_on_its_non_reference_rows():
+    """A caller whose hom-ref calls carry AD and whose het calls do not: the
+    allele-balance gate reads the het rows only."""
+    stats = [
+        split("proband", ref=(200, 200, 200, 200), het=(10, 10, 10, 0)),
+        split("father", ref=(10, 10, 10, 10)),
+        split("mother", ref=(10, 10, 10, 10)),
+    ]
+    assert stats[0].fraction("ad") > ENFORCEABLE_MIN
+    rep = report(stats, categories=["denovo"])
+    assert rep.bound["min_ab"] is False
+    (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == "min_ab"]
+    assert "only 0% of proband 0/1 rows carry AD" in w["message"]
+    # a hom-alt proband is not allele-balance gated, so recessive reads no proband row
+    # and the gate is judged as it always was, on the whole sample
+    assert report(stats, categories=["recessive"]).bound["min_ab"] is True
+
+
+def test_a_class_without_rows_falls_back_to_the_whole_sample():
+    """No stored 0/0 rows (a database ingested without --keep-reference, or a
+    parent with only het calls): nothing to read, so the whole sample decides."""
+    only_het = dict(het=(100, 100, 100, 100))
+    stats = [split("proband", het=(100, 100, 100, 100)), split("father", **only_het),
+             split("mother", **only_het)]  # fmt: skip
+    assert report(stats, categories=["denovo"]).bound["min_gq"] is True
+    poor = dict(het=(100, 50, 100, 100))
+    low = [split("proband", het=(100, 100, 100, 100)), split("father", **poor),
+           split("mother", **poor)]  # fmt: skip
+    rep = report(low, categories=["denovo"])
+    assert rep.bound["min_gq"] is False
+    (w,) = by_code(rep, "gate_unbound")
+    assert "only 50% of father/mother rows carry GQ" in w["message"]
+    # a sample with no class split at all (a stand-in) is judged whole, as before
+    assert (
+        report(trio(father=sample("father", rows=1000, gq=899))).bound["min_gq"]
+        is False
+    )
+
+
+def test_only_the_models_the_run_selected_decide():
+    stats = mismatched("gq")
+    assert report(stats, categories=["recessive"]).warnings == ()
+    assert report(stats, categories=["denovo"]).bound["min_gq"] is False
+    # a model name this version does not know reads everything, never nothing
+    assert report(stats, categories=["xlinked"]).bound["min_gq"] is True
 
 
 # ───────────────────────────── the frequency filters ─────────────────────────────

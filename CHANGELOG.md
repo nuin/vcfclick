@@ -85,7 +85,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   the cohort's variants, and a record for at least 10% of a sample of up to 5,000
   of the cohort's own variants, so a one-row or one-gene load does not count as a
   population filter; after the run, a warning when it found a record for none
-  of the candidates). A gate binds at 90% of its rows. Gates that cannot
+  of the candidates). A gate binds at 90% of the rows it reads: GQ, DP and AD
+  are judged on the genotype class each selected model reads at its candidate
+  sites (a parent's 0/0 rows for de novo and for `--parent-alt-screen`, a
+  parent's 0/1 rows for recessive, the proband's non-ref rows), the weakest
+  model deciding, not on the share over all of a sample's rows, so a caller
+  that fills AD on its het calls and not on its reference calls no longer reads
+  as bound. Gates that cannot
   bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
   so is `NO population frequency filter applied` (the cohort-derived-AF case
   with no gnomAD loaded), a median proband depth under 1.5 x `min_dp`, and a

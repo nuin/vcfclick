@@ -100,8 +100,31 @@ carries no GQ, DP or allele depths, or when `INFO/AF` is the cohort's own
 frequency and gnomAD is not loaded. A run with a preset therefore prints an
 **effective-gate report**: for each gate, whether the field it reads exists in
 this data. A gate **binds** when its field is present on at least 90% of the rows
-it reads (GQ, DP and AD on the stored rows of the proband and both parents;
-`INFO/AF` on the variants; gnomAD when it can judge the cohort, below). The
+it reads (GQ, DP and AD on the stored rows the selected models read at their
+candidate sites; `INFO/AF` on the variants; gnomAD when it can judge the cohort,
+below).
+
+"The rows it reads" is not "all of a sample's rows". A caller can fill AD on its
+het calls and not on its reference calls, and then AD is on 95% of a parent's rows
+and on none of the 0/0 rows a de novo call rests on. So each GQ / DP / AD gate is
+judged on the genotype class each selected model reads, and the weakest model
+decides:
+
+| Model | Proband rows | Parent rows |
+|---|---|---|
+| `denovo` | 0/1 and 1/1 | 0/0 (both) |
+| `recessive` | 1/1 | 0/1 (both) |
+| `dominant`, `comphet` | 0/1 | 0/0, 0/1 or 1/1 |
+
+`min_gq` and `min_dp` read all of those rows. `min_ab` reads the het rows (the
+proband's; with `strict_missing` a parent's het call must carry depths too, so the
+parents' 0/1 rows of `recessive`, `dominant` and `comphet`). `parent_alt_screen` reads
+the parents' 0/0 rows, in `denovo` only. A class with no stored rows (a database
+ingested without `--keep-reference` has no 0/0 rows) falls back to the whole sample,
+and the warning says which rows fell short (`only 0% of father/mother 0/0 rows carry
+AD`). The `gq` / `dp` / `ad` shares in `effective` stay the whole sample's, a fact
+about the data; `bound` is the verdict of the gates that read the field (`ad.bound`
+needs both `min_ab` and `parent_alt_screen`). The
 `FILTER` gate (`pass_only`) binds when some variant in the database carries a
 `FILTER` label other than `PASS` or unset: the column is null for both `PASS` and
 `.`, so on a VCF that labels nothing the gate removes nothing, which the run says
