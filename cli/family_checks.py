@@ -28,21 +28,30 @@ def samples_with_reference(
     `genotypes` is sparse: unless the cohort was ingested with
     --keep-reference there are no gt = 0 rows, and a sample absent at a site
     is 0/0 or a no-call. A sample with no stored reference row can therefore
-    never be proven 0/0 at any site. One cheap `LIMIT 1` per sample, so the
-    cost does not depend on the size of the cohort.
+    never be proven 0/0 at any site.
+
+    One statement for all the samples, however many (a 32-sample case is one
+    query, not 32). A sample with no stored reference row makes a per-sample
+    `LIMIT 1` scan all of that sample's rows before it can answer, so a
+    sparse store paid one scan per sample. `DISTINCT ... LIMIT n` asks for at
+    most the `n` samples listed, so an engine that can stops reading as soon
+    as each has shown a reference row. The result keeps the order the
+    samples were first listed in.
     """
     from storage import sql_quote_str
 
-    out: dict[str, bool] = {}
-    for sample in dict.fromkeys(samples):
-        rows = _rows(
-            sess,
-            "SELECT 1 FROM genotypes WHERE ingest_id = "
-            f"{sql_quote_str(ingest_id)} AND sample_id = {sql_quote_str(sample)} "
-            "AND gt = 0 LIMIT 1",
-        )
-        out[sample] = bool(rows)
-    return out
+    wanted = list(dict.fromkeys(samples))
+    if not wanted:
+        return {}
+    listed = ", ".join(sql_quote_str(s) for s in wanted)
+    rows = _rows(
+        sess,
+        "SELECT DISTINCT sample_id FROM genotypes WHERE ingest_id = "
+        f"{sql_quote_str(ingest_id)} AND sample_id IN ({listed}) AND gt = 0 "
+        f"LIMIT {len(wanted)}",
+    )
+    have = {r[0] for r in rows}
+    return {s: s in have for s in wanted}
 
 
 def family_has_reference(sess, ingest_id: str, samples: Iterable[str]) -> bool:
