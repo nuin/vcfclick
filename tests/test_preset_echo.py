@@ -63,3 +63,13 @@ def test_the_header_prints_warnings_not_notes():
     )  # fmt: skip
     assert lines[0].startswith("preset: p (user")
     assert lines[2:] == ["  WARNING: a"]
+
+
+def test_the_gates_line_shows_the_parent_fraction_with_the_screen_and_survives_a_command_without_it():
+    on = _resolved(parent_alt_screen=(True, "flag"))
+    assert "max_parent_alt_frac=0.05 [default]" in gates_line(on, [], "applied")
+    # a command that has no parent_alt_screen key (it is trio-only) still prints
+    del on["parent_alt_screen"]
+    assert "max_parent_alt_frac" not in gates_line(on, [], "applied")
+    on["max_parent_alt_frac"] = fr.Resolved(0.1, "flag")
+    assert "max_parent_alt_frac=0.1 [flag]" in gates_line(on, [], "applied")

@@ -149,12 +149,13 @@ def gates_line(
     """`  gates: min_gq=20 [preset]  max_af=0.005 [flag; preset 0.01] ...`: every
     value that matters and where it came from."""
     over = {o["key"]: o for o in overridden}
+    screen = resolved.get("parent_alt_screen")  # trio only
     parts = []
     for key, r in resolved.items():
         listed = key in _ALWAYS or r.source != fr.FROM_DEFAULT or key in over
+        if key == "max_parent_alt_frac" and screen is not None:
+            listed = bool(screen.value)  # only meaningful with the screen
         if not listed:
-            continue
-        if key == "max_parent_alt_frac" and not resolved["parent_alt_screen"].value:
             continue
         source = r.source
         if key in over:
