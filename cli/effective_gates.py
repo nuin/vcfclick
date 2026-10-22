@@ -683,7 +683,9 @@ def _document(
     shares of rows, the medians and the facts about the store stay, but every
     `bound`, and `population_filter`, is reported only for what the scope looked
     at and is null for the rest: a gate nobody examined (gnomAD, say, which a
-    scoped run does not probe) is neither bound nor unbound."""
+    scoped run does not probe) is neither bound nor unbound. The same holds for
+    `gnomad.bound` in a full report: it is given only when `--gnomad-max-af` was
+    asked for (so the probe ran), and is null for a loaded store nobody consulted."""
 
     def examined(*keys: str) -> bool:
         return only is None or any(k in only for k in keys)
@@ -715,7 +717,10 @@ def _document(
         "filter_column": {"present": filter_present},
         "gnomad": {
             "loaded": gnomad_loaded,
-            "bound": gnomad_bound if examined("gnomad_max_af") else None,
+            # asked for and probed, or null: a loaded store nobody asked to
+            # consult (the key switched off, no --gnomad-max-af, a scoped run) was
+            # not looked at, which is neither bound nor unbound
+            "bound": gnomad_bound if "gnomad_max_af" in bound else None,
             "field": GNOMAD_FIELD,
             "version": None,
             "candidates_checked": None,

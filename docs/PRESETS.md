@@ -358,9 +358,14 @@ With a preset, `db trio --format json` adds two top-level objects after
   `filter_column`, `gnomad` (`loaded`, `bound`, `candidates_checked`,
   `candidates_without_record`, `cohort_variants_sampled`,
   `cohort_variants_with_record`), `population_filter` and `warnings` (`{code,
-  level, key, message}`). In a run limited to one gate (`--parent-alt-screen`
-  typed alone) every `bound` of a gate outside the scope, and
-  `population_filter`, is `null`: it was not examined.
+  level, key, message}`). `gnomad.bound` is given only for a filter that was
+  asked for and probed: with no `--gnomad-max-af` (or the key switched off with
+  `--preset-ignore`) a loaded store was never looked at and `bound` is `null`, and
+  `candidates_checked` / `candidates_without_record` are `null` while no gnomAD is
+  loaded (over an empty store every candidate would be "without a record"). In a
+  run limited to some gates (`--parent-alt-screen` typed alone) every `bound` of a
+  gate outside the scope, and `population_filter`, is `null`: it was not
+  examined.
 
 `gates` also reports `strict_missing` (and, after it, `strict_exempt`: the gates
 a `--no-require-bound-gates` run did not apply it to), `pass_only`,

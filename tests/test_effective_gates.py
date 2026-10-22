@@ -194,6 +194,19 @@ def test_gnomad_asked_for_and_not_loaded():
     }  # fmt: skip
 
 
+def test_gnomad_bound_is_reported_only_for_a_gate_that_was_asked_for():
+    """`bound` says the filter was asked for and probed. A gnomAD that is loaded
+    but not asked for (the preset's key switched off, or no `--gnomad-max-af`) was
+    never looked at, so it is neither bound nor unbound."""
+    for loaded in (True, False):
+        doc = report(gnomad_loaded=loaded).document["gnomad"]
+        assert doc["loaded"] is loaded and doc["bound"] is None, loaded
+        assert "gnomad_max_af" not in report(gnomad_loaded=loaded).bound
+    asked = report(gnomad_max_af=0.01, gnomad_loaded=True).document["gnomad"]
+    assert asked["bound"] is True
+    assert report(gnomad_max_af=0.01).document["gnomad"]["bound"] is False
+
+
 def cohort(**per_chrom):
     """VariantStats for a cohort with this many variants on each chromosome."""
     chroms = tuple(sorted(per_chrom.items(), key=lambda t: (-t[1], t[0])))
@@ -455,6 +468,13 @@ def test_the_json_effective_object_carries_the_counts_and_the_late_warning():
     doc = tgo._preset_document({}, SimpleNamespace(analysis=partial))["effective"]
     assert doc["gnomad"]["candidates_without_record"] == 2
     assert "gnomad_no_record" not in [w["code"] for w in doc["warnings"]]
+    # nothing loaded: the filter ran over an empty store, and a count over a store
+    # that held nothing (every candidate "without a record") says nothing
+    empty = stub_analysis(9, 9, loaded=False)
+    doc = tgo._preset_document({}, SimpleNamespace(analysis=empty))["effective"]
+    assert doc["gnomad"]["loaded"] is False
+    assert doc["gnomad"]["candidates_checked"] is None
+    assert doc["gnomad"]["candidates_without_record"] is None
     # no --gnomad-max-af: the placeholders stay None
     off = stub_analysis(0, 0, max_af=None)
     doc = tgo._preset_document({}, SimpleNamespace(analysis=off))["effective"]

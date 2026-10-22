@@ -119,6 +119,11 @@ def assert_preset_objects(doc: dict) -> None:
         # null: not examined (a run limited to one gate says nothing of the others)
         assert _is_bool_or_null(e["info_af"]["bound"])
         assert _is_bool_or_null(e["gnomad"]["bound"])
+        # a gnomAD that is not loaded cannot be bound, and has judged no candidate
+        if not e["gnomad"]["loaded"]:
+            assert e["gnomad"]["bound"] is not True
+            assert e["gnomad"]["candidates_checked"] is None
+            assert e["gnomad"]["candidates_without_record"] is None
         assert _is_bool_or_null(e["population_filter"])
         for w in e["warnings"]:
             assert list(w) == ["code", "level", "key", "message"]
@@ -316,6 +321,8 @@ def test_contract_checker_rejects_what_would_blank_an_app():
 
     broken_effective(lambda e: e["gq"].update(bound="yes"))
     broken_effective(lambda e: e["gnomad"].update(bound="yes"))
+    broken_effective(lambda e: e["gnomad"].update(bound=True))  # not loaded
+    broken_effective(lambda e: e["gnomad"].update(candidates_checked=4))  # not loaded
     broken_effective(lambda e: e.update(population_filter=1))
     scoped = json.loads(json.dumps(with_effective))  # a run limited to one gate
     scoped["effective"]["gnomad"]["bound"] = None

@@ -209,7 +209,9 @@ def _preset_document(doc: dict, render: Render) -> dict:
     if "effective_block" in stats:
         effective = json.loads(json.dumps(stats["effective_block"]))
         analysis = render.analysis
-        if gnomad_reported(analysis):
+        # the counts are about a loaded store: over an empty one every candidate is
+        # "without a record" and the number says nothing
+        if gnomad_reported(analysis) and effective["gnomad"]["loaded"]:
             checked, without = gnomad_counts(analysis)
             effective["gnomad"]["candidates_checked"] = checked
             effective["gnomad"]["candidates_without_record"] = without

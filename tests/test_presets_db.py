@@ -502,6 +502,12 @@ def test_gnomad_asked_for_and_not_loaded(world):
     codes = [w["code"] for w in doc["effective"]["warnings"]]
     assert "gnomad_not_loaded" in codes
     assert doc["effective"]["gnomad"]["loaded"] is False
+    # the filter ran over an empty store: no count of candidates it found no
+    # record for, because it could not have found one
+    gn = doc["effective"]["gnomad"]
+    assert (gn["bound"], gn["candidates_checked"], gn["candidates_without_record"]) == (
+        False, None, None,
+    )  # fmt: skip
     assert doc["effective"]["population_filter"] is True  # INFO/AF still narrows
     r = trio(world, "p", "--preset", "strict-denovo", ann="empty", ok=False)
     assert "gnomad_max_af=0.0001 cannot be enforced" in r.stderr
@@ -580,6 +586,23 @@ def test_a_gnomad_that_judges_the_cohort_but_not_its_novel_candidates_says_so_af
     assert ok["effective"]["gnomad"]["candidates_checked"] == 8 + 1  # the common one
     assert ok["effective"]["gnomad"]["cohort_variants_sampled"] == 51
     assert ok["effective"]["gnomad"]["cohort_variants_with_record"] == 32
+
+
+def test_a_gnomad_that_was_never_asked_for_is_neither_bound_nor_probed(world):
+    """The preset's gnomad_max_af is switched off, so the loaded store (here one row
+    that judges nothing in this cohort) is not looked at: `bound` is null, as for a
+    run that never asked, and it says nothing about candidates."""
+    doc = jtrio(
+        world, "p", "--preset", "strict-denovo", "--preset-ignore", "gnomad_max_af",
+        ann="far",
+    )  # fmt: skip
+    gn = doc["effective"]["gnomad"]
+    assert gn["loaded"] is True and gn["bound"] is None
+    assert gn["cohort_variants_sampled"] is None
+    assert (gn["candidates_checked"], gn["candidates_without_record"]) == (None, None)
+    assert not [
+        w for w in doc["effective"]["warnings"] if w["code"].startswith("gnomad_")
+    ]
 
 
 def test_preset_ignore_switches_one_key_off_for_one_run(world):
