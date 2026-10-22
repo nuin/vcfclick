@@ -57,7 +57,7 @@ analysis = TrioAnalysis(
     gnomad_max_af=None,
 )
 batched = out._trio_json(analysis, "all", 1000)
-out._prefetch = lambda render, rows: None
+out.prefetch_annotations = lambda render, rows: None
 per_row = out._trio_json(analysis, "all", 1000)
 print("DOCS " + json.dumps([batched, per_row]))
 """

@@ -4,10 +4,20 @@ Each inheritance model is a `ModelSpec` in a registry: how it appears in a
 trio document (`build`), as a count line (`summary`) and as a listing
 (`detail`). `_trio_json` and `trio_text` only walk the registry, so a new
 model is one `register_model` call and never an edit to the shared
-presentation code. A candidate row passes through a chain of decorators
-(`register_candidate_decorator`); the first one adds the annotation columns
-(genes, gnomAD popmax, ClinVar) and a later feature appends its own keys by
-registering another, after the existing ones.
+presentation code.
+
+A candidate row passes through one ordered chain of decorators, and a later
+feature appends its own keys by registering another, after the existing
+ones. There are two kinds:
+
+  * `register_row_decorator`: a per-variant column that needs only the
+    variant's key (chrom, pos, ref, alt). The annotation columns (genes,
+    gnomAD popmax, ClinVar) are one. Any command that renders variant rows,
+    not only `db trio`, applies exactly these with `decorate_row`.
+  * `register_candidate_decorator`: a key that needs the 8-column trio row
+    and the model name. Only `db trio` candidates get these.
+
+`register_document_decorator` edits the finished trio document as a whole.
 
 JSON compatibility policy (docs/TRIO.md): additive only. A key that is
 already emitted is never removed, renamed or retyped, and the relative
@@ -19,7 +29,7 @@ byte-for-byte once the whitelisted new keys are removed.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
 import click
@@ -92,22 +102,31 @@ def _num(v):
 
 @dataclass(frozen=True)
 class Render:
-    """What building one trio document shares across its models."""
+    """What building one document shares across its models and rows."""
 
-    analysis: TrioAnalysis
+    # What the document is about. A `TrioAnalysis` for `db trio` (the model
+    # builders and candidate decorators rely on it); another command that
+    # reuses only the row decorators passes its own object, which nothing in
+    # the row chain reads.
+    analysis: object
     limit: int
     have: dict  # annotation sources that hold data
     store: object | None = None  # open annotation connection, kept alive only
-    # Annotation answers prefetched in batches per model (see _prefetch), so
-    # a rendered candidate costs a dict lookup, not a store query.
+    # Annotation answers prefetched in batches (see prefetch_annotations), so
+    # a rendered row costs a dict lookup, not a store query.
     cache: dict = field(default_factory=dict)
 
 
-def _prefetch(render: Render, rows: list) -> None:
+def prefetch_annotations(render: Render, rows: Sequence[Sequence]) -> None:
     """Look up genes, gnomAD and ClinVar for every row about to be rendered
     in one batch per source. A per-candidate store query cost 0.1-1.5 ms
     each (several seconds for a 1,000-candidate model on a slow disk); the
-    batch is one join. Rows already cached are skipped."""
+    batch is one join. Rows already cached are skipped.
+
+    `rows` need only carry (chrom, pos, ref, alt) as their first four
+    columns, so a trio detail row and any other command's variant row both
+    work. The annotation row decorator reads what this stores in
+    `render.cache`; without a prefetch it falls back to one lookup per row."""
     from annotations.db import GeneIndex, clinvar_many, gnomad_af_many
 
     keys = [(r[0], int(r[1]), r[2], r[3]) for r in rows]
@@ -137,32 +156,105 @@ def _prefetch(render: Render, rows: list) -> None:
         }
 
 
-# A decorator receives the candidate dict built so far, the source row and
-# the model name, and returns the dict to emit (usually the same one with
+_prefetch = prefetch_annotations  # the name before it was public
+
+
+# One chain, in registration order, which is the order keys appear in the
+# output. An entry is either a row decorator (needs only the variant key,
+# runs for every kind of row) or a candidate decorator (needs the trio row
+# and the model, runs for `db trio` candidates only).
+VariantKey = tuple[str, int, str, str]  # (chrom, pos, ref, alt)
+
+# A row decorator receives the dict built so far, the row's variant key and
+# the render context, and returns the dict to emit (usually the same one with
 # keys appended).
+RowDecorator = Callable[[dict, VariantKey, Render], dict]
+
+# A candidate decorator receives the candidate dict built so far, the source
+# row and the model name, and returns the dict to emit.
 CandidateDecorator = Callable[[dict, list, str, Render], dict]
-_CANDIDATE_DECORATORS: list[tuple[CandidateDecorator, frozenset[str] | None]] = []
+
+# A document decorator receives the whole trio document and returns it.
+DocumentDecorator = Callable[[dict, Render], dict]
+
+
+@dataclass(frozen=True)
+class _Decorator:
+    fn: RowDecorator | CandidateDecorator
+    row_only: bool
+    models: frozenset[str] | None = None  # candidate decorators only
+
+
+_DECORATORS: list[_Decorator] = []
+_DOCUMENT_DECORATORS: list[DocumentDecorator] = []
+
+
+def register_row_decorator(fn: RowDecorator) -> RowDecorator:
+    """Append `fn` to the chain as a per-variant column: it sees only the
+    variant key (chrom, pos, ref, alt), so it applies to a trio candidate and
+    to a row of any other command alike (`decorate_row`). Order of
+    registration is the order keys appear in the output."""
+    _DECORATORS.append(_Decorator(fn, row_only=True))
+    return fn
 
 
 def register_candidate_decorator(
     fn: CandidateDecorator, models: frozenset[str] | None = None
 ) -> CandidateDecorator:
-    """Append `fn` to the candidate chain (all models, or only `models`).
-    Order of registration is the order keys appear in the output."""
-    _CANDIDATE_DECORATORS.append((fn, models))
+    """Append `fn` to the chain as a `db trio` candidate key (all models, or
+    only `models`). It sees the 8-column trio row, so it is never applied to
+    another command's rows. Order of registration is the order keys appear
+    in the output."""
+    _DECORATORS.append(_Decorator(fn, row_only=False, models=models))
     return fn
+
+
+def register_document_decorator(fn: DocumentDecorator) -> DocumentDecorator:
+    """Append `fn` to the document chain: after every model is built, each
+    decorator receives the whole trio document and returns it. It sees the
+    nested objects too (`trio`, `gates`, `models`), so it may add a key at
+    the top or inside one of them. Run in registration order."""
+    _DOCUMENT_DECORATORS.append(fn)
+    return fn
+
+
+def _variant_key(row: Sequence) -> VariantKey:
+    return (row[0], int(row[1]), row[2], row[3])
+
+
+def _decorate(out: dict, row: Sequence, render: Render, model: str | None) -> dict:
+    """Run the chain over `out`. `model` is None for a row that is not a trio
+    candidate: only the row decorators apply then."""
+    key = _variant_key(row)
+    for d in _DECORATORS:
+        if d.row_only:
+            out = d.fn(out, key, render)
+        elif model is not None and (d.models is None or model in d.models):
+            out = d.fn(out, row, model, render)
+    return out
+
+
+def decorate_row(out: dict, row: Sequence, render: Render) -> dict:
+    """Append the per-variant columns (the row decorators: genes, gnomAD
+    popmax, ClinVar, ...) to `out`, a dict the caller built for `row`.
+
+    `row` need only start with (chrom, pos, ref, alt). Candidate decorators
+    are not applied: they are `db trio` keys that read a trio detail row.
+    Call `prefetch_annotations` on the batch first, or each row costs a
+    store query."""
+    return _decorate(out, row, render, None)
 
 
 def _candidates(rows: list, model: str, render: Render) -> list[dict]:
     """Rendered candidates for `rows`, annotations fetched in one batch."""
-    _prefetch(render, rows)
+    prefetch_annotations(render, rows)
     return [_candidate(r, model, render) for r in rows]
 
 
-def _candidate(row: list, model: str, render: Render) -> dict:
-    """One 8-column detail row as the JSON candidate object."""
+def _candidate_base(row: list) -> dict:
+    """The keys of one 8-column trio detail row, before any decorator."""
     chrom, pos, ref, alt, pgt, fgt, mgt, af = row
-    out: dict = {
+    return {
         "chrom": chrom,
         "pos": int(pos),
         "ref": ref,
@@ -172,19 +264,17 @@ def _candidate(row: list, model: str, render: Render) -> dict:
         "mother_gt": int(mgt),
         "af": _num(af),
     }
-    for fn, models in _CANDIDATE_DECORATORS:
-        if models is None or model in models:
-            out = fn(out, row, model, render)
-    return out
 
 
-@register_candidate_decorator
-def _annotation_columns(out: dict, row: list, model: str, render: Render) -> dict:
-    chrom, pos, ref, alt = row[:4]
-    hit = render.cache.get((chrom, int(pos), ref, alt))
-    out.update(
-        dict(hit) if hit is not None else _enrich(chrom, pos, ref, alt, render.have)
-    )
+def _candidate(row: list, model: str, render: Render) -> dict:
+    """One 8-column detail row as the JSON candidate object."""
+    return _decorate(_candidate_base(row), row, render, model)
+
+
+@register_row_decorator
+def _annotation_columns(out: dict, key: VariantKey, render: Render) -> dict:
+    hit = render.cache.get(key)
+    out.update(dict(hit) if hit is not None else _enrich(*key, render.have))
     return out
 
 
@@ -367,32 +457,42 @@ def _trio_json(analysis: TrioAnalysis, category: str, limit: int) -> dict:
         models = {
             spec.name: spec.build(render) for spec in _applicable(analysis, category)
         }
+        doc = {
+            "trio": {
+                "ingest_id": trio.ingest_id,
+                "proband": trio.proband,
+                "father": trio.father,
+                "mother": trio.mother,
+                "family_id": trio.family_id,
+                "kind": trio.kind,
+                "siblings": [{"sample": s, "kind": k} for s, k in analysis.siblings],
+            },
+            "keep_reference": analysis.has_reference,
+            "gates": {
+                "min_gq": gates.min_gq,
+                "min_dp": gates.min_dp,
+                "max_af": gates.max_af,
+                "min_ab": gates.min_ab,
+                "max_ab": gates.max_ab,
+                "gnomad_max_af": analysis.gnomad_max_af,
+                "af_gate": gates.af_gate,
+            },
+            "annotations": render.have,
+            "models": models,
+        }
+        # Inside the try: the store stays open for a decorator that looks
+        # something up.
+        for fn in _DOCUMENT_DECORATORS:
+            doc = fn(doc, render)
+            if not isinstance(doc, dict):
+                raise TypeError(
+                    f"document decorator {getattr(fn, '__name__', fn)!r} must "
+                    f"return the document dict, not {type(doc).__name__}"
+                )
     finally:
         if store is not None:
             store.close()
-    return {
-        "trio": {
-            "ingest_id": trio.ingest_id,
-            "proband": trio.proband,
-            "father": trio.father,
-            "mother": trio.mother,
-            "family_id": trio.family_id,
-            "kind": trio.kind,
-            "siblings": [{"sample": s, "kind": k} for s, k in analysis.siblings],
-        },
-        "keep_reference": analysis.has_reference,
-        "gates": {
-            "min_gq": gates.min_gq,
-            "min_dp": gates.min_dp,
-            "max_af": gates.max_af,
-            "min_ab": gates.min_ab,
-            "max_ab": gates.max_ab,
-            "gnomad_max_af": analysis.gnomad_max_af,
-            "af_gate": gates.af_gate,
-        },
-        "annotations": render.have,
-        "models": models,
-    }
+    return doc
 
 
 def trio_text(analysis: TrioAnalysis, category: str) -> None:
