@@ -656,10 +656,12 @@ Pedigree-aware inheritance analysis. See [Trio](TRIO.md).
 
 Load family relationships from a PED/FAM file, or declare a family with
 flags: several families, grandparents, half siblings and duos are supported.
-A PED file replaces the stored pedigree; the flags describe one family, and a
-call that would delete individuals it does not name fails until you add
-`--merge` (which replaces only the family it names). Flag-declared parents are
-stored with unknown phenotype. See
+A PED file replaces the stored pedigree. The flags describe a few people of one
+family, and a call that would delete individuals it does not name fails until
+you add `--merge`, which rewrites only the people the flags name and leaves
+everybody else as stored (with a PED file, `--merge` replaces the families the
+file lists and says who it removed). Flag-declared parents are stored with
+unknown phenotype. See
 [TRIO.md](TRIO.md#families-generations-and-probands).
 
 ```bash
@@ -680,9 +682,9 @@ Usage: vcfclick db ped [OPTIONS] NAME [PED_PATH]
 
   The individual ids must match sample ids already ingested under the target
   ingest_id, and all members share that one ingest_id. A PED file replaces the
-  stored pedigree for that ingest_id. Flags describe one family; add --merge
-  to replace just that family and keep the others. Everything is checked
-  before anything is deleted.
+  stored pedigree for that ingest_id. Flags describe some people of one
+  family; add --merge to change just them and keep everybody else as stored.
+  Everything is checked before anything is deleted.
 
 Options:
   --ingest-id TEXT                Ingest_id the pedigree's samples belong to.
@@ -703,12 +705,16 @@ Options:
                                   member, to declare grandparents or half
                                   siblings (e.g. F=PGF,PGM). Repeatable;
                                   either side may be 0.
-  --merge                         Replace only the families named in this call
-                                  (the PED file's, or --family) and keep every
-                                  other family. Without it a PED file replaces
-                                  the whole pedigree, and a flag call that
-                                  would delete individuals it does not name
-                                  fails.
+  --merge                         Keep what this call does not name. With
+                                  flags: rewrite only the people the flags
+                                  name, and only what the flags say about
+                                  them, and leave everybody else as stored.
+                                  With a PED file: replace the families it
+                                  lists as wholes (members it omits are
+                                  removed, and listed) and keep the other
+                                  families. Without it a PED file replaces the
+                                  whole pedigree, and a flag call that would
+                                  delete individuals it does not name fails.
   --affected TEXT                 Without a PED file: mark a listed sample
                                   affected. Repeatable.
   --unaffected TEXT               Without a PED file: mark a listed sample

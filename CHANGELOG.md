@@ -22,10 +22,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   half siblings; repeatable), `--affected`/`--unaffected`/`--unknown`
   (set the phenotype of any listed sample), `--sex ID=male|female|unknown`,
   and `0` for a parent that is not known (`--father 0`: a duo). `--merge`
-  replaces only the families a call names and keeps the others, for flags
-  and for a PED file. Every check (unknown sample, self-parent, cycle,
-  parent in another family, a sample moving families) runs before anything
-  is deleted. `db ped` also prints a `families: famA(13), famB(5)` line.
+  with flags rewrites only the people the flags name, and only what the flags
+  say about them (a father named by `--father` keeps his own parents, sex and
+  phenotype), and leaves everybody else as stored, in the same family or
+  another; `--affected`/`--unaffected`/`--unknown`/`--sex` may also name a
+  stored person to change just that. `--merge` with a PED file replaces the
+  families the file lists as wholes, keeps the others and prints
+  `removed from famB: K2, XB` for any member the file left out. Every check
+  (unknown sample, self-parent, cycle, parent in another family, a sample
+  moving families) runs before anything is deleted, and an error names its
+  family. Under `--merge` a problem that the stored pedigree already had
+  (such as a cycle an earlier vcfclick let in) is a warning, not a reason to
+  refuse an unrelated edit. `db ped` also prints a
+  `families: famA(13), famB(5)` line.
 - `db families NAME [--format text|json]`: read-only list of a database's
   families with members by generation, the probands, every trio or duo with
   its full and half siblings, and problems (cycle, parent in another family,
@@ -61,7 +70,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   the samples it names already live in one family), instead of silently
   replacing the whole pedigree. The desktop apps send this form and show
   stderr only when a command fails, so a quiet replace lost families without
-  anyone noticing. A PED file still replaces the whole pedigree.
+  anyone noticing. There is no exception for a small family: a stored trio
+  with an unaffected sibling, or a call that swaps one proband for another,
+  fails too, because the person it would drop may carry a phenotype the flags
+  cannot say again. Naming everyone who is stored still replaces; so does
+  `--merge`, which keeps the rest. A PED file still replaces the whole
+  pedigree.
 - `db ped` (a PED file as well as flags) refuses a pedigree with a cycle of
   ancestors, an individual who is their own parent, or a parent in a
   different family, before changing anything, and warns on stderr about a

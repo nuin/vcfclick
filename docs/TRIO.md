@@ -248,35 +248,59 @@ vcfclick db ped fam1 --family famA --proband C1 --father F --mother M \
 | `--parents CHILD=F,M` | the parents of any other member, for grandparents and half siblings (repeatable; `0` for an unknown side) |
 | `--affected S`, `--unaffected S`, `--unknown S` | set the phenotype of any listed sample (repeatable) |
 | `--sex ID=male\|female\|unknown` | set the sex of any listed sample (repeatable); `--proband-sex` does the same for a single proband |
-| `--merge` | replace only the families this call names (see below) |
+| `--merge` | change only the people this call names and keep everybody else as stored (see below) |
 
 Probands are stored as affected and **everyone else as unknown**, parents
 included: a parent's status is an assertion (it decides reduced
 penetrance), so only a PED file or an explicit `--affected`/`--unaffected`
 makes one. A father is stored male and a mother female unless `--sex` says
 otherwise (reported as a warning). A PED file carries each individual's sex
-and phenotype itself.
+and phenotype itself. (Under `--merge`, these are what a person who is not
+stored yet gets; someone already stored keeps what is stored unless a flag
+says otherwise.)
 
 Everything is checked before the stored pedigree is touched: a sample that is
 not in the cohort, an individual who is their own parent, a cycle of
 ancestors, a parent in a different family, or a sample moving to another
-family under `--merge` is refused, and nothing is changed.
+family under `--merge` is refused, and nothing is changed. The error names
+the family it is in. Under `--merge` only a problem the call would *introduce*
+refuses it: a cycle that an earlier vcfclick let into another family (or
+into this one, somewhere the call does not touch) is reported as a `warning:`
+and left as it is, so one broken family does not make the rest unreadable
+to edit; `db families` lists what is wrong.
 
 ### Replacing and merging
 
 A PED file is a whole pedigree: loading one replaces what is stored for the
-`ingest_id`. The flags describe **one** family, so `db ped` treats them more
-carefully:
+`ingest_id`. The flags describe **a few people** of one family, so `db ped`
+treats them more carefully:
 
-- `--merge` replaces only the families the call names (`--family`, or the
-  families in a PED file) and keeps every other family. This is how a second
-  family is added, or one family is corrected.
+- `--merge` with flags rewrites **only the people the flags name**, and only
+  what the flags say about them. Everybody else, in the same family or
+  another, stays exactly as stored. A person the flags name without saying
+  more (a father given only by `--father`) keeps their own parents, sex and
+  phenotype, so `--family famA --merge --proband C1 --father F --mother M`
+  on a family of 13 rewrites C1, F and M as they were and changes nothing.
+  What the flags do say wins: the proband's parents, `--parents`,
+  `--affected`/`--unaffected`/`--unknown`, `--sex`. Those last flags may also
+  name a person who is stored but not otherwise in the call
+  (`--unaffected K2`), to change just that. A sample that is stored in one
+  family cannot join another this way; a person cannot be removed with flags
+  either (use a PED file).
+- `--merge` with a PED file replaces the families the file lists **as
+  wholes** and keeps every other family. A member of such a family that the
+  file does not list is removed, and `db ped` says so
+  (`removed from famB: K2, XB`).
 - Without `--merge`, a flag call that would delete individuals it does not
   name **fails** and says which, and what to add (`--family FID --merge`
   when the samples it names already live in one family). The desktop apps
-  show nothing from a call that succeeds, so a quiet replace would lose a
-  family without anyone noticing. Run it with `--merge`, or load a PED file
-  to replace everything on purpose.
+  show nothing from a call that succeeds, so a quiet replace would lose
+  people without anyone noticing. There is no exception for a small family:
+  an unaffected sibling the call does not name is as protected as a
+  grandparent, and so is the stored proband when a call names another one.
+  To change the people a call names, add `--merge`; to replace everything on
+  purpose, load a PED file. A call that names every stored individual
+  replaces them and removes nobody.
 - When a flag call does replace the stored phenotype of an individual that was
   marked affected or unaffected with a different one it was not asked for
   (probands default to affected, others to unknown), a `warning:` on stderr
