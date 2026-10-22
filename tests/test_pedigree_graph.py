@@ -447,3 +447,41 @@ def test_a_self_parent_and_a_cross_family_parent_still_answer_reads():
     assert ped.expected_kinship("K", "F") == 0.25
     with pytest.raises(PedigreeError):
         ped.generation("X")
+
+
+def test_expected_label_only_returns_the_published_vocabulary():
+    """Every pair in a three-generation family with a half-sibling and a
+    cousin gets a label from EXPECTED_LABELS, and each label is reachable."""
+    from storage.pedigree_graph import EXPECTED_LABELS, Pedigree
+
+    rows = [
+        # (family, sample, father, mother, sex, affected)
+        ("f", "GF", None, None, "male", None),
+        ("f", "GM", None, None, "female", None),
+        ("f", "D", "GF", "GM", "male", None),
+        ("f", "A", "GF", "GM", "female", None),
+        ("f", "M", None, None, "female", None),
+        ("f", "M2", None, None, "female", None),
+        ("f", "U", None, None, "male", None),
+        ("f", "C", "D", "M", "male", "affected"),
+        ("f", "H", "D", "M2", "female", None),
+        ("f", "S", "D", "M", "female", None),
+        ("f", "K", "U", "A", "male", None),
+        ("f", "X", None, None, "male", None),
+    ]
+    seen = set()
+    graph = Pedigree.from_rows(
+        [
+            {"family_id": f, "sample_id": s, "father_id": fa, "mother_id": mo,
+             "sex": sex, "affected": aff}
+            for f, s, fa, mo, sex, aff in rows
+        ]
+    )  # fmt: skip
+    ids = [r[1] for r in rows]
+    for i, a in enumerate(ids):
+        for b in ids[i + 1 :]:
+            label = graph.expected_label(a, b)
+            assert label in EXPECTED_LABELS, (a, b, label)
+            seen.add(label)
+    # `relative` needs a more distant shared ancestor than this family has
+    assert seen == set(EXPECTED_LABELS) - {"relative"}

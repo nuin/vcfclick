@@ -6,8 +6,9 @@ apps, scripts) get family structure from, so its shape is a contract:
 
     {"ingest_id": "i1",
      "families": [{"family_id": "famA",
-                   "members": [{"sample_id", "father", "mother", "sex",
-                                "affected", "genotyped", "generation"}],
+                   "members": [{"sample_id", "family_id", "father", "mother",
+                                "sex", "affected", "genotyped",
+                                "generation"}],
                    "probands": ["C1", ...],
                    "trios": [{"child", "father", "mother", "kind",
                               "is_proband",
@@ -42,6 +43,7 @@ def _family(graph: Pedigree, family_id: str) -> dict:
         members.append(
             {
                 "sample_id": sid,
+                "family_id": family_id,
                 "father": p.father,
                 "mother": p.mother,
                 "sex": p.sex,

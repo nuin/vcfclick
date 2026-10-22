@@ -333,8 +333,8 @@ that an older vcfclick let in is described, not refused, and the command exits
 ```json
 {"ingest_id": "i1",
  "families": [{"family_id": "famA",
-               "members": [{"sample_id": "C1", "father": "F", "mother": "M",
-                            "sex": "male", "affected": "affected",
+               "members": [{"sample_id": "C1", "family_id": "famA", "father": "F",
+                            "mother": "M", "sex": "male", "affected": "affected",
                             "genotyped": true, "generation": 2}],
                "probands": ["C1"],
                "trios": [{"child": "C1", "father": "F", "mother": "M",

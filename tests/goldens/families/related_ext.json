@@ -6,6 +6,7 @@
       "members": [
         {
           "sample_id": "M2",
+          "family_id": "famA",
           "father": null,
           "mother": null,
           "sex": "female",
@@ -15,6 +16,7 @@
         },
         {
           "sample_id": "MGF",
+          "family_id": "famA",
           "father": null,
           "mother": null,
           "sex": "male",
@@ -24,6 +26,7 @@
         },
         {
           "sample_id": "MGM",
+          "family_id": "famA",
           "father": null,
           "mother": null,
           "sex": "female",
@@ -33,6 +36,7 @@
         },
         {
           "sample_id": "PGF",
+          "family_id": "famA",
           "father": null,
           "mother": null,
           "sex": "male",
@@ -42,6 +46,7 @@
         },
         {
           "sample_id": "PGM",
+          "family_id": "famA",
           "father": null,
           "mother": null,
           "sex": "female",
@@ -51,6 +56,7 @@
         },
         {
           "sample_id": "F",
+          "family_id": "famA",
           "father": "PGF",
           "mother": "PGM",
           "sex": "male",
@@ -60,6 +66,7 @@
         },
         {
           "sample_id": "M",
+          "family_id": "famA",
           "father": "MGF",
           "mother": "MGM",
           "sex": "female",
@@ -69,6 +76,7 @@
         },
         {
           "sample_id": "UF",
+          "family_id": "famA",
           "father": "PGF",
           "mother": "PGM",
           "sex": "male",
@@ -78,6 +86,7 @@
         },
         {
           "sample_id": "C1",
+          "family_id": "famA",
           "father": "F",
           "mother": "M",
           "sex": "male",
@@ -87,6 +96,7 @@
         },
         {
           "sample_id": "C2",
+          "family_id": "famA",
           "father": "F",
           "mother": "M",
           "sex": "female",
@@ -96,6 +106,7 @@
         },
         {
           "sample_id": "C2T",
+          "family_id": "famA",
           "father": "F",
           "mother": "M",
           "sex": "female",
@@ -105,6 +116,7 @@
         },
         {
           "sample_id": "H1",
+          "family_id": "famA",
           "father": "F",
           "mother": "M2",
           "sex": "male",
@@ -114,6 +126,7 @@
         },
         {
           "sample_id": "H2",
+          "family_id": "famA",
           "father": "F",
           "mother": "M2",
           "sex": "female",
@@ -295,6 +308,7 @@
       "members": [
         {
           "sample_id": "FB",
+          "family_id": "famB",
           "father": null,
           "mother": null,
           "sex": "male",
@@ -304,6 +318,7 @@
         },
         {
           "sample_id": "MB",
+          "family_id": "famB",
           "father": null,
           "mother": null,
           "sex": "female",
@@ -313,6 +328,7 @@
         },
         {
           "sample_id": "K1",
+          "family_id": "famB",
           "father": "FB",
           "mother": "MB",
           "sex": "male",
@@ -322,6 +338,7 @@
         },
         {
           "sample_id": "K2",
+          "family_id": "famB",
           "father": "FB",
           "mother": "MB",
           "sex": "female",
@@ -331,6 +348,7 @@
         },
         {
           "sample_id": "XB",
+          "family_id": "famB",
           "father": "FB",
           "mother": "MB",
           "sex": "male",

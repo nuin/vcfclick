@@ -46,6 +46,19 @@ GRANDPARENT_SLOTS: tuple[str, ...] = (
     "maternal_grandmother",
 )
 LEVELS: tuple[str, ...] = ("error", "warning", "info")
+# Every value Pedigree.expected_label can return. Other modules (the case
+# workflow's relationship view, the apps) key off these strings, so they
+# are a contract: a new label is added here and nowhere else.
+EXPECTED_LABELS: tuple[str, ...] = (
+    "parent-child",
+    "full-siblings",
+    "half-siblings",
+    "grandparent-grandchild",
+    "aunt/uncle-niece/nephew",
+    "first-cousins",
+    "relative",
+    "unrelated",
+)
 
 
 class PedigreeError(ValueError):
@@ -417,7 +430,9 @@ class Pedigree:
         """The declared relationship, for display: parent-child,
         full-siblings, half-siblings, grandparent-grandchild,
         aunt/uncle-niece/nephew, first-cousins, else `relative` (some
-        common ancestor) or `unrelated`."""
+        common ancestor) or `unrelated`; always one of EXPECTED_LABELS.
+        Valid for any two individuals of one family, not only parent and
+        child."""
         if a == b:
             raise PedigreeError("a relationship needs two different individuals")
         self._require_acyclic(a, b)
