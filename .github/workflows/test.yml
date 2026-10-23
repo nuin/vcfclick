@@ -93,14 +93,15 @@ jobs:
         run: uv sync --extra web --extra benchmark --group dev --python ${{ matrix.python-version }}
 
       - name: Run tests
-        # The suite takes 6-11 min on a typical runner (most tests drive the
-        # CLI in a subprocess, and a chDB subprocess start is slow on Linux),
-        # and some shared runners are 2x slower than that. The chDB
-        # session-init retry wrapper (storage.db._open_session_with_retry)
-        # adds bounded backoff variance. The wall-clock timing gates run in
-        # the `timing` job instead of every cell.
+        # Parallel across the runner's cores (pytest-xdist): most tests drive
+        # the CLI in a subprocess with their own VCFCLICK_HOME and annotation
+        # store, so they are independent. Serial, the suite took 12-18 min a
+        # cell and one slow runner crossed 30. The chDB session-init retry
+        # wrapper (storage.db._open_session_with_retry) adds bounded backoff
+        # variance. The wall-clock timing gates run in the `timing` job,
+        # serially, instead of every cell.
         timeout-minutes: 30
-        run: uv run pytest tests/ -v -m "not timing"
+        run: uv run pytest tests/ -v -m "not timing" -n auto
 
   # DuckDB backend coverage. Smaller matrix than the chDB one because
   # the DuckDB path is pure-Python on top of duckdb's manylinux wheels;
@@ -147,7 +148,7 @@ jobs:
         # init race to retry through. test_stats and the chDB-specific
         # quote-roundtrip test self-skip on this backend.
         timeout-minutes: 15
-        run: uv run pytest tests/ -v -m "not timing"
+        run: uv run pytest tests/ -v -m "not timing" -n auto
 
   # Wall-clock timing gates (tests/test_trio_timing.py), both backends,
   # on one runner. Their budgets are relative to a scan of the same store

@@ -96,19 +96,44 @@ def tiny_vcf() -> Path:
     return p
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _session_annotation_store(tmp_path_factory):
+    """Point every test (and every CLI it spawns) at an empty annotation
+    store of its own, never the developer's annotations/annotations.duckdb.
+
+    Without this, a test that does not ask for an isolated store reads the
+    real one: its output depends on what the developer has loaded (genes
+    make compound het unblocked), and parallel workers fight over its lock.
+    One store per session, so per xdist worker. A test that seeds
+    annotations uses `isolated_annotation_db` or sets the variable itself.
+    """
+    import os
+
+    path = tmp_path_factory.mktemp("annotations") / "session_annotations.duckdb"
+    previous = os.environ.get("VCFCLICK_ANNOTATIONS_DB")
+    os.environ["VCFCLICK_ANNOTATIONS_DB"] = str(path)
+    yield path
+    if previous is None:
+        os.environ.pop("VCFCLICK_ANNOTATIONS_DB", None)
+    else:
+        os.environ["VCFCLICK_ANNOTATIONS_DB"] = previous
+
+
 @pytest.fixture
 def isolated_annotation_db(tmp_path, monkeypatch) -> Path:
-    """Redirect annotations.db.DUCKDB_PATH to a temp file per test so
-    the ClinVar loader / position_for_gene / clinvar_lookup tests
-    cannot touch the user's real annotations/annotations.duckdb.
+    """A fresh annotation store for one test, so the ClinVar loader /
+    position_for_gene / clinvar_lookup tests cannot touch the user's real
+    annotations/annotations.duckdb or each other's data.
 
-    get_connection() reads DUCKDB_PATH at call time, so patching the
-    module attribute is enough — no reload needed.
+    Both the module default (DUCKDB_PATH) and the VCFCLICK_ANNOTATIONS_DB
+    override are pointed at it: the override wins in _store_path, and
+    subprocesses only see the environment.
     """
     import annotations.db as adb
 
     path = tmp_path / "test_annotations.duckdb"
     monkeypatch.setattr(adb, "DUCKDB_PATH", path)
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(path))
     return path
 
 

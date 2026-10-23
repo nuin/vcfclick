@@ -16,6 +16,7 @@ uv run pytest tests/test_trio.py::test_denovo_excludes_no_call_parent_site   # o
 uv run pytest tests/ -k discover           # by name
 VCFCLICK_BACKEND=duckdb uv run pytest tests/   # DuckDB backend (CI runs both)
 uv run pytest tests/ -m "not timing"     # skip the wall-clock gates (CI runs them in one `timing` job)
+uv run pytest tests/ -m "not timing" -n auto   # in parallel (pytest-xdist), as CI does; keep timing runs serial
 
 uvx ruff@0.15.16 format --check .          # CI pins this ruff version
 uvx ruff@0.15.16 check .
@@ -46,7 +47,7 @@ Top-level packages (each is a wheel package listed in `pyproject.toml`; add new 
 
 ## Testing constraints
 
-- Every test gets an isolated `VCFCLICK_HOME` (`vcfclick_home` fixture); annotation tests use `isolated_annotation_db`.
+- Every test gets an isolated `VCFCLICK_HOME` (`vcfclick_home` fixture) and, via a session fixture, an empty annotation store (`VCFCLICK_ANNOTATIONS_DB`), never the developer's `annotations/annotations.duckdb`; tests that seed annotations use `isolated_annotation_db`. Tests must stay independent: CI runs them in parallel.
 - **Never open a chDB session inside the pytest process.** chDB allows one embedded server per process bound to the first path; an autouse fixture in `tests/conftest.py` fails any test that leaks one. Exercise storage through the CLI (`run_cli(home, backend, *args)` in conftest) or the `run_python` fixture (fresh subprocess).
 - chDB native crashes/hangs are a known CI flake; pytest is configured to rerun only those signatures (`pyproject.toml` addopts) with a 180s per-test timeout. A real assertion failure still fails.
 - Fixtures live in `tests/fixtures/` (`tiny.vcf.gz` is the 5-variant/3-sample baseline; `bgzip_vcf()` builds indexed VCFs from plain-text fixtures).
