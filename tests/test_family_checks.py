@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import textwrap
+from types import SimpleNamespace
 
 import pytest
 
@@ -228,6 +229,9 @@ def test_family_has_reference_on_sparse_vs_keep_reference(
         sess = get_session("t")
         print(json.dumps({
             "per_sample": samples_with_reference(sess, "i1", ["CHILD", "FATHER", "NOBODY"]),
+            "order": list(samples_with_reference(
+                sess, "i1", ["NOBODY", "FATHER", "CHILD", "FATHER"]
+            )),
             "family": family_has_reference(sess, "i1", ["CHILD", "FATHER", "MOTHER"]),
             "empty": family_has_reference(sess, "i1", []),
             "other_ingest": family_has_reference(sess, "zzz", ["FATHER"]),
@@ -241,9 +245,40 @@ def test_family_has_reference_on_sparse_vs_keep_reference(
         "FATHER": keep_reference,
         "NOBODY": False,
     }
+    assert got["order"] == ["NOBODY", "FATHER", "CHILD"]  # first listed, no repeats
     assert got["family"] is False  # CHILD has no reference row in either store
     assert got["empty"] is False  # nothing listed proves nothing
     assert got["other_ingest"] is False
+
+
+class _StubSession:
+    """Records the SQL it is sent and answers with the sample ids in `have`."""
+
+    def __init__(self, have):
+        self.have, self.sql = have, []
+
+    def query(self, sql, fmt):
+        self.sql.append(sql)
+        body = json.dumps({"data": [[s] for s in self.have]}).encode()
+        return SimpleNamespace(bytes=lambda: body)
+
+
+def test_samples_with_reference_is_one_query_however_many_samples():
+    """A 32-sample case used to cost 32 scans (one per sample, each a full
+    scan for a sample with no reference row on a sparse store)."""
+    from cli.family_checks import samples_with_reference
+
+    names = [f"S{i:02d}" for i in range(32)] + ["O'Brien"]
+    sess = _StubSession(["S01", "S31", "NOT_ASKED_FOR"])
+    got = samples_with_reference(sess, "i1", [*names, "S01"])
+    assert len(sess.sql) == 1
+    assert list(got) == names  # first-listed order, the repeat dropped
+    assert {s for s, ok in got.items() if ok} == {"S01", "S31"}
+    assert "'O'Brien'" not in sess.sql[0]  # quoted, not spliced in
+
+    sess = _StubSession([])
+    assert samples_with_reference(sess, "i1", []) == {}
+    assert sess.sql == []  # nothing listed, nothing asked
 
 
 @pytest.mark.parametrize("backend", BACKENDS)

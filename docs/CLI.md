@@ -10,6 +10,7 @@ Run `vcfclick --help` or `vcfclick <command> --help` any time for the same infor
 - **Ingesting variants** — [`db ingest`](#db-ingest) · [`db ingest-batch`](#db-ingest-batch) · [`merge`](#merge) · [`combine`](#combine) · [`discover`](#discover)
 - **Population genetics** — [`db panel`](#db-panel) · [`db popgen`](#db-popgen) ([`summary`](#db-popgen-summary) · [`sfs`](#db-popgen-sfs) · [`fst`](#db-popgen-fst) · [`windows`](#db-popgen-windows))
 - **Family / trio analysis** — [`db ped`](#db-ped) · [`db families`](#db-families) · [`db trio`](#db-trio) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
+- **Filter presets** — [`preset list`](#preset-list) · [`preset show`](#preset-show) · [`preset save`](#preset-save) · [`preset set` / `unset` / `edit` / `rename` / `rm`](#preset-set-unset-edit-rename-rm) · [`preset export` / `import`](#preset-export-import) · [`preset validate`](#preset-validate) · [`preset path`](#preset-path)
 - **Benchmarking** — [`benchmark`](#benchmark) · [`benchmark-cohort`](#benchmark-cohort)
 - **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad)
 - **Export & sharing** — [`db export`](#db-export) · [`db dump`](#db-dump) · [`db ingest-parquet`](#db-ingest-parquet) · [`db push`](#db-push) · [`db pull`](#db-pull)
@@ -782,6 +783,8 @@ older rule, every child with both parents declared. `--format json` adds
 `families` list to the `trios` document; see
 [TRIO.md](TRIO.md#running-db-trio-over-a-family).
 
+`--preset NAME` applies a [filter preset](PRESETS.md): the built-in starting points `broad-first-pass`, `strict-denovo`, `rare-recessive` and `rare-dominant`, or your own. A flag typed next to it wins. A run with a preset says, on stdout, which of its gates cannot bind in this data (a `strict-denovo` run refuses instead). `--category` takes a comma list (`recessive,comphet`). `--strict-missing`, `--pass-only`, `--parent-alt-screen` and `--require-bound-gates` are opt-in gates; with none of them and no preset the output is what it always was. See [PRESETS.md](PRESETS.md).
+
 `--format json` reports, for every model, `blocked` and `blocked_reason`
 (`null`, or `needs_keep_reference` / `needs_genes`), and under `gates` the
 `af_gate` outcome (`applied`, `cohort_derived_suspected`,
@@ -817,23 +820,62 @@ Options:
                                   children of their own (the rule before
                                   probands were defined).
   --category [denovo|recessive|dominant|comphet|all]
-                                  Inheritance model. 'all' prints per-model
-                                  candidate counts.  [default: all]
-  --min-gq INTEGER                [default: 20]
-  --min-dp INTEGER                [default: 10]
+                                  Inheritance model: a name, a comma list
+                                  (recessive,comphet) or 'all'. 'all' prints
+                                  per-model candidate counts.  [default: all]
+  --min-gq INTEGER                Minimum genotype quality (GQ) of the proband
+                                  and both parents. A call with no GQ passes
+                                  unless --strict-missing.  [default: 20]
+  --min-dp INTEGER                Minimum read depth (DP) of the proband and
+                                  both parents. A call with no DP passes
+                                  unless --strict-missing.  [default: 10]
   --max-af FLOAT                  Keep variants with population info_AF <=
                                   this (rarity filter). If INFO/AF turns out
                                   to be this cohort's own frequency (GATK-
                                   style family VCFs), the filter is skipped
                                   with a note unless this option is given
                                   explicitly.  [default: 0.01]
-  --min-ab FLOAT                  [default: 0.25]
-  --max-ab FLOAT                  [default: 0.75]
+  --min-ab FLOAT                  Lowest allele balance (alt reads / all
+                                  reads) a proband het call may have.
+                                  [default: 0.25]
+  --max-ab FLOAT                  Highest allele balance a proband het call
+                                  may have.  [default: 0.75]
   --gnomad-max-af FLOAT           Additionally drop candidates whose gnomAD
                                   popmax AF exceeds this (needs `vcfclick
                                   annotations load-gnomad`). Variants absent
                                   from the loaded gnomAD slice are kept as
                                   rare.
+  --strict-missing / --no-strict-missing
+                                  A missing GQ, DP or (for a het call) AD on
+                                  the proband or a parent counts as a fail,
+                                  not a pass, for each of those gates that is
+                                  asked for. A gate whose field is absent from
+                                  more than 10% of the rows the selected
+                                  models read at their candidate sites cannot
+                                  be enforced and is an error (--no-require-
+                                  bound-gates runs anyway, with that gate
+                                  tolerant for the run).
+  --pass-only / --no-pass-only    Keep only variants whose VCF FILTER is PASS
+                                  or unset.
+  --parent-alt-screen / --no-parent-alt-screen
+                                  De novo only: a parent's stored 0/0 is
+                                  trusted only when its alt reads stay under
+                                  --max-parent-alt-frac (a parent 0/0 with >=
+                                  2 alt reads and a high alt fraction is not
+                                  proof of absence). Shows the parents' read
+                                  counts on de novo candidates.
+  --max-parent-alt-frac FLOAT     With --parent-alt-screen: the parent alt-
+                                  read fraction at and above which a stored
+                                  0/0 is not trusted.  [default: 0.05]
+  --require-bound-gates / --no-require-bound-gates
+                                  Error, instead of a warning, when a
+                                  requested gate cannot bind in this data (the
+                                  field is missing on too many rows), a
+                                  selected model cannot run on this database,
+                                  or no population-frequency filter is in
+                                  effect. --strict-missing implies it for the
+                                  GQ, DP and AD gates; --no-require-bound-
+                                  gates overrides both for this run.
   --format [text|json]            json: every model's count and candidates
                                   (with gene, gnomAD and ClinVar when loaded)
                                   in one document; without --proband, a
@@ -842,6 +884,20 @@ Options:
                                   text]
   --limit INTEGER                 json: at most this many candidates per
                                   model.  [default: 1000]
+  --preset NAME|PATH              Apply a filter preset (`vcfclick preset
+                                  list`): its values are the defaults, and a
+                                  flag typed here wins. NAME@FINGERPRINT fails
+                                  the run if the preset's content changed; a
+                                  value with a path separator or ending .json
+                                  is a file.
+  --preset-fingerprint HEX12      Fail unless the preset's fingerprint is this
+                                  (also for a preset given as a path).
+  --preset-ignore KEY             Switch one preset key off for this run
+                                  (repeatable).
+  --preset-skip-unavailable       Apply the preset keys this vcfclick knows
+                                  and skip the rest (they are NOT applied, and
+                                  the output says so); the default is an
+                                  error.
   --help                          Show this message and exit.
 ```
 
@@ -897,6 +953,346 @@ Options:
                          region.
   --format [table|json]  [default: table]
   --help                 Show this message and exit.
+```
+
+</details>
+
+## Filter presets
+
+Named, versioned, shareable sets of `db trio` filters. A preset is a small JSON
+file of filter values, with no sample, family, path or database in it. See
+[Presets](PRESETS.md) for the guide: precedence, the effective-gate report,
+the file format and sharing.
+
+### preset list
+
+List the built-in presets (starting points, not validated), your own in
+`$VCFCLICK_HOME/presets`, and any in the directories on `VCFCLICK_PRESET_PATH`.
+Always exits 0; a file that cannot be read is listed with its problem.
+
+```bash
+vcfclick preset list
+vcfclick preset list --source user --format json
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset list [OPTIONS]
+
+  List presets. Always exits 0: a file that cannot be read is listed with its
+  problem, never hidden.
+
+Options:
+  --source [builtin|user|shared|all]
+                                  Which presets: the built-ins, your own, the
+                                  shared directories (VCFCLICK_PRESET_PATH),
+                                  or all.  [default: all]
+  --command [trio|segregate|case]
+                                  Only presets meant for this command (a hint
+                                  the author set).
+  --format [text|json]            [default: text]
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### preset show
+
+Show one preset: its filters, what it covers and does not cover, its revision
+history with fingerprints, and who approved it.
+
+```bash
+vcfclick preset show strict-denovo
+vcfclick preset show id-panel --resolve --format json
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset show [OPTIONS] NAME|PATH
+
+  Show one preset: its values, what it covers and does not, its revision
+  history and fingerprint.
+
+Options:
+  --command [trio|segregate|case]
+                                  Mark the keys this command does not take.
+  --resolve                       Show the flag each key maps to.
+  --format [text|json]            [default: text]
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### preset save
+
+Save a preset from filter flags, from another preset, from a saved
+`db trio --format json` result, or from JSON.
+
+```bash
+vcfclick preset save id-panel --from-preset rare-recessive --max-af 0.003 \
+    --description "ID recessive first pass"
+vcfclick preset save redo --from-result result.json
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset save [OPTIONS] NAME
+
+  Save a preset under NAME in your presets directory.
+
+  The filter flags are the ones `db trio` takes: only those you type are saved
+  (a value you leave out is inherited from the defaults when the preset is
+  used). Built-in names are taken; so is an existing name unless --force.
+
+Options:
+  --from-preset BASE              Start from this preset's filters (copied;
+                                  there is no inheritance).
+  --from-result RESULT.json       Rebuild the filters from a saved `db trio
+                                  --format json` result that used a preset:
+                                  the values that came from the preset or a
+                                  flag.
+  --from-json FILE|-              Read {"filters": {...}, "title": ...,
+                                  "description": ...} from a file or stdin.
+  --title TEXT                    A short title.
+  --description TEXT              What the preset is for.
+  --force                         Replace a preset of that name.
+  --category [denovo|recessive|dominant|comphet|all]
+                                  Inheritance model: a name, a comma list
+                                  (recessive,comphet) or 'all'. 'all' prints
+                                  per-model candidate counts.
+  --min-gq INTEGER                Minimum genotype quality (GQ) of the proband
+                                  and both parents. A call with no GQ passes
+                                  unless --strict-missing.
+  --min-dp INTEGER                Minimum read depth (DP) of the proband and
+                                  both parents. A call with no DP passes
+                                  unless --strict-missing.
+  --max-af FLOAT                  Keep variants with population info_AF <=
+                                  this (rarity filter). If INFO/AF turns out
+                                  to be this cohort's own frequency (GATK-
+                                  style family VCFs), the filter is skipped
+                                  with a note unless this option is given
+                                  explicitly.
+  --min-ab FLOAT                  Lowest allele balance (alt reads / all
+                                  reads) a proband het call may have.
+  --max-ab FLOAT                  Highest allele balance a proband het call
+                                  may have.
+  --gnomad-max-af FLOAT           Additionally drop candidates whose gnomAD
+                                  popmax AF exceeds this (needs `vcfclick
+                                  annotations load-gnomad`). Variants absent
+                                  from the loaded gnomAD slice are kept as
+                                  rare.
+  --strict-missing / --no-strict-missing
+                                  A missing GQ, DP or (for a het call) AD on
+                                  the proband or a parent counts as a fail,
+                                  not a pass, for each of those gates that is
+                                  asked for. A gate whose field is absent from
+                                  more than 10% of the rows the selected
+                                  models read at their candidate sites cannot
+                                  be enforced and is an error (--no-require-
+                                  bound-gates runs anyway, with that gate
+                                  tolerant for the run).
+  --pass-only / --no-pass-only    Keep only variants whose VCF FILTER is PASS
+                                  or unset.
+  --parent-alt-screen / --no-parent-alt-screen
+                                  De novo only: a parent's stored 0/0 is
+                                  trusted only when its alt reads stay under
+                                  --max-parent-alt-frac (a parent 0/0 with >=
+                                  2 alt reads and a high alt fraction is not
+                                  proof of absence). Shows the parents' read
+                                  counts on de novo candidates.
+  --max-parent-alt-frac FLOAT     With --parent-alt-screen: the parent alt-
+                                  read fraction at and above which a stored
+                                  0/0 is not trusted.
+  --require-bound-gates / --no-require-bound-gates
+                                  Error, instead of a warning, when a
+                                  requested gate cannot bind in this data (the
+                                  field is missing on too many rows), a
+                                  selected model cannot run on this database,
+                                  or no population-frequency filter is in
+                                  effect. --strict-missing implies it for the
+                                  GQ, DP and AD gates; --no-require-bound-
+                                  gates overrides both for this run.
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### preset set / unset / edit / rename / rm
+
+Change a preset of yours. Built-in and shared presets are read-only, and a
+preset with `meta.locked` refuses these without `--force`.
+
+```bash
+vcfclick preset set id-panel max_af=0.002 strict_missing=true
+vcfclick preset unset id-panel gnomad_max_af
+vcfclick preset edit id-panel
+vcfclick preset rename id-panel id-panel-v2
+vcfclick preset rm id-panel-v2 --yes
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset set [OPTIONS] NAME KEY=VALUE...
+
+  Set filter values in a preset of yours: `preset set id-panel max_af=0.003`.
+
+Options:
+  --force  Change a locked preset.
+  --help   Show this message and exit.
+```
+
+</details>
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset unset [OPTIONS] NAME KEYS...
+
+  Remove filter keys from a preset of yours (they fall back to defaults).
+
+Options:
+  --force  Change a locked preset.
+  --help   Show this message and exit.
+```
+
+</details>
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset edit [OPTIONS] NAME
+
+  Open a preset of yours in $EDITOR; it is validated before it is saved.
+
+Options:
+  --force  Edit a locked preset.
+  --help   Show this message and exit.
+```
+
+</details>
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset rename [OPTIONS] OLD NEW
+
+  Rename a preset of yours.
+
+Options:
+  --force  Rename a locked preset.
+  --help   Show this message and exit.
+```
+
+</details>
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset rm [OPTIONS] NAME
+
+  Delete a preset of yours. `rm` and `delete` are the same command.
+
+Options:
+  --yes    Do not ask.
+  --force  Delete a locked preset.
+  --help   Show this message and exit.
+```
+
+</details>
+
+### preset export / import
+
+Hand presets to a colleague. Export leaves out patient-specific keys unless
+asked; import is all or nothing and records only the source file's name.
+
+```bash
+vcfclick preset export id-panel -o id-panel.vcfclick-preset.json
+vcfclick preset import id-panel.vcfclick-preset.json --as colleague-panel
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset export [OPTIONS] NAMES...
+
+  Write presets to a file to hand to a colleague.
+
+Options:
+  -o, --output FILE|DIR  Where to write: a file, or a directory (one file per
+                         preset). Without it the preset is printed.
+  --bundle               Put several presets in one file.
+  --with-patient-data    Keep patient-specific keys (such as HPO terms); they
+                         are left out of an export by default.
+  --help                 Show this message and exit.
+```
+
+</details>
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset import [OPTIONS] FILES...
+
+  Import presets from files or bundles. All or nothing.
+
+Options:
+  --as NAME             Store it under this name.
+  --force               Replace a preset of the same name.
+  --allow-unknown-keys  Store a preset with filter keys this vcfclick does not
+                        know. Using it is then an error unless --preset-skip-
+                        unavailable.
+  --help                Show this message and exit.
+```
+
+</details>
+
+### preset validate
+
+Check a preset file; exits 1 on an error.
+
+```bash
+vcfclick preset validate id-panel.vcfclick-preset.json --command trio
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset validate [OPTIONS] FILE
+
+  Check a preset file. Exits 1 when it has an error.
+
+Options:
+  --command [trio|segregate|case]
+                                  Also report the keys this command does not
+                                  take.
+  --format [text|json]            [default: text]
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### preset path
+
+Print where presets are looked up: your directory, then each shared one.
+
+```bash
+vcfclick preset path
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick preset path [OPTIONS]
+
+  Print where presets are looked up: your directory, then each shared one
+  (VCFCLICK_PRESET_PATH).
+
+Options:
+  --help  Show this message and exit.
 ```
 
 </details>

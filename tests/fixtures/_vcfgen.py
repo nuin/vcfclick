@@ -30,6 +30,7 @@ class Site:
     fmt: str = "GT"
     qual: str = "50"
     extra: dict = field(default_factory=dict, compare=False)
+    filter: str = "PASS"
 
 
 def write_vcf(
@@ -41,6 +42,7 @@ def write_vcf(
     info_header: tuple[str, ...] = (
         '##INFO=<ID=AF,Number=A,Type=Float,Description="Allele frequency">',
     ),
+    filter_header: tuple[str, ...] = (),
 ) -> Path:
     """Write `sites` (already sorted) as an uncompressed VCF 4.2 at `path`."""
     fmt_header = (
@@ -51,7 +53,7 @@ def write_vcf(
     )
     lines = ["##fileformat=VCFv4.2"]
     lines += [f"##contig=<ID={c}>" for c in contigs]
-    lines += list(info_header) + list(fmt_header)
+    lines += list(filter_header) + list(info_header) + list(fmt_header)
     lines.append("\t".join(["#CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER"])
                  + "\tINFO\tFORMAT\t" + "\t".join(samples))  # fmt: skip
     for s in sites:
@@ -68,7 +70,7 @@ def write_vcf(
                     s.ref,
                     s.alt,
                     s.qual,
-                    "PASS",
+                    s.filter,
                     s.info,
                     s.fmt,
                     *s.gts,

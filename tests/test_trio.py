@@ -389,6 +389,16 @@ def test_gnomad_filter_is_the_per_row_rule(tmp_path, monkeypatch):
     assert _gnomad_filter(candidates, 0.01) == want
     assert [r[1] for r in want] == [1, "3", 5, 6, 7, 1, 2, 1]  # the expectation
     assert _gnomad_filter([], 0.01) == []
+    # the filter says what it looked at and what it could not judge (the report
+    # after the run counts these): distinct alleles, string positions made ints
+    stats: dict = {}
+    assert _gnomad_filter(candidates, 0.01, stats) == want
+    assert len(stats["gnomad_seen"]) == 9
+    assert stats["gnomad_absent"] == {
+        ("chr1", 7, "A", "C"),
+        ("chr1", 1, "A", "G"),
+        ("chr2", 2, "A", "C"),
+    }
     # no gnomAD at all: every row is kept, in a list of its own
     monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "empty.duckdb"))
     kept = _gnomad_filter(candidates, 0.01)

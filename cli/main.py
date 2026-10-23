@@ -83,6 +83,7 @@ for _module in (
     "cli.web",
     "cli.tui",
     "cli.benchmark",
+    "cli.preset_cmds",
 ):
     importlib.import_module(_module)
 

@@ -1,0 +1,112 @@
+{
+  "positions": {
+    "dn_ok": 1000,
+    "dn_gq29": 2000,
+    "dn_gq30": 2100,
+    "dn_dp19": 3000,
+    "dn_dp20": 3100,
+    "dn_ab029": 4000,
+    "dn_ab031": 4100,
+    "dn_ab069": 5000,
+    "dn_ab071": 5100,
+    "dn_af0009": 6000,
+    "dn_af0011": 6100,
+    "dn_parent_alt": 7000,
+    "dn_parent_alt_low": 7100,
+    "dn_nonpass": 8000,
+    "dn_null_dp_parent": 9000,
+    "dn_gnomad_rare": 10000,
+    "dn_gnomad_common": 10100,
+    "rec_ok": 11000,
+    "dom_pat": 12000,
+    "ch_pat": 13100,
+    "ch_mat": 13500
+  },
+  "gnomad_popmax": {
+    "10000": 5e-05,
+    "10100": 0.0005
+  },
+  "gene": {
+    "symbol": "G1",
+    "chrom": "chr1",
+    "start": 13000,
+    "end": 14000
+  },
+  "kept": {
+    "broad-first-pass": {
+      "denovo": [
+        "dn_ok",
+        "dn_gq29",
+        "dn_gq30",
+        "dn_dp19",
+        "dn_dp20",
+        "dn_ab029",
+        "dn_ab031",
+        "dn_ab069",
+        "dn_ab071",
+        "dn_af0009",
+        "dn_af0011",
+        "dn_parent_alt",
+        "dn_parent_alt_low",
+        "dn_nonpass",
+        "dn_null_dp_parent",
+        "dn_gnomad_rare",
+        "dn_gnomad_common"
+      ],
+      "recessive": [
+        "rec_ok"
+      ],
+      "dominant": [
+        "dom_pat",
+        "ch_pat",
+        "ch_mat"
+      ],
+      "comphet": [
+        "G1"
+      ]
+    },
+    "strict-denovo": {
+      "denovo": [
+        "dn_ok",
+        "dn_gq30",
+        "dn_dp20",
+        "dn_ab031",
+        "dn_ab069",
+        "dn_af0009",
+        "dn_parent_alt_low",
+        "dn_gnomad_rare"
+      ]
+    },
+    "rare-recessive": {
+      "recessive": [
+        "rec_ok"
+      ],
+      "comphet": [
+        "G1"
+      ]
+    },
+    "rare-dominant": {
+      "denovo": [
+        "dn_ok",
+        "dn_gq29",
+        "dn_gq30",
+        "dn_dp19",
+        "dn_dp20",
+        "dn_ab029",
+        "dn_ab031",
+        "dn_ab069",
+        "dn_ab071",
+        "dn_af0009",
+        "dn_parent_alt",
+        "dn_parent_alt_low",
+        "dn_nonpass",
+        "dn_null_dp_parent",
+        "dn_gnomad_rare"
+      ],
+      "dominant": [
+        "dom_pat"
+      ]
+    }
+  },
+  "note": "hand-written; see make_preset_vcf.py for the reason of each site"
+}

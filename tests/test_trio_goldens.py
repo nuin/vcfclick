@@ -47,6 +47,10 @@ ADDED_KEYS = {
     "gates": {"af_gate"},  # gates.af_gate
     "trio": {"family_id", "kind", "siblings"},  # trio.<key> (pedigree P1)
     "top": {"families"},  # the families of a no-`--proband` {"trios": [...]}
+    # A key a document decorator adds at the top of one trio document (next to
+    # `trio`, `gates`, `models`), e.g. a later `preset` or `effective` object.
+    # Applied to every document of a `trios` list.
+    "document": {"preset", "effective"},  # present only for a run with a preset
 }
 
 GIAB = FIXTURES / "giab"
@@ -92,6 +96,15 @@ def _runs(
         for cat in cats:
             out.append((*proband, *extra, "--category", cat, "--format", fmt))
     return tuple(out)
+
+
+def _preset_runs() -> tuple[tuple[str, ...], ...]:
+    """One preset run (`--preset`, with a flag typed over it), JSON and text.
+    The JSON golden is what is left of the document without the `preset` and
+    `effective` objects, so it pins that the old keys do not move under a
+    preset; the text golden pins the `preset:` and `gates:` lines."""
+    args = ("--proband", "CHILD", "--preset", "rare-recessive", "--max-af", "0.3")
+    return tuple((*args, "--format", fmt) for fmt in ("json", "text"))
 
 
 C1 = ("--proband", "C1")
@@ -142,7 +155,7 @@ STORES = (
         "trio_relaxed",
         FIXTURES / "trio.vcf.gz",
         _ped(FIXTURES / "trio.ped"),
-        _runs(("--proband", "CHILD"), extra=("--max-af", "0.3")),
+        _runs(("--proband", "CHILD"), extra=("--max-af", "0.3")) + _preset_runs(),
         gene=("GENEX", "chr1", 1, 100000),
         ingest_id="fam1",
     ),
@@ -221,6 +234,8 @@ def _strip_added(doc: dict) -> dict:
         for key in ADDED_KEYS["top"]:
             doc.pop(key, None)
     for d in docs:
+        for key in ADDED_KEYS["document"]:
+            d.pop(key, None)
         for key in ADDED_KEYS["trio"]:
             d["trio"].pop(key, None)
         for key in ADDED_KEYS["gates"]:
@@ -229,6 +244,38 @@ def _strip_added(doc: dict) -> dict:
             for key in ADDED_KEYS["model"]:
                 model.pop(key, None)
     return doc
+
+
+def test_strip_added_handles_every_location(monkeypatch):
+    """Each ADDED_KEYS location is removed where it lives, in a lone document
+    and in every document of a `trios` list, and nothing else is touched."""
+    for location, key in (
+        ("model", "m_new"),
+        ("gates", "g_new"),
+        ("trio", "t_new"),
+        ("top", "top_new"),
+        ("document", "d_new"),
+    ):
+        monkeypatch.setitem(ADDED_KEYS, location, {key})
+
+    def base() -> dict:
+        return {
+            "trio": {"proband": "C"},
+            "gates": {"min_gq": 20},
+            "models": {"denovo": {"count": 0}},
+        }
+
+    def extended() -> dict:
+        d = base()
+        d["trio"]["t_new"] = 1
+        d["gates"]["g_new"] = 2
+        d["models"]["denovo"]["m_new"] = 3
+        d["d_new"] = {"nested": True}
+        return d
+
+    assert _strip_added(extended()) == base()
+    wrapped = {"trios": [extended(), extended()], "families": ["f"], "top_new": 1}
+    assert _strip_added(wrapped) == {"trios": [base(), base()], "families": ["f"]}
 
 
 # Log lines the embedded engine prints on its own, unrelated to vcfclick's
