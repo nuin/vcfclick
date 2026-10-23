@@ -790,6 +790,31 @@ def test_a_strict_preset_refuses_a_database_its_model_cannot_run_on(world):
     assert not [x for x in ok["effective"]["warnings"] if x["code"] == "model_blocked"]
 
 
+def test_a_typed_parent_alt_screen_on_a_database_without_reference_calls_says_so(world):
+    """The screen is about the de novo model, which has no stored 0/0 to screen on
+    this database: it would print `denovo candidates: 0` and look like a screen that
+    found nothing."""
+    out = trio(world, "r", "--category", "denovo", "--parent-alt-screen")
+    assert warning_lines(out.stdout) == [f"  WARNING: {NO_REFERENCE}"]
+    assert "denovo candidates: 0" in out.stdout
+    doc = jtrio(world, "r", "--category", "denovo", "--parent-alt-screen")
+    (w,) = doc["effective"]["warnings"]
+    assert (w["code"], w["key"], w["message"]) == (
+        "model_blocked",
+        "category",
+        NO_REFERENCE,
+    )
+    assert "preset" not in doc and doc["models"]["denovo"]["blocked"] is True
+    # a database that stores them, or a model the screen is not about: nothing blocked
+    ok = jtrio(world, "p", "--category", "denovo", "--parent-alt-screen")
+    assert ok["effective"]["warnings"] == []
+    rec = jtrio(world, "r", "--category", "recessive", "--parent-alt-screen")
+    assert [w["code"] for w in rec["effective"]["warnings"]] == ["gate_not_applicable"]
+    # --pass-only typed alone is not about the de novo model
+    flt = jtrio(world, "r", "--category", "denovo", "--pass-only")
+    assert not [w for w in flt["effective"]["warnings"] if w["code"] == "model_blocked"]
+
+
 def test_a_warn_only_preset_names_each_selected_model_that_cannot_run(world):
     """rare-recessive selects recessive (which needs no reference) and comphet
     (which needs the reference and the gene table). Nothing is refused; the

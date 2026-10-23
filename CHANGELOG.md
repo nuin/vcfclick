@@ -123,7 +123,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   nothing (`pass_only_no_labels`, a warning and never a refusal), and a typed
   `--pass-only` is reported like `--parent-alt-screen`. `--parent-alt-screen`
   on a VCF whose parents carry no allele depths says so (it screens nothing), in a
-  `WARNING:` line and an `effective` object that is about that gate alone (the
+  `WARNING:` line (and, on a database without stored hom-reference calls, the
+  `model_blocked` warning for the de novo model it exists for) and an `effective`
+  object that is about that gate alone (the
   `bound` of the gates it did not examine, `gnomad.bound` and
   `population_filter` are `null`, not a claim that gnomAD took effect).
   `strict-denovo` turns the strict ones on, so it refuses to run, with the remedy, on data it cannot be strict

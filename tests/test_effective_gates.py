@@ -1245,13 +1245,37 @@ def test_a_selected_model_that_cannot_run_is_a_warning_and_a_refusal_when_insist
     assert not by_code(report(), "model_blocked")
 
 
-def test_a_report_limited_to_one_gate_does_not_speak_for_the_models():
+def test_a_report_limited_to_one_gate_speaks_only_for_the_models_it_is_about():
+    """A typed --parent-alt-screen on a database with no stored hom-reference calls
+    screens nothing: the de novo model it exists for cannot run. That is said. The
+    other models, and a gate that is about none of them, are not spoken for."""
+    screen = GATES._replace(parent_alt_screen=True)
     rep = report(
-        gates=GATES._replace(parent_alt_screen=True),
-        blocked_models=[NO_REF],
-        only={"parent_alt_screen"},
+        gates=screen, blocked_models=[NO_REF, NO_GENES], only={"parent_alt_screen"}
     )
-    assert not by_code(rep, "model_blocked")
+    (w,) = by_code(rep, "model_blocked")
+    assert w["message"] == (
+        "denovo cannot run: this database has no stored hom-reference calls; "
+        "re-ingest with --keep-reference"
+    )
+    assert (w["level"], w["key"]) == ("warning", "category")
+    assert rep.document["warnings"] == list(rep.warnings) and rep.errors == ()
+    # comphet is not what the screen is about
+    only_comphet = report(
+        gates=screen, blocked_models=[NO_GENES], only={"parent_alt_screen"}
+    )
+    assert not by_code(only_comphet, "model_blocked")
+    # a FILTER gate typed alone is about every model and so about none in particular
+    flt = report(
+        gates=GATES._replace(pass_only=True),
+        blocked_models=[NO_REF],
+        only={"pass_only"},
+    )
+    assert not by_code(flt, "model_blocked")
+    # the model runs: nothing to say
+    assert not by_code(
+        report(gates=screen, only={"parent_alt_screen"}), "model_blocked"
+    )
 
 
 # ───────────────────────────── the other warnings ─────────────────────────────

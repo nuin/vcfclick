@@ -495,6 +495,11 @@ _SITE_ROWS: dict[str, dict[str, tuple[str, ...]]] = {
     "comphet": {"proband": (HET,), "father": _ANY, "mother": _ANY},
 }
 _ROLES = ("proband", "father", "mother")
+# The models a gate typed on its own is about. In a report limited to such a gate
+# (`only`), a model it is about that cannot run is still said: a parent-allele
+# screen typed for a database with no stored hom-reference calls screens nothing,
+# because the de novo model it exists for has no candidate to screen.
+_GATE_MODELS: dict[str, tuple[str, ...]] = {"parent_alt_screen": ("denovo",)}
 
 # one selected model's reading of a gate: (model, {role: genotype classes})
 Read = tuple[str, dict[str, tuple[str, ...]]]
@@ -722,7 +727,8 @@ def build_report(
     `blocked_models` are the (model, reason) pairs of the models the run selected
     that cannot run on this database (reasons from `BLOCKED_REASONS`): an empty
     model is not a clean result, so each is a `model_blocked` warning, and an
-    error for a run that insists on its gates.
+    error for a run that insists on its gates. (A report limited to some gates
+    says it only for the models those gates are about: `_GATE_MODELS`.)
     `skipped` are the preset's skipped keys (from the echo); `preset_max_af` is
     the max_af a preset supplied, set only so a skip of it can be explained;
     `enforce_bound` / `enforce_format` choose which warnings are also errors
@@ -968,7 +974,10 @@ def build_report(
                 f"{subject}{hint}",
             )
         )
+    about = {m for key in (only or ()) for m in _GATE_MODELS.get(key, ())}
     for model, reason in blocked_models:
+        if only is not None and model not in about:
+            continue  # a report limited to some gates speaks for no other model
         warnings.append(
             warning(
                 "model_blocked",
@@ -992,7 +1001,9 @@ def build_report(
         )
 
     if only is not None:
-        warnings = [w for w in warnings if w["key"] in only]
+        warnings = [
+            w for w in warnings if w["key"] in only or w["code"] == "model_blocked"
+        ]
         # what was not examined is not claimed either: no `bound` for a gate
         # outside the scope (the document says null for it)
         bound = {k: v for k, v in bound.items() if k in only}

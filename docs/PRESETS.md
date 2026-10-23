@@ -165,7 +165,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare. When the pre-run probe found gnomAD judges the cohort (a record for at least 10% of the sample) the text says how much of it gnomAD reaches and that the candidates are probably novel, which is what de novo candidates are; when it reached under 10% (a run that insists would have refused, a warn-only one carries `gnomad_no_coverage` too) or the probe did not run, it says to check the genome build and chromosome naming instead |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
 | `strict_missing_dropped` | after a `strict_missing` run: candidates that pass every other gate (the gnomAD filter too) were dropped only because a GQ, DP or allele depth they are judged on is missing, counted with one query per model (the rows a run without `strict_missing` lists beyond this one). A gate that binds has its field on 90% of its rows, and the other 10% are what this counts. Variants, for `comphet` as for the rest, and said once for `dominant` and `comphet` together. A `WARNING:` line after the listing and an entry in `effective.warnings`; `--no-strict-missing` lists them |
-| `model_blocked` | a model the run selected cannot run on this database: it has no stored hom-reference calls (`denovo`, `dominant` and `comphet` need `--keep-reference`) or no gene table is loaded (`comphet`). The model's count is 0 because of the database, not the genome. Named per model, in the text and in `effective.warnings`; not reported in a run limited to the gates it typed |
+| `model_blocked` | a model the run selected cannot run on this database: it has no stored hom-reference calls (`denovo`, `dominant` and `comphet` need `--keep-reference`) or no gene table is loaded (`comphet`). The model's count is 0 because of the database, not the genome. Named per model, in the text and in `effective.warnings`. A run limited to the gates it typed reports it only for the model the typed gate is about: `--parent-alt-screen` on a database without stored 0/0 calls says `denovo cannot run`, because the screen has no candidate to act on |
 | `skipped_widening` | a preset key was skipped and skipping widens the search |
 | `preset_max_af_not_applied` | the preset's `max_af` was skipped as cohort-derived (`info`) |
 
@@ -250,8 +250,10 @@ parent 0/0 is trusted), and on a VCF whose `FILTER` column carries no label the
 FILTER gate removes nothing, so the run prints that `WARNING:` line and carries an
 `effective` object whose only warning is the one for the gate that was typed
 (`gate_unbound` for `parent_alt_screen`, `pass_only_no_labels` for `pass_only`).
-The other gates were not asked for, so they are not reported, and the object does
-not claim anything about them either: gnomAD is not probed in this run, so `gnomad.bound`, `info_af.bound`,
+The other gates were not asked for, so they are not reported (nor are the models
+the typed gate is not about; for `--parent-alt-screen` a `denovo` that cannot run
+is, since the screen exists for it), and the object does not claim anything about
+them either: gnomAD is not probed in this run, so `gnomad.bound`, `info_af.bound`,
 `gq.bound`, `dp.bound` and `population_filter` are `null` (not examined; not the
 same as bound or unbound), and `ad.bound` is the screen's own verdict. The shares
 of rows, the medians and `gnomad.loaded` are facts about the data and stay.
