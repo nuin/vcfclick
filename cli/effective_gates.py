@@ -632,7 +632,6 @@ def _weakest_read(
     stats: Sequence[SampleGateStats],
     name: str,
     reads: Sequence[Read],
-    fallback: Collection[str],
     candidates: Mapping[str, CandidateStats] | None = None,
 ) -> Judged:
     """The lowest share of rows carrying `name` among the rows the gate reads, and
@@ -643,10 +642,10 @@ def _weakest_read(
     weakest model decides. A model with no candidate rows of those classes (none
     at all, or no candidate counted for it) is judged on the sample's stored rows of
     the classes; a role a model reads but that has none of those on its whole
-    sample; and the roles in `fallback` (the ones the gate has always been judged
-    on) when no selected model reads the gate at all: there is nothing more
-    specific to go by. A role no model reads is not judged (a de novo
-    candidate's parents are 0/0, so their het rows' depths are not asked for)."""
+    sample. A role no model reads is not judged (a de novo candidate's parents are
+    0/0, so their het rows' depths are not asked for). `reads` is never empty: a
+    gate that no selected model reads is not applicable (`gate_not_applicable`)
+    and is not judged at all."""
     present = {s.role: s for s in stats}
     # role -> (share, the model whose candidates it was taken over | None, classes)
     worst: dict[str, tuple[float, str | None, tuple[str, ...] | None]] = {}
@@ -666,9 +665,8 @@ def _weakest_read(
                 )
             if share is not None and (role not in worst or share < worst[role][0]):
                 worst[role] = (share, source, classes)
-    whole = read_roles if reads else set(fallback)
     for s in stats:
-        if s.role in whole and s.role not in worst and s.rows:
+        if s.role in read_roles and s.role not in worst and s.rows:
             worst[s.role] = (s.fraction(name), None, None)
     if not worst:
         return Judged(None, "", "")
@@ -732,8 +730,22 @@ def build_report(
     thin-coverage sentence."""
     warnings: list[dict] = []
     bound: dict[str, bool] = {}
-    all_roles = [s.role for s in stats]
-    parents = [r for r in all_roles if r in ("father", "mother")]
+    selected = CATEGORIES if "all" in categories else tuple(categories)
+
+    def not_applicable(key: str, shown: str, why: str) -> None:
+        """A requested gate that no selected model reads: it removes nothing, so
+        it is not bound. A warning and not a refusal (not in `_BOUND_CODES`):
+        nothing about the data is wrong, the run's models just do not use it."""
+        bound[key] = False
+        many = len(selected) > 1
+        warnings.append(
+            warning(
+                "gate_not_applicable",
+                key,
+                f"{shown} is not applied by the model{'s' if many else ''} this run "
+                f"selects ({', '.join(selected)}): {why}, so it removes nothing",
+            )
+        )
 
     def strict_note(key: str, label: str) -> str:
         """What the gate does with a call that lacks the field, said when that
@@ -750,13 +762,14 @@ def build_report(
             )
         return ""
 
-    def check_format(
-        key: str, field_name: str, label: str, shown: str, fallback: Sequence[str]
-    ):
+    def check_format(key: str, field_name: str, label: str, shown: str, why: str):
         """One GQ / DP / AD gate: bound, partial or unbound, judged on the rows
-        the selected models read it from (their candidate rows)."""
+        the selected models read it from (their candidate rows), or not applicable
+        when none of them reads it (`why` says what the gate judges)."""
         reads = gate_reads(key, categories, strict=gates.strict_for(key))
-        judged = _weakest_read(stats, field_name, reads, fallback, candidates)
+        if not reads:
+            return not_applicable(key, shown, why)
+        judged = _weakest_read(stats, field_name, reads, candidates)
         lowest = judged.lowest
         if lowest is None:
             bound[key] = False
@@ -790,29 +803,34 @@ def build_report(
                     )
                 )
 
-    ab_roles = all_roles if gates.strict_for("min_ab") else ["proband"]
     if gates.min_gq > 0:
-        check_format("min_gq", "gq", "GQ", f"min_gq={gates.min_gq}", all_roles)
+        check_format(
+            "min_gq", "gq", "GQ", f"min_gq={gates.min_gq}", "no model reads a call"
+        )
     if gates.min_dp > 0:
-        check_format("min_dp", "dp", "DP", f"min_dp={gates.min_dp}", all_roles)
+        check_format(
+            "min_dp", "dp", "DP", f"min_dp={gates.min_dp}", "no model reads a call"
+        )
     if gates.ab_requested:
         check_format(
             "min_ab",
             "ad",
             "AD",
             f"min_ab={gates.min_ab:g}/max_ab={gates.max_ab:g}",
-            ab_roles,
+            "the band judges heterozygous calls and they read none (a homozygous-alt "
+            "proband call is not allele-balance gated)",
         )
         bound["max_ab"] = bound["min_ab"]
 
-    if gates.parent_alt_screen:
-        judged = _weakest_read(
-            stats,
-            "ad",
-            gate_reads("parent_alt_screen", categories),
-            parents,
-            candidates,
+    screen_reads = gate_reads("parent_alt_screen", categories)
+    if gates.parent_alt_screen and not screen_reads:
+        not_applicable(
+            "parent_alt_screen",
+            "parent_alt_screen",
+            "the screen is read by the denovo model only",
         )
+    elif gates.parent_alt_screen:
+        judged = _weakest_read(stats, "ad", screen_reads, candidates)
         lowest = judged.lowest
         ok = lowest is not None and lowest >= ENFORCEABLE_MIN
         bound["parent_alt_screen"] = ok

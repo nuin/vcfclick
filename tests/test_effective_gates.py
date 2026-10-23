@@ -24,6 +24,7 @@ from cli.effective_gates import (
     GnomadProbe,
     SampleGateStats,
     VariantStats,
+    _BOUND_CODES,
     build_report,
     candidate_models,
     candidate_presence_sql,
@@ -152,6 +153,62 @@ def test_a_zero_threshold_is_not_a_requested_gate():
     assert "min_gq" not in rep.bound and not by_code(rep, "gate_unbound")
 
 
+def test_a_requested_gate_that_no_selected_model_reads_is_not_applicable():
+    """`--category recessive --min-ab 0.4`: the proband is hom-alt, which the band
+    does not judge, and a parent's het call only counts under strict_missing. The
+    gate removes nothing, so it is not bound, and the run says so (a warning, not
+    a refusal: nothing is wrong with the data)."""
+    gates = GATES._replace(min_ab=0.4)
+    rep = report(categories=["recessive"], enforce_bound=True, enforce_format=True)
+    assert rep.bound["min_ab"] is False and rep.bound["max_ab"] is False
+    (w,) = by_code(rep, "gate_not_applicable")
+    assert (w["level"], w["key"]) == ("warning", "min_ab")
+    assert w["message"] == (
+        "min_ab=0.25/max_ab=0.75 is not applied by the model this run selects "
+        "(recessive): the band judges heterozygous calls and they read none (a "
+        "homozygous-alt proband call is not allele-balance gated), so it removes "
+        "nothing"
+    )
+    assert rep.errors == ()  # not a refusal code, even for a run that insists
+    assert "gate_not_applicable" not in _BOUND_CODES
+    assert report(categories=["recessive"], gates=gates).bound["min_ab"] is False
+    # the document's AD verdict follows: no gate that reads AD does anything
+    assert rep.document["ad"]["bound"] is False
+    # a model that reads het calls makes it applicable; so does strict_missing, which
+    # asks a parent's het call to carry its depths
+    assert report(categories=["recessive", "dominant"]).bound["min_ab"] is True
+    strict = report(categories=["recessive"], gates=GATES._replace(strict_missing=True))
+    assert strict.bound["min_ab"] is True and not by_code(strict, "gate_not_applicable")
+    # a band that excludes nothing is not requested, so there is nothing to say
+    none = GATES._replace(min_ab=0.0, max_ab=1.0)
+    assert not by_code(
+        report(categories=["recessive"], gates=none), "gate_not_applicable"
+    )
+
+
+def test_the_parent_allele_screen_is_applicable_only_to_the_de_novo_model():
+    gates = GATES._replace(parent_alt_screen=True)
+    rep = report(categories=["recessive", "dominant", "comphet"], gates=gates)
+    assert rep.bound["parent_alt_screen"] is False
+    (w,) = [
+        w
+        for w in by_code(rep, "gate_not_applicable")
+        if w["key"] == "parent_alt_screen"
+    ]
+    assert w["message"] == (
+        "parent_alt_screen is not applied by the models this run selects (recessive, "
+        "dominant, comphet): the screen is read by the denovo model only, so it "
+        "removes nothing"
+    )
+    assert rep.errors == () and not by_code(rep, "gate_unbound")
+    assert report(categories=["denovo"], gates=gates).bound["parent_alt_screen"] is True
+    assert report(categories=["all"], gates=gates).bound["parent_alt_screen"] is True
+    # in a report limited to the typed screen it is the only thing said
+    scoped = report(categories=["recessive"], gates=gates, only={"parent_alt_screen"})
+    assert [w["code"] for w in scoped.warnings] == ["gate_not_applicable"]
+    assert scoped.bound == {"parent_alt_screen": False}
+
+
 def test_the_parent_alt_screen_needs_the_parents_allele_depths():
     gates = GATES._replace(parent_alt_screen=True)
     assert report(gates=gates).bound["parent_alt_screen"] is True
@@ -241,13 +298,17 @@ def test_the_whole_sample_share_hides_a_field_missing_where_the_gate_reads():
     (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == "parent_alt_screen"]
     assert "only 0% of father/mother 0/0 rows carry AD" in w["message"]
     assert [e["key"] for e in rep.errors] == ["parent_alt_screen"]
-    # the other models never read it, and the document keeps the whole-sample facts
-    assert report(stats, gates, categories=["recessive"]).bound["parent_alt_screen"]
+    # the other models never read it: it is not applicable there (and not unbound)
+    rec = report(stats, gates, categories=["recessive"])
+    assert rec.bound["parent_alt_screen"] is False
+    assert not [
+        w for w in by_code(rec, "gate_unbound") if w["key"] == "parent_alt_screen"
+    ]
     assert report(stats, gates, categories=["all"]).bound["parent_alt_screen"] is False
     # AD is read by two gates: the document's ad.bound is bound only if both are
     assert rep.bound["min_ab"] is True
     assert rep.document["ad"]["bound"] is False
-    assert report(stats, gates, categories=["recessive"]).document["ad"]["bound"]
+    assert rec.document["ad"]["bound"] is False  # the screen removes nothing there
     assert rep.document["ad"]["father"] == round(200 / 210, 4)
     # allele balance (strict: the parents' het calls too) is judged on het rows,
     # which have their depths
@@ -290,9 +351,11 @@ def test_the_proband_is_judged_on_its_non_reference_rows():
     assert rep.bound["min_ab"] is False
     (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == "min_ab"]
     assert "only 0% of proband 0/1 rows carry AD" in w["message"]
-    # a hom-alt proband is not allele-balance gated, so recessive reads no proband row
-    # and the gate is judged as it always was, on the whole sample
-    assert report(stats, categories=["recessive"]).bound["min_ab"] is True
+    # a hom-alt proband is not allele-balance gated, so recessive reads no row the
+    # band judges: it is not applicable there, not judged on the sample at large
+    rec = report(stats, categories=["recessive"])
+    assert rec.bound["min_ab"] is False and not by_code(rec, "gate_unbound")
+    assert [w["key"] for w in by_code(rec, "gate_not_applicable")] == ["min_ab"]
 
 
 def test_a_class_without_rows_falls_back_to_the_whole_sample():
@@ -318,7 +381,8 @@ def test_a_class_without_rows_falls_back_to_the_whole_sample():
 
 def test_only_the_models_the_run_selected_decide():
     stats = mismatched("gq")
-    assert report(stats, categories=["recessive"]).warnings == ()
+    no_band = GATES._replace(min_ab=0.0, max_ab=1.0)
+    assert report(stats, no_band, categories=["recessive"]).warnings == ()
     assert report(stats, categories=["denovo"]).bound["min_gq"] is False
     # a model name this version does not know reads everything, never nothing
     assert report(stats, categories=["xlinked"]).bound["min_gq"] is True
@@ -431,7 +495,10 @@ def test_the_weakest_model_decides_and_each_is_judged_on_its_own_candidates():
         "recessive", 200, proband=dict(alt=(200, 200, 200, 200)),
         father=dict(het=(200, 200, 200, 200)), mother=dict(het=(200, 200, 200, 200)),
     )  # fmt: skip
-    assert not report(whole, categories=["recessive"], candidates=candidates).warnings
+    no_band = GATES._replace(min_ab=0.0, max_ab=1.0)
+    assert not report(
+        whole, no_band, categories=["recessive"], candidates=candidates
+    ).warnings
     both = report(whole, categories=["recessive", "denovo"], candidates=candidates)
     assert both.bound["min_gq"] is False
     (w,) = by_code(both, "gate_unbound")
@@ -1363,6 +1430,7 @@ def test_warning_codes_are_a_closed_list():
         "no_population_frequency_filter", "skipped_widening",
         "preset_max_af_not_applied", "gnomad_no_coverage", "gnomad_no_record",
         "pass_only_no_labels", "model_blocked", "strict_missing_dropped",
+        "gate_not_applicable",
     }  # fmt: skip
     # a code is registered by the change that first emits it: none for a run that
     # `db trio` refuses (a duo's de novo answer comes with duo analysis)

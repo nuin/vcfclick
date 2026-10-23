@@ -97,7 +97,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   all of a sample's rows or of one genotype class, so a caller that fills GQ or
   AD on its inherited calls and leaves it empty on the de novo ones no longer
   reads as bound, and `strict-denovo` refuses with a remedy that names the
-  field instead of printing `denovo candidates: 0`. Gates that cannot
+  field instead of printing `denovo candidates: 0`. A requested gate that no
+  selected model reads (`--category recessive --min-ab 0.4`: a hom-alt call is
+  not band-gated; `--parent-alt-screen` without the de novo model) is not
+  bound and says `gate_not_applicable`, a warning and never a refusal. Gates that cannot
   bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
   so is `NO population frequency filter applied` (the cohort-derived-AF case
   with no gnomAD loaded), a median proband depth under 1.5 x `min_dp`, and a

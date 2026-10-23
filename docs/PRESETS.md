@@ -129,7 +129,9 @@ classes (no candidate at all, or no stored 0/0 rows because the database was ing
 without `--keep-reference`) is judged on the sample's stored rows of those classes, and
 a role with none of those on its whole sample. The warning says which rows fell short
 (`only 0% of father/mother 0/0 rows at denovo candidate sites carry AD`), and a
-refusal's remedy names the field (`GQ is missing where the gates read it`). The
+refusal's remedy names the field (`GQ is missing where the gates read it`). A gate
+that no selected model reads at all is `bound: false` with a `gate_not_applicable`
+warning, not judged on the sample at large. The
 `gq` / `dp` / `ad` shares in `effective` stay the whole sample's, a fact about the
 data and not the verdict; `bound` is the verdict of the gates that read the field
 (`ad.bound` needs both `min_ab` and `parent_alt_screen`). The
@@ -153,6 +155,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | Warning code | When |
 |---|---|
 | `gate_unbound` | a requested gate's field is present on under 90% of its rows |
+| `gate_not_applicable` | a requested gate that none of the selected models reads, so it removes nothing and is not bound: the parent-allele screen without the `denovo` model, an allele-balance band in a run of `recessive` alone (a hom-alt call is not band-gated; with `strict_missing` a parent's het call is read, so it applies). A warning, never a refusal: nothing is wrong with the data |
 | `gate_partial` | the gate binds but not on every row (a note on stderr, `info`) |
 | `thin_coverage` | the proband's median DP is under 1.5 x `min_dp` |
 | `pass_only_no_labels` | `--pass-only` (or the preset's) is on and no variant carries a `FILTER` label other than `PASS` or unset, so it removes nothing (a warning, never a refusal: a VCF hard-filtered before ingest is all `PASS`) |

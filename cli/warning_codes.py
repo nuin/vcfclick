@@ -22,6 +22,10 @@ CODES: dict[str, str] = {
     "gate_unbound": WARNING,
     # a gate is enforced, but not on every row
     "gate_partial": INFO,
+    # a requested gate that none of the selected models reads (an allele-balance
+    # band for a hom-alt-only model, the parent-allele screen without the de novo
+    # model): it removes nothing, so it is not bound
+    "gate_not_applicable": WARNING,
     # the proband's median depth is close to min_dp: the preset may be too
     # strict for this assay
     "thin_coverage": WARNING,

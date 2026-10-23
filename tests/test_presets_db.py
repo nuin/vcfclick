@@ -596,9 +596,40 @@ def test_a_typed_parent_alt_screen_that_screens_nothing_says_so_whatever_the_oth
     assert "every parent 0/0 would be trusted" in w["message"]
     out = trio(world, "m", "--category", "denovo", "--parent-alt-screen").stdout
     assert warning_lines(out) == [f"  WARNING: {w['message']}"]
-    # a model that never reads the parents' 0/0 rows is not blamed for them
+    # a model that never reads the parents' 0/0 rows is not blamed for them: the
+    # screen is simply not applicable there, which is said, and is not unbound
     rec = jtrio(world, "m", "--category", "recessive", "--parent-alt-screen")
-    assert rec["effective"]["warnings"] == []
+    (n,) = rec["effective"]["warnings"]
+    assert (n["code"], n["key"]) == ("gate_not_applicable", "parent_alt_screen")
+    assert "the screen is read by the denovo model only" in n["message"]
+    assert rec["effective"]["ad"]["bound"] is False
+
+
+def test_a_gate_no_selected_model_reads_is_not_bound_and_says_so(world):
+    """`--category recessive --min-ab 0.4`: the proband is hom-alt, which the band
+    does not judge, so the gate removes nothing. It used to read as bound."""
+    args = ("--preset", "rare-recessive", "--category", "recessive", "--min-ab", "0.4")
+    doc = jtrio(world, "p", *args)
+    assert names(doc, "recessive") == {"rec_ok"}
+    assert doc["preset"]["resolved"]["min_ab"] == {
+        "value": 0.4, "from": "flag", "bound": False,
+    }  # fmt: skip
+    assert doc["preset"]["resolved"]["min_gq"]["bound"] is True
+    (w,) = [
+        x for x in doc["effective"]["warnings"] if x["code"] == "gate_not_applicable"
+    ]
+    assert (
+        w["key"] == "min_ab"
+        and "min_ab=0.4/max_ab=0.75 is not applied by" in w["message"]
+    )
+    assert "(recessive)" in w["message"]
+    out = trio(world, "p", *args)  # a warning, never a refusal
+    assert f"  WARNING: {w['message']}" in warning_lines(out.stdout)
+    # the same band on a run that includes a model that reads het calls binds
+    both = jtrio(
+        world, "p", *args[:2], "--category", "recessive,dominant", "--min-ab", "0.4"
+    )
+    assert both["preset"]["resolved"]["min_ab"]["bound"] is True
 
 
 DN_POSITIONS = {1000 * (i + 1) for i in range(10)}
