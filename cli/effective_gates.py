@@ -22,9 +22,15 @@ it reads:
     rows nor one over a genotype class says anything about the rows a candidate
     rests on. Only a model with no candidate rows at all (or none of the classes
     the gate reads) is judged on the sample's stored rows of those classes
-    (`collect_sample_stats`), and a role with none of those on its whole sample;
+    (`collect_sample_stats`), and a role with none of those on its whole sample.
+    A requested gate that no selected model reads (the parent-allele screen
+    without the de novo model; an allele-balance band in a run of recessive alone,
+    where the proband is hom-alt) removes nothing: it is not bound, with a
+    `gate_not_applicable` warning that is never a refusal. Between ENFORCEABLE_MIN
+    and 100% of the rows a gate binds and says `gate_partial`;
   * the INFO/AF gate on the variants (and its probe not saying the AF is the
-    cohort's own);
+    cohort's own); a variant with no INFO/AF passes it, which `gate_partial` says
+    below 100%;
   * gnomAD when it is loaded, has records on the chromosomes that hold
     ENFORCEABLE_MIN of the cohort's variants (a slice on other chromosomes, or
     under another naming, judges nothing) AND has a record for at least
@@ -47,10 +53,16 @@ FILTER label other than PASS or unset: `variants.filter` is NULL for both PASS a
 (`pass_only_no_labels`) and never a refusal, because a VCF that was hard-filtered
 before it was ingested is all PASS and the gate is right to remove nothing.
 
+The proband's median depth is judged over its non-reference calls, not over every
+stored row (`thin_coverage`): a keep-reference database stores its 0/0 rows too.
+
 A strict_missing gate is judged only when it is asked for (min_gq > 0, min_dp
 > 0, an allele-balance band narrower than 0..1, the parent-allele screen on):
 an unasked-for field is not held against a call, so it cannot make a gate
-"unbound" either.
+"unbound" either. After the run, the candidates strict_missing dropped that pass
+every other gate are counted (`strict_missing_dropped`,
+`TrioAnalysis.dropped_by_strict`): a gate that binds still fails the few rows
+that lack its field.
 
 The gnomAD probe is a fact about the COHORT, known before the run, so a
 run that insists (`require_bound`, `strict-denovo`) can refuse on it. What is
