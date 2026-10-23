@@ -19,14 +19,15 @@ it reads:
     make a gate look unbound, or bound, on sites nobody is shown. The gnomAD
     filter runs in Python on the listed rows and cannot narrow this pool: what it
     leaves is caught after the run by `strict_missing_dropped`.) The gate is
-    judged on the genotype classes of those rows that it reads (`gate_reads`:
-    allele balance reads the proband's het rows, the parent-allele screen the
-    parents' 0/0 rows, GQ and DP every row), and the weakest model decides. A caller can fill a field on its inherited calls and
-    leave it empty on the de novo ones, and neither a share over all of a sample's
-    rows nor one over a genotype class says anything about the rows a candidate
-    rests on. Only a model with no candidate rows at all (or none of the classes
-    the gate reads) is judged on the sample's stored rows of those classes
-    (`collect_sample_stats`), and a role with none of those on its whole sample.
+    judged on the genotype classes of those rows that it reads (`gate_reads`: allele
+    balance reads the proband's het rows, the parent-allele screen the parents' 0/0
+    rows, GQ and DP every row), and the weakest model decides. A caller can fill a
+    field on its inherited calls and leave it empty on the de novo ones, and neither
+    a share over all of a sample's rows nor one over a genotype class says anything
+    about the rows a candidate rests on. Only a model with no candidate rows at all
+    (or none of the classes the gate reads) is judged on the sample's stored rows of
+    those classes (`collect_sample_stats`), and a role with none of those on its
+    whole sample.
     A requested gate that no selected model reads (the parent-allele screen
     without the de novo model; an allele-balance band in a run of recessive alone,
     where the proband is hom-alt) removes nothing: it is not bound, with a
