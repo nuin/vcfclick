@@ -202,7 +202,10 @@ def _het_ad_present(alias: str) -> str:
 PASS_ONLY_SQL = "(v.filter IS NULL OR v.filter IN ('PASS', '.', ''))"
 
 
-def _parent_joins(father: str | None, mother: str | None) -> str:
+def parent_sample_joins(father: str | None, mother: str | None) -> str:
+    """The parents' calls at the proband's sites: `f` and `m` joined to the
+    proband's row `g`. Inner joins, so a site where a parent has no stored row
+    is not a candidate."""
     from storage.sql import sample_join
 
     if father is None or mother is None:
@@ -210,11 +213,29 @@ def _parent_joins(father: str | None, mother: str | None) -> str:
             "this model needs both parents declared (father="
             f"{father!r}, mother={mother!r})"
         )
+    return f"{sample_join('f', father)} {sample_join('m', mother)}"
+
+
+def _parent_joins(father: str | None, mother: str | None) -> str:
     return (
-        f"{sample_join('f', father)} {sample_join('m', mother)} "
+        f"{parent_sample_joins(father, mother)} "
         "LEFT JOIN variants v ON v.ingest_id = g.ingest_id AND v.chrom = g.chrom "
         "AND v.pos = g.pos AND v.ref = g.ref AND v.alt = g.alt"
     )
+
+
+# The genotype predicate of each model: the sites it reads (proband `g`,
+# parents `f` and `m`), before any quality or rarity gate. One definition, used
+# by the models' SQL below and by the effective-gate report, which counts what
+# the rows at these sites carry (cli/effective_gates.collect_candidate_stats),
+# so the two can never read different sites. Compound het takes the dominant
+# pattern (a het inherited from exactly one parent) and groups it by gene.
+MODEL_PREDICATES: dict[str, str] = {
+    "denovo": "g.gt > 0 AND f.gt = 0 AND m.gt = 0",
+    "recessive": "g.gt = 2 AND f.gt = 1 AND m.gt = 1",
+    "dominant": "g.gt = 1 AND ((f.gt > 0 AND m.gt = 0) OR (f.gt = 0 AND m.gt > 0))",
+}
+MODEL_PREDICATES["comphet"] = MODEL_PREDICATES["dominant"]
 
 
 def parent_ref_ok(alias: str, gates: Gates) -> str:
@@ -317,14 +338,9 @@ def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> st
     parents are joined as `f`/`m`; `v` brings population AF."""
     from storage import count_expr
 
-    if category == "denovo":
-        model = "g.gt > 0 AND f.gt = 0 AND m.gt = 0"
-    elif category == "recessive":
-        model = "g.gt = 2 AND f.gt = 1 AND m.gt = 1"
-    elif category == "dominant":
-        model = "g.gt = 1 AND ((f.gt > 0 AND m.gt = 0) OR (f.gt = 0 AND m.gt > 0))"
-    else:
+    if category not in ROW_CATEGORIES:
         raise ValueError(f"unknown category {category!r}")
+    model = MODEL_PREDICATES[category]
 
     joins = _parent_joins(trio.father, trio.mother)
     # parent_alt_screen is about a parent's ABSENCE, so only the model that
@@ -349,8 +365,7 @@ def _comphet_sql(trio: Trio, gates: Gates) -> str:
     inherited from exactly one parent (the dominant pattern), tagged with
     parent-of-origin. The gene grouping happens in Python — genes live in
     the annotation store, which can't be SQL-joined to the cohort."""
-    model = "g.gt = 1 AND ((f.gt > 0 AND m.gt = 0) OR (f.gt = 0 AND m.gt > 0))"
-    where = _where(trio, gates, model)
+    where = _where(trio, gates, MODEL_PREDICATES["comphet"])
     origin = (
         "CASE WHEN f.gt > 0 AND m.gt = 0 THEN 'paternal' "
         "WHEN m.gt > 0 AND f.gt = 0 THEN 'maternal' END AS origin"

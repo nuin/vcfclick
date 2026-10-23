@@ -287,8 +287,9 @@ register(
         help="A missing GQ, DP or (for a het call) AD on the proband or a "
         "parent counts as a fail, not a pass, for each of those gates that is "
         "asked for. A gate whose field is absent from more than 10% of the "
-        "rows cannot be enforced and is an error (--no-require-bound-gates "
-        "runs anyway, with that gate tolerant for the run).",
+        "rows the selected models read at their candidate sites cannot be "
+        "enforced and is an error (--no-require-bound-gates runs anyway, with "
+        "that gate tolerant for the run).",
     )
 )
 register(

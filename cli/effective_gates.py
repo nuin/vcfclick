@@ -8,21 +8,32 @@ that into warnings (printed on stdout, carried in the JSON `effective`
 object) and, on request, into a refusal.
 
 A gate BINDS when its field is present on at least ENFORCEABLE_MIN of the rows
-it reads: GQ, DP and AD on the stored rows the selected models read at their
-candidate sites (`gate_reads`: a parent's 0/0 rows for de novo and for the
-parent-allele screen, a parent's 0/1 rows for recessive, the proband's non-ref
-rows; the weakest model decides, and the whole sample is the fallback for a role
-with none of those rows: a caller can fill AD on its het calls and not on its
-reference calls, and a share over all of a sample's rows then says nothing about
-the 0/0 rows a de novo call rests on), the INFO/AF gate on the variants (and its
-probe not saying the AF is the cohort's own), gnomAD when it is loaded, has
-records on the chromosomes that hold ENFORCEABLE_MIN of the cohort's variants (a
-slice on other chromosomes, or under another naming, judges nothing) AND has a
-record for at least GNOMAD_MIN_HIT_RATE of a sample of the cohort's own variants
-(a sparse test load, a slice of one gene, another genome build judge almost
-nothing, whatever chromosomes they have a row on). `--require-bound-gates` makes
-a gate that cannot bind, a selected model that cannot run, and the absence of any
-population-frequency filter, an error;
+it reads:
+
+  * GQ, DP and AD on the CANDIDATE ROWS of each selected model: the rows of the
+    proband and of the parents at the sites where the model's genotype pattern
+    holds (`MODEL_PREDICATES`: for de novo the sites where the proband carries
+    and both parents are 0/0), counted over the very join `db trio` runs, before
+    any quality gate. The gate is judged on the genotype classes of those rows
+    that it reads (`gate_reads`: allele balance reads the proband's het rows, the
+    parent-allele screen the parents' 0/0 rows, GQ and DP every row), and the
+    weakest model decides. A caller can fill a field on its inherited calls and
+    leave it empty on the de novo ones, and neither a share over all of a sample's
+    rows nor one over a genotype class says anything about the rows a candidate
+    rests on. Only a model with no candidate rows at all (or none of the classes
+    the gate reads) is judged on the sample's stored rows of those classes
+    (`collect_sample_stats`), and a role with none of those on its whole sample;
+  * the INFO/AF gate on the variants (and its probe not saying the AF is the
+    cohort's own);
+  * gnomAD when it is loaded, has records on the chromosomes that hold
+    ENFORCEABLE_MIN of the cohort's variants (a slice on other chromosomes, or
+    under another naming, judges nothing) AND has a record for at least
+    GNOMAD_MIN_HIT_RATE of a sample of the cohort's own variants (a sparse test
+    load, a slice of one gene, another genome build judge almost nothing, whatever
+    chromosomes they have a row on).
+
+`--require-bound-gates` makes a gate that cannot bind, a selected model that
+cannot run, and the absence of any population-frequency filter, an error;
 `--strict-missing` makes that error for the GQ / DP / AD gates (and the
 parent-allele screen) alone, because it turns a missing field into a fail and a
 field missing everywhere would then fail everything. `--no-require-bound-gates`
@@ -47,19 +58,30 @@ left for after the run is a fact about the CANDIDATES: a de novo candidate is
 novel by nature, so one that gnomAD has no record for is the expected case and
 not a reason to refuse; `gnomad_record_warning` says it when it is all of them.
 
-`collect_sample_stats` is the only query (one pass over the three samples'
-rows); `build_report` is pure so every threshold is a unit test. The numbers
-below are the author's choices, named so a reviewer can change one place.
+`collect_sample_stats` (one pass over the three samples' rows),
+`collect_candidate_stats` (one grouped count per selected model over its
+candidate join) and the variant and gnomAD probes are the queries; `build_report`
+is pure so every threshold is a unit test. The numbers below are the author's
+choices, named so a reviewer can change one place.
 """
 
 from __future__ import annotations
 
 import json
 import math
-from collections.abc import Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Collection, Mapping, Sequence
+from dataclasses import dataclass, replace
+from typing import NamedTuple
 
-from cli.trio_analysis import AF_GATE_SKIPPED, CATEGORIES, PASS_ONLY_SQL, Gates
+from cli.trio_analysis import (
+    AF_GATE_SKIPPED,
+    CATEGORIES,
+    MODEL_PREDICATES,
+    PASS_ONLY_SQL,
+    Gates,
+    Trio,
+    parent_sample_joins,
+)
 from cli.warning_codes import warning
 
 # A gate binds when its field is present on at least this share of the rows.
@@ -101,7 +123,8 @@ _NAMES_SHOWN = 4  # chromosome names listed in a message
 # The genotype classes of a stored row. A gate reads different rows in different
 # models (a parent's 0/0 for de novo, a parent's 0/1 for recessive, ...), and a
 # caller can fill GQ, DP and AD on one class and not another, so a share over all
-# of a sample's rows says little about the rows a gate reads.
+# of a sample's rows says little about the rows a gate reads. (Nor does a share
+# over one class of them: see `CandidateStats`.)
 REF, HET, ALT = "ref", "het", "alt"
 _ANY = (REF, HET, ALT)
 _LABEL = {REF: "0/0", HET: "0/1", ALT: "1/1"}
@@ -230,6 +253,104 @@ def collect_sample_stats(
         for (s, role) in samples
         for a in (acc[s],)
     ]
+
+
+@dataclass(frozen=True)
+class CandidateStats:
+    """What the rows a model reads at its candidate sites carry.
+
+    A candidate site is one where the model's genotype pattern holds
+    (`MODEL_PREDICATES`: for de novo the proband carries and both parents are
+    0/0). `roles` gives, for the proband and each parent, the rows at those
+    sites by genotype class with the number that carry GQ, DP and AD. These are
+    the rows the quality gates are applied to, so a field's presence on them is
+    what decides whether a gate can act; the same field on the sample's other
+    rows (the inherited calls of a de novo search) decides nothing."""
+
+    model: str
+    sites: int  # candidate sites: the model's predicate only, no quality gate
+    roles: Mapping[str, tuple[GenotypeClassStats, ...]]
+
+    def share(self, role: str, name: str, classes: Collection[str]) -> float | None:
+        """Share of this role's candidate rows of these genotype `classes` that
+        carry `name` (gq | dp | ad); None when there are none."""
+        picked = [c for c in self.roles.get(role, ()) if c.cls in classes]
+        rows = sum(c.rows for c in picked)
+        return sum(getattr(c, name) for c in picked) / rows if rows else None
+
+
+def candidate_presence_sql(model: str, trio: Trio) -> str:
+    """One grouped count over the join `trio_sql` runs for `model` (proband `g`,
+    parents `f` and `m`, the model's genotype predicate and no quality or rarity
+    gate): per combination of the three genotypes, the number of rows and, for
+    each of the three samples, how many carry GQ, DP and both allele depths."""
+    from storage import count_expr, sql_quote_str
+
+    cols = []
+    for alias in ("g", "f", "m"):
+        cols += [
+            f"sum(CASE WHEN {alias}.gq IS NOT NULL THEN 1 ELSE 0 END)",
+            f"sum(CASE WHEN {alias}.dp IS NOT NULL THEN 1 ELSE 0 END)",
+            f"sum(CASE WHEN {alias}.ad_ref IS NOT NULL AND {alias}.ad_alt IS NOT NULL "
+            "THEN 1 ELSE 0 END)",
+        ]
+    return (
+        f"SELECT g.gt, f.gt, m.gt, {count_expr()}, {', '.join(cols)} "
+        f"FROM genotypes g {parent_sample_joins(trio.father, trio.mother)} "
+        f"WHERE g.ingest_id = {sql_quote_str(trio.ingest_id)} "
+        f"AND g.sample_id = {sql_quote_str(trio.proband)} "
+        f"AND {MODEL_PREDICATES[model]} GROUP BY g.gt, f.gt, m.gt"
+    )
+
+
+def _candidate_stats(model: str, data: Sequence[Sequence]) -> CandidateStats:
+    """A `CandidateStats` from the rows of `candidate_presence_sql`."""
+    tallies: dict[str, dict[str, list[int]]] = {role: {} for role in _ROLES}
+    sites = 0
+    for row in data:
+        n = int(row[3])
+        sites += n
+        for i, role in enumerate(_ROLES):  # proband g, father f, mother m
+            tally = tallies[role].setdefault(genotype_class(int(row[i])), [0, 0, 0, 0])
+            tally[0] += n
+            for j in range(3):  # gq, dp, ad
+                tally[1 + j] += int(row[4 + 3 * i + j] or 0)
+    return CandidateStats(
+        model,
+        sites,
+        {
+            role: tuple(
+                GenotypeClassStats(k, *tallies[role][k])
+                for k in _ANY
+                if k in tallies[role]
+            )
+            for role in _ROLES
+        },
+    )
+
+
+def collect_candidate_stats(
+    sess, trio: Trio, models: Sequence[str]
+) -> dict[str, CandidateStats]:
+    """For each of `models` that has a genotype predicate, what the rows at its
+    candidate sites carry. One grouped count per distinct predicate (compound het
+    reads the dominant pattern and shares its count). A model without one, or a
+    trio without both parents, is left out, and its gates are judged on the
+    sample's stored rows instead."""
+    out: dict[str, CandidateStats] = {}
+    if trio.father is None or trio.mother is None:
+        return out
+    by_predicate: dict[str, CandidateStats] = {}
+    for model in models:
+        predicate = MODEL_PREDICATES.get(model)
+        if predicate is None:
+            continue
+        if predicate not in by_predicate:
+            raw = sess.query(candidate_presence_sql(model, trio), "JSONCompact")
+            data = json.loads(raw.bytes().decode())["data"]
+            by_predicate[predicate] = _candidate_stats(model, data)
+        out[model] = replace(by_predicate[predicate], model=model)
+    return out
 
 
 @dataclass(frozen=True)
@@ -364,6 +485,8 @@ def _weakest(
 # cli/trio_analysis.trio_sql (proband g, parents f / m) as genotype classes. A
 # de novo call needs both parents' stored 0/0; a recessive one needs both 0/1;
 # dominant and compound het need one parent with the allele and the other 0/0.
+# These are the classes of `MODEL_PREDICATES`, which `collect_candidate_stats`
+# counts the rows of.
 _SITE_ROWS: dict[str, dict[str, tuple[str, ...]]] = {
     "denovo": {"proband": (HET, ALT), "father": (REF,), "mother": (REF,)},
     "recessive": {"proband": (ALT,), "father": (HET,), "mother": (HET,)},
@@ -372,13 +495,16 @@ _SITE_ROWS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 _ROLES = ("proband", "father", "mother")
 
+# one selected model's reading of a gate: (model, {role: genotype classes})
+Read = tuple[str, dict[str, tuple[str, ...]]]
+
 
 def gate_reads(
     key: str, categories: Sequence[str], *, strict: bool = False
-) -> list[dict[str, tuple[str, ...]]]:
-    """For gate `key`, one {role: genotype classes} for each selected model that
-    reads it: the rows its WHERE clause looks at on a candidate (not the sample's
-    rows at large).
+) -> list[Read]:
+    """For gate `key`, one (model, {role: genotype classes}) for each selected
+    model that reads it: the rows its WHERE clause looks at on a candidate (not
+    the sample's rows at large).
 
       min_gq, min_dp      every row the model joins
       min_ab              het rows only: the proband's (a hom-alt or hom-ref call
@@ -388,7 +514,7 @@ def gate_reads(
 
     A model this version does not know reads every row (never none)."""
     models = CATEGORIES if "all" in categories else tuple(categories)
-    out = []
+    out: list[Read] = []
     for model in models:
         rows = _SITE_ROWS.get(model) or dict.fromkeys(_ROLES, _ANY)
         if key == "parent_alt_screen":
@@ -404,8 +530,43 @@ def gate_reads(
         else:
             read = dict(rows)
         if read:
-            out.append(read)
+            out.append((model, read))
     return out
+
+
+def judged_gate_keys(
+    gates: Gates, only: Collection[str] | None = None
+) -> tuple[str, ...]:
+    """The gate keys a report judges on the rows of a model's candidates: the GQ /
+    DP / AD gates and the parent-allele screen that this run asks for (and, in a
+    report limited to some gates, that are among them)."""
+    asked = [
+        key
+        for key, on in (
+            ("min_gq", gates.min_gq > 0),
+            ("min_dp", gates.min_dp > 0),
+            ("min_ab", gates.ab_requested),
+            ("parent_alt_screen", gates.parent_alt_screen),
+        )
+        if on
+    ]
+    return tuple(k for k in asked if only is None or k in only)
+
+
+def candidate_models(
+    gates: Gates, categories: Sequence[str], only: Collection[str] | None = None
+) -> tuple[str, ...]:
+    """The selected models whose candidate rows a report of `gates` reads: the
+    ones that read a gate it judges. (strict_missing makes a parent's het rows
+    count for allele balance; the models that read them are included whether or
+    not the gate turns out to be exempt, which only costs a count.)"""
+    return tuple(
+        dict.fromkeys(
+            model
+            for key in judged_gate_keys(gates, only)
+            for model, _ in gate_reads(key, categories, strict=gates.strict_missing)
+        )
+    )
 
 
 def _who(roles: Sequence[str], classes: Collection[str] | None) -> str:
@@ -415,43 +576,76 @@ def _who(roles: Sequence[str], classes: Collection[str] | None) -> str:
     return f"{names} {' or '.join(_LABEL[c] for c in _ANY if c in classes)}"
 
 
+class Judged(NamedTuple):
+    """The verdict of `_weakest_read` on one field."""
+
+    lowest: float | None  # the lowest share among the rows the gate reads
+    below: str  # the rows under ENFORCEABLE_MIN ("father/mother 0/0 rows at denovo
+    # candidate sites"), empty when none is
+    where: str  # where the lowest share was taken (" at denovo candidate sites"),
+    # empty for rows at large
+
+
+def _at(model: str | None) -> str:
+    return f" at {model} candidate sites" if model else ""
+
+
 def _weakest_read(
     stats: Sequence[SampleGateStats],
     name: str,
-    reads: Sequence[dict[str, tuple[str, ...]]],
+    reads: Sequence[Read],
     fallback: Collection[str],
-) -> tuple[float | None, str]:
-    """The lowest share of rows carrying `name` among the rows the gate reads (a
-    role's share is taken over the genotype classes a selected model reads, the
-    weakest model deciding), and a phrase for the roles and rows below
-    ENFORCEABLE_MIN ("father/mother 0/0"; empty when none is). A role a model
-    reads but that has none of those rows is judged on its whole sample, and so
-    are the roles in `fallback` (the ones the gate has always been judged on)
-    when no selected model reads the gate at all: there is nothing more
+    candidates: Mapping[str, CandidateStats] | None = None,
+) -> Judged:
+    """The lowest share of rows carrying `name` among the rows the gate reads, and
+    a phrase for the roles and rows below ENFORCEABLE_MIN.
+
+    A role's share is taken, for each selected model that reads the gate, over the
+    model's CANDIDATE rows of the genotype classes it reads (`candidates`), and the
+    weakest model decides. A model with no candidate rows of those classes (none
+    at all, or no candidate counted for it) is judged on the sample's stored rows of
+    the classes; a role a model reads but that has none of those on its whole
+    sample; and the roles in `fallback` (the ones the gate has always been judged
+    on) when no selected model reads the gate at all: there is nothing more
     specific to go by. A role no model reads is not judged (a de novo
     candidate's parents are 0/0, so their het rows' depths are not asked for)."""
     present = {s.role: s for s in stats}
-    worst: dict[str, tuple[float, tuple[str, ...] | None]] = {}
+    # role -> (share, the model whose candidates it was taken over | None, classes)
+    worst: dict[str, tuple[float, str | None, tuple[str, ...] | None]] = {}
     read_roles: set[str] = set()
-    for read in reads:
+    for model, read in reads:
+        at = candidates.get(model) if candidates else None
         for role, classes in read.items():
             read_roles.add(role)
-            s = present.get(role)
-            share = s.share(name, classes) if s is not None else None
+            share, source = None, None
+            if at is not None and at.sites:
+                share, source = at.share(role, name, classes), model
+            if share is None:
+                s = present.get(role)
+                share, source = (
+                    (s.share(name, classes) if s is not None else None),
+                    None,
+                )
             if share is not None and (role not in worst or share < worst[role][0]):
-                worst[role] = (share, classes)
+                worst[role] = (share, source, classes)
     whole = read_roles if reads else set(fallback)
     for s in stats:
         if s.role in whole and s.role not in worst and s.rows:
-            worst[s.role] = (s.fraction(name), None)
+            worst[s.role] = (s.fraction(name), None, None)
     if not worst:
-        return None, ""
-    lowest = min(share for share, _ in worst.values())
-    groups: dict[tuple[str, ...] | None, list[str]] = {}
-    for role in _ROLES:
-        if role in worst and worst[role][0] < ENFORCEABLE_MIN:
-            groups.setdefault(worst[role][1], []).append(role)
-    return lowest, ", ".join(_who(roles, cls) for cls, roles in groups.items())
+        return Judged(None, "", "")
+    roles = [r for r in _ROLES if r in worst]
+    first = min(roles, key=lambda r: worst[r][0])
+    groups: dict[tuple[str | None, tuple[str, ...] | None], list[str]] = {}
+    for role in roles:
+        share, source, classes = worst[role]
+        if share < ENFORCEABLE_MIN:
+            groups.setdefault((source, classes), []).append(role)
+    below = ", ".join(
+        f"{_who(rs, classes)} rows{_at(source)}"
+        for (source, classes), rs in groups.items()
+    )
+    return Judged(worst[first][0], below, _at(worst[first][1]))
 
 
 def build_report(
@@ -465,6 +659,7 @@ def build_report(
     gnomad_probe: GnomadProbe | None = None,
     filter_present: bool = True,
     categories: Sequence[str] = ("all",),
+    candidates: Mapping[str, CandidateStats] | None = None,
     blocked_models: Sequence[tuple[str, str]] = (),
     assay: str | None = None,
     subject: str = "preset",
@@ -479,7 +674,11 @@ def build_report(
     `gnomad_chroms` are the chromosomes the loaded gnomAD data has records on
     and `gnomad_probe` how much of a sample of the cohort's variants it can
     judge (None for either: not looked at, so any loaded gnomAD is taken to
-    cover the cohort). `only` limits the report to these gate keys: a run that
+    cover the cohort). `candidates` are what the rows at each selected model's
+    candidate sites carry (`collect_candidate_stats`): the GQ / DP / AD gates are
+    judged on them, and on the sample's stored rows only for a model that has none
+    (None: no candidate was counted, as in a unit test with synthetic counts).
+    `only` limits the report to these gate keys: a run that
     asked for one opt-in gate, and nothing else, is told about that gate only.
     The warnings are those about these keys, and in the document every `bound`
     (and `population_filter`) of a gate outside them is null: it was not
@@ -517,9 +716,10 @@ def build_report(
         key: str, field_name: str, label: str, shown: str, fallback: Sequence[str]
     ):
         """One GQ / DP / AD gate: bound, partial or unbound, judged on the rows
-        the selected models read it from."""
+        the selected models read it from (their candidate rows)."""
         reads = gate_reads(key, categories, strict=gates.strict_for(key))
-        lowest, below = _weakest_read(stats, field_name, reads, fallback)
+        judged = _weakest_read(stats, field_name, reads, fallback, candidates)
+        lowest = judged.lowest
         if lowest is None:
             bound[key] = False
             warnings.append(
@@ -536,7 +736,7 @@ def build_report(
                     "gate_unbound",
                     key,
                     f"{shown} cannot be enforced: only {pct(lowest)} of "
-                    f"{below} rows carry {label}" + strict_note(key, label),
+                    f"{judged.below} carry {label}" + strict_note(key, label),
                 )
             )
         else:
@@ -547,8 +747,8 @@ def build_report(
                     warning(
                         "gate_partial",
                         key,
-                        f"{shown} enforced on {pct(lowest)} of rows (a call "
-                        f"with no {label} counts as a {outcome})",
+                        f"{shown} enforced on {pct(lowest)} of rows{judged.where} "
+                        f"(a call with no {label} counts as a {outcome})",
                     )
                 )
 
@@ -568,16 +768,21 @@ def build_report(
         bound["max_ab"] = bound["min_ab"]
 
     if gates.parent_alt_screen:
-        lowest, below = _weakest_read(
-            stats, "ad", gate_reads("parent_alt_screen", categories), parents
+        judged = _weakest_read(
+            stats,
+            "ad",
+            gate_reads("parent_alt_screen", categories),
+            parents,
+            candidates,
         )
+        lowest = judged.lowest
         ok = lowest is not None and lowest >= ENFORCEABLE_MIN
         bound["parent_alt_screen"] = ok
         if not ok:
             why = (
                 "no stored rows for the parents"
                 if lowest is None
-                else f"only {pct(lowest)} of {below} rows carry AD"
+                else f"only {pct(lowest)} of {judged.below} carry AD"
             )
             if gates.strict_for("parent_alt_screen"):
                 outcome = (
@@ -993,6 +1198,38 @@ _REMEDY = {
         "out with --category"
     ),
 }
+# the field each GQ / DP / AD gate reads, as the remedy names it
+_GATE_FIELD = {
+    "min_gq": "GQ",
+    "min_dp": "DP",
+    "min_ab": "AD",
+    "max_ab": "AD",
+    "parent_alt_screen": "AD",
+}
+
+
+def _unbound_remedy(errors: Sequence[dict]) -> str:
+    """The remedy for gates whose field is missing, naming the fields: GQ, DP or
+    AD absent where the gates read them (on the rows at the selected models'
+    candidate sites, which is not the same as absent from the whole VCF)."""
+    fields = list(
+        dict.fromkeys(
+            _GATE_FIELD[e["key"]]
+            for e in errors
+            if e["code"] == "gate_unbound" and e["key"] in _GATE_FIELD
+        )
+    )
+    if not fields:
+        return _REMEDY["gate_unbound"]
+    many = len(fields) > 1
+    names = f"{', '.join(fields[:-1])} and {fields[-1]}" if many else fields[0]
+    it = "them" if many else "it"
+    return (
+        f"{names} {'are' if many else 'is'} missing where the gates read {it} (on "
+        f"the rows at the candidate sites of the selected models): use flags or a "
+        f"preset that does not need {it} (for example broad-first-pass), or ingest "
+        f"a VCF that carries {it}"
+    )
 
 
 def refusal_message(errors: Sequence[dict], *, subject: str) -> str:
@@ -1002,7 +1239,14 @@ def refusal_message(errors: Sequence[dict], *, subject: str) -> str:
         needs += " and every model it selects to run"
     lines = [f"{subject} needs {needs}, and these cannot in this data:"]
     lines += [f"  - {e['message']}" for e in errors]
-    remedies = list(dict.fromkeys(_REMEDY[e["code"]] for e in errors))
+    remedies = list(
+        dict.fromkeys(
+            _unbound_remedy(errors)
+            if e["code"] == "gate_unbound"
+            else _REMEDY[e["code"]]
+            for e in errors
+        )
+    )
     lines += [f"Remedy: {r}." for r in remedies]
     lines.append(
         "To run anyway, pass --no-require-bound-gates: the warnings stay in the "

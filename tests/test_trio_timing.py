@@ -359,9 +359,15 @@ def test_a_preset_adds_a_bounded_cost_on_a_synthetic_wgs_store(
     backend, vcfclick_home, tmp_path, monkeypatch
 ):
     """`--preset` adds the effective-gate report: one pass over the three
-    samples' rows and one count over the variants, and no query per candidate.
-    Timed against the same call without a preset on the same store, and against
-    the full-scan baseline the other gates here use."""
+    samples' rows, one count over the variants and, for the GQ / DP / AD gates,
+    one grouped count per selected model over its candidate join (three
+    distinct joins for all four models, compound het sharing dominant's), and no
+    query per candidate. The candidate counts alone take 31 ms on DuckDB and
+    145 ms on chDB at 200,000 sites (`db trio`'s own counts of the same models
+    take 44 and 159 ms), so the preset call is about 0.07 s (DuckDB) and 0.2 s
+    (chDB) over the plain one. Timed against the same call without a preset on
+    the same store, and against the full-scan baseline the other gates here
+    use."""
     n, _ = _wgs_store("population", backend, vcfclick_home, tmp_path, monkeypatch)
     budget = _synthetic_budget(n, _baseline(vcfclick_home, backend))
     trio = ("db", "trio", "t", "--proband", "CHILD", "--format", "json")

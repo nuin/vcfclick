@@ -8,6 +8,11 @@ hooks of `cli.trio_gate_output` (the `preset` and `effective` JSON objects, the
 text header). A plain run never gets here, so its output and its queries are
 unchanged.
 
+The GQ / DP / AD gates are judged on the rows each selected model reads at its
+candidate sites, counted here with one grouped query per model
+(`collect_candidate_stats`, only for a model that reads a gate the report judges
+and that can run), not on the share over all of a sample's rows.
+
 A model the run selected that cannot run on this database (no stored hom-reference
 calls, no gene table) is a `model_blocked` warning, and an error for a run that
 insists: a clean "0 candidates" from a model that could not run is the quiet
@@ -38,6 +43,8 @@ import click
 from cli import filter_registry as fr
 from cli.effective_gates import (
     build_report,
+    candidate_models,
+    collect_candidate_stats,
     collect_gnomad_probe,
     collect_sample_stats,
     collect_variant_stats,
@@ -187,7 +194,22 @@ def attach_gate_reports(
             for reason in model_blockers(analysis, spec, genes_loaded)
         ]
 
-    def make_report(analysis: TrioAnalysis, gates):
+    def candidate_rows(analysis: TrioAnalysis) -> dict:
+        """What the rows at each runnable selected model's candidate sites carry:
+        the rows the GQ / DP / AD gates are judged on. Counted only for the
+        models that read a gate this report judges, and not for one that cannot
+        run (its candidate sites do not exist)."""
+        blocked = {model for model, _ in blocked_models(analysis)}
+        wanted = [
+            m
+            for m in candidate_models(
+                analysis.gates, selected_categories(options.category), only
+            )
+            if m not in blocked
+        ]
+        return collect_candidate_stats(sess, analysis.trio, wanted)
+
+    def make_report(analysis: TrioAnalysis, gates, candidates):
         trio = analysis.trio
         roles = (
             (trio.proband, "proband"),
@@ -204,6 +226,7 @@ def attach_gate_reports(
             gnomad_probe=gnomad_probe,
             filter_present=filter_present,
             categories=selected_categories(options.category),
+            candidates=candidates,
             blocked_models=blocked_models(analysis),
             assay=state.located.preset.assay if state else None,
             subject="preset" if state else "gates",
@@ -219,13 +242,14 @@ def attach_gate_reports(
     ready: list[TrioAnalysis] = []
     for analysis in analyses:
         trio = analysis.trio
-        report = make_report(analysis, analysis.gates)
+        candidates = candidate_rows(analysis)
+        report = make_report(analysis, analysis.gates, candidates)
         if overridden_off and analysis.gates.strict_missing:
             exempt = unbound_strict_keys(report)
             if exempt:
                 gates = analysis.gates._replace(strict_exempt=exempt)
                 analysis = replace(analysis, gates=gates)
-                report = make_report(analysis, gates)
+                report = make_report(analysis, gates, candidates)
         ready.append(analysis)
         if wants_gnomad and only is None:
             analysis.stats["gnomad_reported"] = True

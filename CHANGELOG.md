@@ -86,12 +86,16 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   of the cohort's own variants, so a one-row or one-gene load does not count as a
   population filter; after the run, a warning when it found a record for none
   of the candidates). A gate binds at 90% of the rows it reads: GQ, DP and AD
-  are judged on the genotype class each selected model reads at its candidate
-  sites (a parent's 0/0 rows for de novo and for `--parent-alt-screen`, a
-  parent's 0/1 rows for recessive, the proband's non-ref rows), the weakest
-  model deciding, not on the share over all of a sample's rows, so a caller
-  that fills AD on its het calls and not on its reference calls no longer reads
-  as bound. Gates that cannot
+  are judged on the candidate rows of each selected model (the proband's and the
+  parents' stored rows at the sites where the model's genotype pattern holds,
+  counted over the join `db trio` runs, before any quality gate), of the genotype
+  classes the gate reads (a parent's 0/0 rows for de novo and for
+  `--parent-alt-screen`, a parent's 0/1 rows for recessive, the proband's het
+  rows for allele balance), the weakest model deciding, and not on the share over
+  all of a sample's rows or of one genotype class, so a caller that fills GQ or
+  AD on its inherited calls and leaves it empty on the de novo ones no longer
+  reads as bound, and `strict-denovo` refuses with a remedy that names the
+  field instead of printing `denovo candidates: 0`. Gates that cannot
   bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
   so is `NO population frequency filter applied` (the cohort-derived-AF case
   with no gnomAD loaded), a median proband depth under 1.5 x `min_dp`, and a

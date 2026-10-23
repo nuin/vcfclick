@@ -18,18 +18,23 @@ from cli.effective_gates import (
     GNOMAD_PROBE_SIZE,
     STRICT_KEYS,
     THIN_COVERAGE_FACTOR,
+    CandidateStats,
     GenotypeClassStats,
     GnomadProbe,
     SampleGateStats,
     VariantStats,
     build_report,
+    candidate_models,
+    candidate_presence_sql,
+    collect_candidate_stats,
     gnomad_record_warning,
+    judged_gate_keys,
     median_from_histogram,
     refusal_message,
     sample_cohort_keys,
     unbound_strict_keys,
 )
-from cli.trio_analysis import Gates
+from cli.trio_analysis import MODEL_PREDICATES, Gates, Trio, trio_sql
 from cli.warning_codes import CODES, warning
 
 GATES = Gates(20, 10, 0.01, 0.25, 0.75)
@@ -306,6 +311,271 @@ def test_only_the_models_the_run_selected_decide():
     assert report(stats, categories=["denovo"]).bound["min_gq"] is False
     # a model name this version does not know reads everything, never nothing
     assert report(stats, categories=["xlinked"]).bound["min_gq"] is True
+
+
+# ─────────────────── a gate is judged on the candidate rows ───────────────────
+
+
+def at_sites(model, sites, **roles):
+    """What the rows at a model's candidate sites carry: `proband=dict(het=(rows,
+    gq, dp, ad))` is the number of the proband's 0/1 rows at those sites and how
+    many carry each field."""
+    return CandidateStats(
+        model,
+        sites,
+        {
+            role: tuple(GenotypeClassStats(c, *n) for c, n in classes.items())
+            for role, classes in roles.items()
+        },
+    )
+
+
+def shaped(field, *lacking):
+    """A trio whose `lacking` roles carry `field` on the inherited calls (95.2%
+    of the class the gate reads) and on none of their rows at the de novo
+    candidate sites. The proband has 10 de novo hets and 200 inherited hom-alts;
+    each parent has 10 0/0 rows at the de novo sites and 200 0/0 rows beside
+    them. Returns the whole-sample stats and the candidate stats of `denovo`."""
+    have = {"gq": 0, "dp": 1, "ad": 2}[field]
+
+    def counts(role, rows, inherited):
+        """(rows, gq, dp, ad) of `rows` candidate rows and `inherited` others."""
+        out = [rows + inherited] * 4
+        if role in lacking:
+            out[1 + have] = inherited
+        return tuple(out)
+
+    def at_denovo(role, rows):
+        out = [rows] * 4
+        if role in lacking:
+            out[1 + have] = 0
+        return tuple(out)
+
+    whole = [
+        split("proband", het=at_denovo("proband", 10), alt=(200, 200, 200, 200)),
+        split("father", ref=counts("father", 10, 200)),
+        split("mother", ref=counts("mother", 10, 200)),
+    ]  # fmt: skip
+    denovo = at_sites(
+        "denovo", 10, proband=dict(het=at_denovo("proband", 10)),
+        father=dict(ref=at_denovo("father", 10)),
+        mother=dict(ref=at_denovo("mother", 10)),
+    )  # fmt: skip
+    return whole, {"denovo": denovo}
+
+
+def test_a_field_present_on_the_class_but_absent_on_the_candidates_does_not_bind():
+    """The reproduced case: 10 de novo hets without GQ and 200 inherited hom-alts
+    with it. The proband's non-reference rows carry GQ on 95.2% of them, the old
+    verdict ("bound"), and a strict_missing run then failed all 10 candidates and
+    printed `denovo candidates: 0`."""
+    whole, candidates = shaped("gq", "proband")
+    assert whole[0].share("gq", ("het", "alt")) == 200 / 210  # the number that misled
+    gates = GATES._replace(strict_missing=True)
+    old = report(whole, gates, categories=["denovo"], enforce_format=True)
+    assert old.bound["min_gq"] is True and old.errors == ()  # without the candidates
+    rep = report(
+        whole, gates, categories=["denovo"], candidates=candidates, enforce_format=True
+    )
+    assert rep.bound["min_gq"] is False
+    (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == "min_gq"]
+    assert (
+        "min_gq=20 cannot be enforced: only 0% of proband 0/1 or 1/1 rows at denovo "
+        "candidate sites carry GQ" in w["message"]
+    )
+    assert "strict_missing counts a call without GQ as a fail" in w["message"]
+    assert [e["key"] for e in rep.errors] == ["min_gq"]
+    # the remedy names the field
+    text = refusal_message(rep.errors, subject="preset 'strict-denovo'")
+    assert "Remedy: GQ is missing where the gates read it" in text
+    # the document keeps the whole-sample facts and the verdict of the candidates
+    assert rep.document["gq"]["proband"] == round(200 / 210, 4)
+    assert rep.document["gq"]["bound"] is False
+    assert rep.document["dp"]["bound"] is True
+    # a warn-only run says it too, and does not refuse
+    warn = report(whole, GATES, categories=["denovo"], candidates=candidates)
+    assert by_code(warn, "gate_unbound")[0]["level"] == "warning"
+    assert warn.errors == ()
+
+
+def test_the_parents_reference_rows_are_judged_at_the_candidate_sites_too():
+    whole, candidates = shaped("ad", "father", "mother")
+    assert whole[1].share("ad", ("ref",)) == 200 / 210
+    gates = GATES._replace(parent_alt_screen=True)
+    rep = report(whole, gates, categories=["denovo"], candidates=candidates)
+    assert rep.bound["parent_alt_screen"] is False
+    (w,) = [w for w in by_code(rep, "gate_unbound") if w["key"] == "parent_alt_screen"]
+    assert (
+        "only 0% of father/mother 0/0 rows at denovo candidate sites carry AD"
+        in (w["message"])
+    )
+    assert rep.bound["min_ab"] is True  # the proband's hets at the sites have it
+    # without the candidates it reads as bound
+    assert report(whole, gates, categories=["denovo"]).bound["parent_alt_screen"]
+
+
+def test_the_weakest_model_decides_and_each_is_judged_on_its_own_candidates():
+    whole, candidates = shaped("gq", "proband")
+    candidates["recessive"] = at_sites(
+        "recessive", 200, proband=dict(alt=(200, 200, 200, 200)),
+        father=dict(het=(200, 200, 200, 200)), mother=dict(het=(200, 200, 200, 200)),
+    )  # fmt: skip
+    assert not report(whole, categories=["recessive"], candidates=candidates).warnings
+    both = report(whole, categories=["recessive", "denovo"], candidates=candidates)
+    assert both.bound["min_gq"] is False
+    (w,) = by_code(both, "gate_unbound")
+    assert "rows at denovo candidate sites" in w["message"]
+    assert "recessive" not in w["message"]
+
+
+def test_only_the_classes_the_gate_reads_count_at_the_candidate_sites():
+    """Allele balance reads the proband's het rows: a hom-alt candidate row without
+    AD is not gated, so it does not make the gate unbound, and the het ones do."""
+    candidates = {
+        "denovo": at_sites(
+            "denovo",
+            15,
+            proband=dict(het=(10, 10, 10, 10), alt=(5, 5, 5, 0)),
+            father=dict(ref=(15, 15, 15, 15)),
+            mother=dict(ref=(15, 15, 15, 15)),
+        )  # fmt: skip
+    }
+    whole = [split("proband", het=(10, 10, 10, 10), alt=(5, 5, 5, 0)),
+             split("father", ref=(15, 15, 15, 15)),
+             split("mother", ref=(15, 15, 15, 15))]  # fmt: skip
+    assert report(whole, categories=["denovo"], candidates=candidates).bound["min_ab"]
+    lacking = {
+        "denovo": at_sites(
+            "denovo",
+            15,
+            proband=dict(het=(10, 10, 10, 4), alt=(5, 5, 5, 5)),
+            father=dict(ref=(15, 15, 15, 15)),
+            mother=dict(ref=(15, 15, 15, 15)),
+        )  # fmt: skip
+    }
+    rep = report(whole, categories=["denovo"], candidates=lacking)
+    assert rep.bound["min_ab"] is False
+    assert (
+        "only 40% of proband 0/1 rows at denovo candidate sites carry AD"
+        in (by_code(rep, "gate_unbound")[0]["message"])
+    )
+
+
+def test_a_model_without_candidate_rows_is_judged_on_the_class_share():
+    """No candidate site (the model finds nothing, or nothing was counted for it):
+    the stored rows of the class are what there is to go by, as before."""
+    whole, _ = shaped("gq", "proband")
+    none = {"denovo": at_sites("denovo", 0)}
+    for candidates in (none, {}, None):
+        rep = report(whole, categories=["denovo"], candidates=candidates)
+        assert rep.bound["min_gq"] is True, candidates  # the whole-sample class share
+    poor = [split("proband", het=(100, 100, 100, 100)),
+            split("father", ref=(100, 50, 100, 100)),
+            split("mother", ref=(100, 50, 100, 100))]  # fmt: skip
+    rep = report(poor, categories=["denovo"], candidates=none)
+    assert (
+        "only 50% of father/mother 0/0 rows carry GQ"
+        in (by_code(rep, "gate_unbound")[0]["message"])
+    )
+    # sites exist but none of the classes the gate reads: the same fallback
+    elsewhere = {"denovo": at_sites("denovo", 3, proband=dict(alt=(3, 0, 0, 0)))}
+    assert report(poor, categories=["denovo"], candidates=elsewhere).bound["min_ab"]
+
+
+def test_a_partial_gate_says_where_its_share_was_taken():
+    candidates = {
+        "denovo": at_sites(
+            "denovo",
+            100,
+            proband=dict(het=(100, 100, 98, 100)),
+            father=dict(ref=(100, 100, 100, 100)),
+            mother=dict(ref=(100, 100, 100, 100)),
+        )  # fmt: skip
+    }
+    whole = [split("proband", het=(100, 100, 98, 100)),
+             split("father", ref=(100, 100, 100, 100)),
+             split("mother", ref=(100, 100, 100, 100))]  # fmt: skip
+    rep = report(whole, categories=["denovo"], candidates=candidates)
+    (w,) = by_code(rep, "gate_partial")
+    assert "min_dp=10 enforced on 98% of rows at denovo candidate sites" in w["message"]
+
+
+def test_candidate_rows_are_tallied_from_the_grouped_count():
+    """[proband gt, father gt, mother gt, rows, then gq, dp, ad for each of the
+    three samples]: two groups of the de novo join."""
+    from cli.effective_gates import _candidate_stats
+
+    rows = [
+        [1, 0, 0, 7, 7, 6, 5, 7, 7, 7, 7, 7, 0],
+        [2, 0, 0, 3, 1, 3, 3, 3, 3, 3, 3, 3, 3],
+    ]
+    c = _candidate_stats("denovo", rows)
+    assert c.sites == 10 and c.model == "denovo"
+    assert c.share("proband", "gq", ("het",)) == 1.0
+    assert c.share("proband", "gq", ("alt",)) == 1 / 3
+    assert c.share("proband", "gq", ("het", "alt")) == 8 / 10
+    assert c.share("proband", "dp", ("het", "alt")) == 9 / 10
+    assert c.share("mother", "ad", ("ref",)) == 3 / 10
+    assert c.share("father", "ad", ("ref",)) == 1.0
+    assert c.share("father", "gq", ("het",)) is None  # no such row
+    assert c.share("nobody", "gq", ("ref",)) is None
+
+
+class FakeSession:
+    def __init__(self):
+        self.sql = []
+
+    def query(self, sql, fmt):
+        self.sql.append(sql)
+        return self
+
+    def bytes(self):
+        return b'{"data": [[1, 0, 0, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4]]}'
+
+
+def test_one_count_per_distinct_predicate_and_it_reads_the_models_own_join():
+    trio_ = Trio("i1", "CHILD", "FATHER", "MOTHER")
+    sess = FakeSession()
+    got = collect_candidate_stats(
+        sess, trio_, ["denovo", "dominant", "comphet", "xlinked"]
+    )
+    assert set(got) == {"denovo", "dominant", "comphet"}  # xlinked has no predicate
+    assert len(sess.sql) == 2  # comphet shares dominant's candidates
+    assert got["comphet"].model == "comphet" and got["comphet"].sites == 4
+    sql = candidate_presence_sql("denovo", trio_)
+    assert MODEL_PREDICATES["denovo"] in sql and "GROUP BY g.gt, f.gt, m.gt" in sql
+    assert "ingest_id = 'i1'" in sql and "g.sample_id = 'CHILD'" in sql
+    # the very predicate and parent joins `db trio` runs, and no quality gate
+    model_sql = trio_sql("denovo", trio_, Gates(0, 0, 1.0, 0.0, 1.0), count_only=True)
+    assert MODEL_PREDICATES["denovo"] in model_sql
+    join = "INNER JOIN genotypes f ON"
+    assert join in sql and join in model_sql
+    assert "gq >=" not in sql and "info_AF" not in sql
+    # a trio without both parents has no candidate sites to count
+    assert (
+        collect_candidate_stats(FakeSession(), Trio("i1", "C", "F", None), ["denovo"])
+        == {}
+    )
+
+
+def test_only_the_models_that_read_a_judged_gate_have_their_candidates_counted():
+    only_gq = GATES._replace(min_dp=0, min_ab=0.0, max_ab=1.0)
+    assert judged_gate_keys(only_gq) == ("min_gq",)
+    assert judged_gate_keys(GATES) == ("min_gq", "min_dp", "min_ab")
+    screen = GATES._replace(parent_alt_screen=True)
+    assert judged_gate_keys(screen, only={"parent_alt_screen"}) == (
+        "parent_alt_screen",
+    )
+    assert candidate_models(screen, ["all"], {"parent_alt_screen"}) == ("denovo",)
+    assert candidate_models(only_gq, ["recessive"]) == ("recessive",)
+    assert candidate_models(GATES, ["all"]) == (
+        "denovo",
+        "recessive",
+        "dominant",
+        "comphet",
+    )
+    nothing = GATES._replace(min_gq=0, min_dp=0, min_ab=0.0, max_ab=1.0)
+    assert candidate_models(nothing, ["all"]) == ()
 
 
 # ───────────────────────────── the frequency filters ─────────────────────────────

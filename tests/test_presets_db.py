@@ -67,6 +67,50 @@ def mismatch_sites() -> list[Site]:
     return de_novo + inherited
 
 
+def gq_shape_sites() -> list[Site]:
+    """10 de novo hets whose proband GQ is '.', then 200 sites where the proband is
+    hom-alt and both parents het, all with GQ. GQ is on 200 of the proband's 210
+    non-reference rows (95.2%) and on none of the rows the de novo model reads."""
+    de_novo = [
+        Site("chr1", 1000 * (i + 1), "A", "G",
+             ("0/1:15,15:.:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info="AF=0.0005", fmt="GT:AD:GQ:DP")
+        for i in range(10)
+    ]  # fmt: skip
+    inherited = [
+        Site("chr1", 20000 + 100 * i, "A", "G",
+             ("1/1:0,30:99:30", "0/1:15,15:99:30", "0/1:15,15:99:30"),
+             info="AF=0.002", fmt="GT:AD:GQ:DP")
+        for i in range(200)
+    ]  # fmt: skip
+    return de_novo + inherited
+
+
+def ad_shape_sites() -> list[Site]:
+    """10 de novo hets whose parents' 0/0 rows carry no AD, then 400 hets inherited
+    from one parent (200 from each), where the other parent's 0/0 row has AD. Each
+    parent has 210 0/0 rows, 200 with AD (95.2%), and none at the de novo sites."""
+    de_novo = [
+        Site("chr1", 1000 * (i + 1), "A", "G",
+             ("0/1:15,15:99:30", "0/0:.:99:30", "0/0:.:99:30"),
+             info="AF=0.0005", fmt="GT:AD:GQ:DP")
+        for i in range(10)
+    ]  # fmt: skip
+    from_father = [
+        Site("chr1", 20000 + 100 * i, "A", "G",
+             ("0/1:15,15:99:30", "0/1:15,15:99:30", "0/0:30,0:99:30"),
+             info="AF=0.002", fmt="GT:AD:GQ:DP")
+        for i in range(200)
+    ]  # fmt: skip
+    from_mother = [
+        Site("chr1", 50000 + 100 * i, "A", "G",
+             ("0/1:15,15:99:30", "0/0:30,0:99:30", "0/1:15,15:99:30"),
+             info="AF=0.002", fmt="GT:AD:GQ:DP")
+        for i in range(200)
+    ]  # fmt: skip
+    return de_novo + from_father + from_mother
+
+
 @dataclass
 class World:
     home: Path
@@ -157,12 +201,18 @@ def world(backend, tmp_path_factory):
     # over ALL the parents' rows AD is on 95.2%, and on the 0/0 rows a de novo call
     # rests on it is on none
     mismatch = write_vcf(base / "mismatch.vcf", TRIO_SAMPLES, mismatch_sites())
+    # the same shape, judged on the rows the candidates are made of: the field is on
+    # 95.2% of the class the gate reads and on none of the rows at the candidates
+    gq_shape = write_vcf(base / "gq_shape.vcf", TRIO_SAMPLES, gq_shape_sites())
+    ad_shape = write_vcf(base / "ad_shape.vcf", TRIO_SAMPLES, ad_shape_sites())
     stores = (
         ("p", FIXTURES / "presets.vcf.gz", ped),
         ("n", FIXTURES / "presets_nogq.vcf.gz", ped),
         ("c", cohort, cohort_ped),
         ("f", unlabelled, ped),
         ("m", mismatch, cohort_ped),
+        ("g", gq_shape, cohort_ped),
+        ("a", ad_shape, cohort_ped),
     )
     for name, vcf, pedigree in stores:
         run_cli(home, backend, "db", "create", name)
@@ -499,14 +549,15 @@ def test_a_typed_pass_only_is_told_about_and_only_about_that_gate(world):
 def test_a_gate_is_judged_on_the_rows_it_reads_so_a_strict_preset_refuses(world):
     """The parents' 0/0 rows (10) carry no allele depths and their het rows (200)
     do: AD is on 95.2% of the parents' rows and on none of the rows the parent-allele
-    screen reads. strict_missing then fails every de novo candidate, so a strict
-    preset used to run, say every gate bound, and print `denovo candidates: 0`."""
+    screen reads, the 0/0 rows at the de novo sites. strict_missing then fails every
+    de novo candidate, so a strict preset used to run, say every gate bound, and
+    print `denovo candidates: 0`."""
     ignore = ("--preset-ignore", "gnomad_max_af")
     r = trio(world, "m", "--preset", "strict-denovo", *ignore, ok=False)
     assert r.stdout == ""
     for text in ("parent_alt_screen cannot be enforced",
-                 "only 0% of father/mother 0/0 rows carry AD",
-                 "no de novo candidate can pass", "Remedy:",
+                 "only 0% of father/mother 0/0 rows at denovo candidate sites carry AD",
+                 "no de novo candidate can pass", "Remedy: AD is missing",
                  "--no-require-bound-gates"):  # fmt: skip
         assert text in r.stderr, text
     # the gates that do bind are not blamed
@@ -532,13 +583,125 @@ def test_a_typed_parent_alt_screen_that_screens_nothing_says_so_whatever_the_oth
     assert doc["models"]["denovo"]["count"] == 10  # nothing was screened out
     (w,) = doc["effective"]["warnings"]
     assert (w["code"], w["key"]) == ("gate_unbound", "parent_alt_screen")
-    assert "only 0% of father/mother 0/0 rows carry AD" in w["message"]
+    assert (
+        "only 0% of father/mother 0/0 rows at denovo candidate sites carry AD"
+        in w["message"]
+    )
     assert "every parent 0/0 would be trusted" in w["message"]
     out = trio(world, "m", "--category", "denovo", "--parent-alt-screen").stdout
     assert warning_lines(out) == [f"  WARNING: {w['message']}"]
     # a model that never reads the parents' 0/0 rows is not blamed for them
     rec = jtrio(world, "m", "--category", "recessive", "--parent-alt-screen")
     assert rec["effective"]["warnings"] == []
+
+
+DN_POSITIONS = {1000 * (i + 1) for i in range(10)}
+
+
+def positions(doc: dict, model: str = "denovo") -> set[int]:
+    return {c["pos"] for c in doc["models"][model]["candidates"]}
+
+
+IGNORE_GNOMAD = ("--preset-ignore", "gnomad_max_af")
+
+
+def test_gq_on_the_inherited_calls_and_not_on_the_de_novo_ones_refuses_strict_denovo(
+    world,
+):
+    """The proband's non-reference rows carry GQ on 95.2% of them (10 de novo hets
+    without, 200 inherited hom-alts with), and none of the rows a de novo call is made
+    on does. strict_missing then fails every candidate: it used to run, say every gate
+    bound, and print `denovo candidates: 0`. It refuses, with a remedy that names GQ."""
+    r = trio(world, "g", "--preset", "strict-denovo", *IGNORE_GNOMAD, ok=False)
+    assert r.stdout == ""
+    for text in ("min_gq=30 cannot be enforced",
+                 "only 0% of proband 0/1 or 1/1 rows at denovo candidate sites carry GQ",
+                 "strict_missing counts a call without GQ as a fail",
+                 "Remedy: GQ is missing where the gates read it",
+                 "--no-require-bound-gates"):  # fmt: skip
+        assert text in r.stderr, text
+    assert "min_dp" not in r.stderr and "min_ab" not in r.stderr  # the others bind
+    # run anyway: the gate is exempt, the 10 are listed, and the document says why
+    doc = jtrio(
+        world, "g", "--preset", "strict-denovo", *IGNORE_GNOMAD,
+        "--no-require-bound-gates",
+    )  # fmt: skip
+    assert positions(doc) == DN_POSITIONS and doc["models"]["denovo"]["count"] == 10
+    assert doc["gates"]["strict_exempt"] == ["min_gq"]
+    eff = doc["effective"]
+    assert (
+        eff["gq"]["proband"] == 0.9524
+    )  # the share that misled, and no longer decides
+    assert (eff["gq"]["bound"], eff["dp"]["bound"], eff["ad"]["bound"]) == (
+        False, True, True,
+    )  # fmt: skip
+    (w,) = [x for x in eff["warnings"] if x["code"] == "gate_unbound"]
+    assert w["key"] == "min_gq"
+    assert (
+        "only 0% of proband 0/1 or 1/1 rows at denovo candidate sites" in w["message"]
+    )
+    assert "strict_missing is not applied to it for this run" in w["message"]
+    out = trio(
+        world, "g", "--preset", "strict-denovo", *IGNORE_GNOMAD,
+        "--no-require-bound-gates",
+    ).stdout  # fmt: skip
+    assert f"  WARNING: {w['message']}" in warning_lines(out)
+    assert "denovo candidates: 10" in out
+
+
+def test_gq_missing_on_the_candidates_is_a_warning_for_a_warn_only_preset(world):
+    out = trio(world, "g", "--preset", "broad-first-pass", *IGNORE_GNOMAD).stdout
+    assert (
+        "  WARNING: min_gq=15 cannot be enforced: only 0% of proband 0/1 or 1/1 rows "
+        "at denovo candidate sites carry GQ"
+    ) in warning_lines(out)
+    doc = jtrio(world, "g", "--preset", "broad-first-pass", *IGNORE_GNOMAD)
+    assert doc["effective"]["gq"]["bound"] is False
+    assert doc["preset"]["resolved"]["min_gq"]["bound"] is False
+    assert doc["preset"]["resolved"]["min_dp"]["bound"] is True
+    assert positions(doc) == DN_POSITIONS  # tolerant: it ran, and removed nothing
+    # a model whose candidates carry GQ is not blamed: the recessive ones do
+    rec = jtrio(
+        world, "g", "--preset", "rare-recessive", "--category", "recessive",
+        *IGNORE_GNOMAD,
+    )  # fmt: skip
+    assert rec["effective"]["gq"]["bound"] is True
+    assert not [w for w in rec["effective"]["warnings"] if w["code"] == "gate_unbound"]
+
+
+def test_ad_on_the_inherited_reference_calls_and_not_on_the_de_novo_ones_refuses(world):
+    """Each parent's 0/0 rows carry AD on 95.2% of them and on none of the 10 at the
+    de novo sites, which is where the parent-allele screen reads them."""
+    r = trio(world, "a", "--preset", "strict-denovo", *IGNORE_GNOMAD, ok=False)
+    assert r.stdout == ""
+    for text in ("parent_alt_screen cannot be enforced",
+                 "only 0% of father/mother 0/0 rows at denovo candidate sites carry AD",
+                 "no de novo candidate can pass",
+                 "Remedy: AD is missing where the gates read it"):  # fmt: skip
+        assert text in r.stderr, text
+    assert "min_gq" not in r.stderr and "min_ab" not in r.stderr
+    doc = jtrio(
+        world, "a", "--preset", "strict-denovo", *IGNORE_GNOMAD,
+        "--no-require-bound-gates",
+    )  # fmt: skip
+    assert positions(doc) == DN_POSITIONS
+    assert doc["gates"]["strict_exempt"] == ["parent_alt_screen"]
+    eff = doc["effective"]
+    assert eff["ad"]["father"] == eff["ad"]["mother"] == round(400 / 410, 4)
+    assert eff["ad"]["bound"] is False and eff["gq"]["bound"] is True
+    # a warn-only run with the screen on: the warning is printed, and nothing refuses
+    out = trio(
+        world, "a", "--preset", "broad-first-pass", *IGNORE_GNOMAD,
+        "--parent-alt-screen",
+    ).stdout  # fmt: skip
+    assert any(
+        "parent_alt_screen cannot be enforced: only 0% of father/mother 0/0 rows "
+        "at denovo candidate sites carry AD" in x
+        for x in warning_lines(out)
+    )
+    typed = jtrio(world, "a", "--category", "denovo", "--parent-alt-screen")
+    (w,) = typed["effective"]["warnings"]
+    assert (w["code"], w["key"]) == ("gate_unbound", "parent_alt_screen")
 
 
 NO_REFERENCE = (

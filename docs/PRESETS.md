@@ -100,15 +100,20 @@ carries no GQ, DP or allele depths, or when `INFO/AF` is the cohort's own
 frequency and gnomAD is not loaded. A run with a preset therefore prints an
 **effective-gate report**: for each gate, whether the field it reads exists in
 this data. A gate **binds** when its field is present on at least 90% of the rows
-it reads (GQ, DP and AD on the stored rows the selected models read at their
-candidate sites; `INFO/AF` on the variants; gnomAD when it can judge the cohort,
-below).
+it reads (GQ, DP and AD on the **candidate rows** of each selected model, below;
+`INFO/AF` on the variants; gnomAD when it can judge the cohort, below).
 
-"The rows it reads" is not "all of a sample's rows". A caller can fill AD on its
-het calls and not on its reference calls, and then AD is on 95% of a parent's rows
-and on none of the 0/0 rows a de novo call rests on. So each GQ / DP / AD gate is
-judged on the genotype class each selected model reads, and the weakest model
-decides:
+"The rows it reads" is neither all of a sample's rows nor all of one genotype class.
+A caller can fill AD on its inherited calls and leave it empty on the new ones, and
+then AD is on 95% of a parent's 0/0 rows and on none of the 0/0 rows a de novo call
+is made on; a caller can leave GQ empty on the proband's de novo hets and fill it on
+his 200 inherited hom-alts, and GQ is on 95% of his non-reference rows. So each
+GQ / DP / AD gate is judged on the **candidate rows** of every model the run
+selects: the proband's and the parents' stored rows at the sites where that model's
+genotype pattern holds (for `denovo`, the sites where the proband carries and both
+parents are 0/0), counted over the same join `db trio` runs but before any quality
+or rarity gate (one grouped count per model). Of those rows the gate reads these genotype classes, and the weakest
+model decides:
 
 | Model | Proband rows | Parent rows |
 |---|---|---|
@@ -119,12 +124,15 @@ decides:
 `min_gq` and `min_dp` read all of those rows. `min_ab` reads the het rows (the
 proband's; with `strict_missing` a parent's het call must carry depths too, so the
 parents' 0/1 rows of `recessive`, `dominant` and `comphet`). `parent_alt_screen` reads
-the parents' 0/0 rows, in `denovo` only. A class with no stored rows (a database
-ingested without `--keep-reference` has no 0/0 rows) falls back to the whole sample,
-and the warning says which rows fell short (`only 0% of father/mother 0/0 rows carry
-AD`). The `gq` / `dp` / `ad` shares in `effective` stay the whole sample's, a fact
-about the data; `bound` is the verdict of the gates that read the field (`ad.bound`
-needs both `min_ab` and `parent_alt_screen`). The
+the parents' 0/0 rows, in `denovo` only. Only a model with no candidate rows of those
+classes (no candidate at all, or no stored 0/0 rows because the database was ingested
+without `--keep-reference`) is judged on the sample's stored rows of those classes, and
+a role with none of those on its whole sample. The warning says which rows fell short
+(`only 0% of father/mother 0/0 rows at denovo candidate sites carry AD`), and a
+refusal's remedy names the field (`GQ is missing where the gates read it`). The
+`gq` / `dp` / `ad` shares in `effective` stay the whole sample's, a fact about the
+data and not the verdict; `bound` is the verdict of the gates that read the field
+(`ad.bound` needs both `min_ab` and `parent_alt_screen`). The
 `FILTER` gate (`pass_only`) binds when some variant in the database carries a
 `FILTER` label other than `PASS` or unset: the column is null for both `PASS` and
 `.`, so on a VCF that labels nothing the gate removes nothing, which the run says
