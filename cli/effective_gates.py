@@ -1076,10 +1076,14 @@ def gnomad_record_warning(
 ) -> dict | None:
     """After the gnomAD filter has run: None, or the warning that it found a
     record for none of the `checked` candidates. `cohort_rate` is the share of
-    the cohort's sampled variants gnomAD could judge (the pre-run probe): when
-    it is known the filter does work on this cohort and the candidates are most
-    likely novel variants, which is what a de novo candidate is; when it is not,
-    a slice that does not reach them or another build is the suspect."""
+    the cohort's sampled variants gnomAD could judge (the pre-run probe). Only when
+    it is known and reaches GNOMAD_MIN_HIT_RATE does the filter work on this cohort
+    and the candidates are most likely novel variants, which is what a de novo
+    candidate is. When it is not known, or the probe already said gnomAD cannot
+    judge the cohort (under GNOMAD_MIN_HIT_RATE: a slice that does not reach it,
+    another build or chromosome naming), the candidates are not "probably novel":
+    nothing was looked up for most of the cohort either, and the advice is to check
+    the build and the naming."""
     if not checked or without_record < checked:
         return None
     one = checked == 1
@@ -1089,7 +1093,7 @@ def gnomad_record_warning(
         else ", and INFO/AF is not applied either, so no population frequency "
         "filter took effect"
     )
-    if cohort_rate is None:
+    if cohort_rate is None or cohort_rate < GNOMAD_MIN_HIT_RATE:
         advice = (
             ". Check that its genome build and chromosome naming match the cohort's"
         )

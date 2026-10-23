@@ -981,6 +981,11 @@ def test_a_gnomad_with_one_row_on_the_right_chromosome_is_not_a_gate_that_binds(
     ) == (30, 0)
     assert "gnomad_no_coverage" in [w["code"] for w in eff["warnings"]]
     assert eff["population_filter"] is False
+    # no candidate has a record either, and the probe has said gnomAD judges
+    # nothing here: the candidates are not "probably novel", the build is the suspect
+    (late,) = [w for w in eff["warnings"] if w["code"] == "gnomad_no_record"]
+    assert "probably novel" not in late["message"]
+    assert "Check that its genome build and chromosome naming" in late["message"]
     # a broad preset only warns
     broad = jtrio(world, "c", "--preset", "broad-first-pass", ann="far")
     assert broad["effective"]["gnomad"]["bound"] is False

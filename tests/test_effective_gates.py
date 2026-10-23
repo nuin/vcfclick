@@ -846,6 +846,23 @@ def test_a_gnomad_filter_that_found_no_record_for_any_candidate_is_a_warning():
     assert "a record for 62% of a sample of the cohort's variants" in reach["message"]
     assert "these are probably novel" in reach["message"]
     assert "genome build" not in reach["message"]
+    # ... and when the probe already said it cannot judge the cohort, they are not
+    # "probably novel": it has no record for most of the cohort, whatever the
+    # candidates are, and the advice is the one for an unknown reach
+    assert GNOMAD_MIN_HIT_RATE == 0.10
+    for rate in (0.0, 0.004, 0.0999):
+        low = gnomad_record_warning(
+            checked=15, without_record=15, max_af=0.0001, info_af_bound=True,
+            cohort_rate=rate,
+        )  # fmt: skip
+        assert "probably novel" not in low["message"], rate
+        assert "Check that its genome build and chromosome naming" in low["message"]
+        assert "It does hold a record" not in low["message"]
+    at = gnomad_record_warning(
+        checked=15, without_record=15, max_af=0.0001, info_af_bound=True,
+        cohort_rate=GNOMAD_MIN_HIT_RATE,
+    )  # fmt: skip
+    assert "probably novel" in at["message"]  # the floor binds, inclusive
     for checked, without in ((15, 14), (15, 0), (0, 0)):
         assert (
             gnomad_record_warning(
@@ -899,6 +916,16 @@ def test_the_text_footer_says_what_the_gnomad_filter_could_not_judge():
     # a run whose report is not about gnomAD (it asked for one opt-in gate only)
     quiet = stub_analysis(15, 15, reported=False)
     assert tgo.gnomad_footer(quiet) == []
+
+
+def test_the_footer_does_not_call_the_candidates_novel_when_gnomad_judges_almost_nothing():
+    (line,) = tgo.gnomad_footer(stub_analysis(9, 9, probe=GnomadProbe(1000, 4)))
+    assert "judged none of the 9 candidates" in line
+    assert "probably novel" not in line and "genome build" in line
+    doc = tgo._preset_document(
+        {}, SimpleNamespace(analysis=stub_analysis(9, 9, probe=GnomadProbe(1000, 4)))
+    )["effective"]
+    assert "probably novel" not in doc["warnings"][-1]["message"]
 
 
 def test_the_footer_says_how_much_of_the_cohort_gnomad_can_judge():

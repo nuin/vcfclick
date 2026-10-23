@@ -158,7 +158,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `pass_only_no_labels` | `--pass-only` (or the preset's) is on and no variant carries a `FILTER` label other than `PASS` or unset, so it removes nothing (a warning, never a refusal: a VCF hard-filtered before ingest is all `PASS`) |
 | `gnomad_not_loaded` | `--gnomad-max-af` was asked for and no gnomAD data is loaded |
 | `gnomad_no_coverage` | gnomAD is loaded but cannot judge the cohort: it has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere), or a record for under 10% of a sample of the cohort's own variants (a one-row test load, a slice of one gene, another genome build) |
-| `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare (novel variants, which is what de novo candidates are; the text says how much of the cohort gnomAD does reach) |
+| `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare. When the pre-run probe found gnomAD judges the cohort (a record for at least 10% of the sample) the text says how much of it gnomAD reaches and that the candidates are probably novel, which is what de novo candidates are; when it reached under 10% (a run that insists would have refused, a warn-only one carries `gnomad_no_coverage` too) or the probe did not run, it says to check the genome build and chromosome naming instead |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
 | `strict_missing_dropped` | after a `strict_missing` run: candidates that pass every other gate (the gnomAD filter too) were dropped only because a GQ, DP or allele depth they are judged on is missing, counted with one query per model (the rows a run without `strict_missing` lists beyond this one). A gate that binds has its field on 90% of its rows, and the other 10% are what this counts. Variants, for `comphet` as for the rest, and said once for `dominant` and `comphet` together. A `WARNING:` line after the listing and an entry in `effective.warnings`; `--no-strict-missing` lists them |
 | `model_blocked` | a model the run selected cannot run on this database: it has no stored hom-reference calls (`denovo`, `dominant` and `comphet` need `--keep-reference`) or no gene table is loaded (`comphet`). The model's count is 0 because of the database, not the genome. Named per model, in the text and in `effective.warnings`; not reported in a run limited to the gates it typed |
@@ -236,7 +236,9 @@ rare); it has a record for 62.7% of a sample of the cohort's variants`, and
 `gnomad.candidates_checked` / `candidates_without_record` in `effective`), and
 when it is all of them the text ends with a `WARNING:` line and `effective`
 carries `gnomad_no_record`. That is a warning and not a refusal because gnomAD
-does judge the cohort, which the probe has already established.
+does judge the cohort, which the probe has already established (when it did not,
+the line says to check the build and naming, not that the candidates are probably
+novel).
 
 `--parent-alt-screen` and `--pass-only` typed on their own are told about too:
 on a VCF whose parents have no allele depths the screen screens nothing (every

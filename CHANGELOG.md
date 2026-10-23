@@ -85,7 +85,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   the cohort's variants, and a record for at least 10% of a sample of up to 5,000
   of the cohort's own variants, so a one-row or one-gene load does not count as a
   population filter; after the run, a warning when it found a record for none
-  of the candidates). A gate binds at 90% of the rows it reads: GQ, DP and AD
+  of the candidates, which says they are probably novel only when the pre-run
+  probe found that gnomAD judges the cohort, and otherwise to check the genome
+  build and chromosome naming). A gate binds at 90% of the rows it reads: GQ, DP and AD
   are judged on the candidate rows of each selected model (the proband's and the
   parents' stored rows at the sites where the model's genotype pattern holds,
   counted over the join `db trio` runs, before any quality gate), of the genotype
