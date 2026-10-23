@@ -352,3 +352,41 @@ def test_gnomad_filter_on_a_synthetic_wgs_store(
             assert 0.6 * base_counts["dominant"] < counts["dominant"]
             assert counts["dominant"] < 0.9 * base_counts["dominant"]
             assert counts["recessive"] < base_counts["recessive"]
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_preset_adds_a_bounded_cost_on_a_synthetic_wgs_store(
+    backend, vcfclick_home, tmp_path, monkeypatch
+):
+    """`--preset` adds the effective-gate report: one pass over the three
+    samples' rows, one count over the variants and, for the GQ / DP / AD gates,
+    one grouped count per selected model over its candidate join (three
+    distinct joins for all four models, compound het sharing dominant's), and no
+    query per candidate. The candidate counts alone take 31 ms on DuckDB and
+    145 ms on chDB at 200,000 sites (`db trio`'s own counts of the same models
+    take 44 and 159 ms), so the preset call is about 0.07 s (DuckDB) and 0.2 s
+    (chDB) over the plain one. Timed against the same call without a preset on
+    the same store, and against the full-scan baseline the other gates here
+    use."""
+    n, _ = _wgs_store("population", backend, vcfclick_home, tmp_path, monkeypatch)
+    budget = _synthetic_budget(n, _baseline(vcfclick_home, backend))
+    trio = ("db", "trio", "t", "--proband", "CHILD", "--format", "json")
+
+    plain, _ = _best_of_two(vcfclick_home, backend, *trio)
+    took, result = _best_of_two(
+        vcfclick_home, backend, *trio, "--preset", "broad-first-pass"
+    )
+    doc = json.loads(result.stdout)
+    print(
+        f"\n[timing] {n} sites, --preset broad-first-pass, {backend}: {took:.2f}s "
+        f"(plain {plain:.2f}s, budget {budget:.1f}s)"
+    )
+    # the scenario is what it says: the report read every row of the trio
+    assert doc["preset"]["name"] == "broad-first-pass"
+    assert doc["effective"]["rows"] == {"proband": n, "father": n, "mother": n}
+    assert took < budget, (
+        f"`db trio --preset` on {n} synthetic sites ({backend}) took {took:.1f}s, "
+        f"budget {budget:.1f}s. The effective-gate report is one pass over the "
+        "samples' rows; a query per candidate or a second pass shows up here."
+    )
+    assert took < 3 * plain + 1.0, (took, plain)

@@ -48,6 +48,115 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   old keys are byte-stable. `/api/meta` gains `families` (per family its
   probands and trios with siblings), and the MCP briefing explains families,
   `affected = NULL` as unknown, and probands.
+- Filter presets (`docs/PRESETS.md`). `db trio --preset NAME` applies a named
+  set of filters: the four built-in starting points `broad-first-pass`,
+  `strict-denovo`, `rare-recessive` and `rare-dominant` (each with
+  covers / does-not-cover text, a revision (1; `strict-denovo` 2), a fingerprint, and labelled
+  `starting point, not validated`), or your own. A flag typed next to
+  `--preset` wins over it, and `--preset-ignore KEY` switches one key off for
+  one run. `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, also for a
+  path) fails the run if the preset's content is not the pinned one;
+  `--preset-skip-unavailable` applies the keys this version knows and reports
+  the rest. A preset is a JSON file in `$VCFCLICK_HOME/presets`, in a read-only
+  directory on `VCFCLICK_PRESET_PATH`, or built in; it holds filter values and
+  no sample, path or database.
+- `vcfclick preset list | show | save | set | unset | edit | rename | rm |
+  export | import | validate | path`. `save` takes the filter flags `db trio`
+  takes, `--from-preset`, `--from-result` (rebuilds a preset from a saved
+  `db trio --format json` result, and says when a built-in it used has changed
+  revision) and `--from-json`. Names are lowercase and never look like a path
+  (and no command takes a path where a name goes: `preset rm ../x` is refused
+  before the file system is touched); writes are atomic; a locked preset
+  (`meta.locked`) needs `--force`; import and export are all-or-nothing and strip
+  patient-specific keys on export. A preset carries no sample, family, path or
+  database identity in any key of the file, at the top level, in `meta` or under
+  `filters`, however it is spelt (`Patient`, `sample-id`), no number that is not
+  finite, and a `null` or mistyped `title` / `applies_to` / `assay` is dropped or
+  listed as an error and never breaks `preset list`. `export -o DIR` writes
+  `DIR/NAME.vcfclick-preset.json`, which a directory on `VCFCLICK_PRESET_PATH`
+  reads as `NAME`, and which `save`, `import` and `rename` count as the existing
+  preset `NAME` (`--force` replaces that file). The file name is the preset's
+  name: a file copied in as `lab-q.json` that still declares `q1` is used as
+  `lab-q` (with a `name_mismatch` warning), and `set`, `edit`, `rename` and
+  `export` write `lab-q`.
+- The effective-gate report. A run with a preset says, per gate, whether the
+  field it reads is in this data: GQ, DP and AD on the proband's and parents'
+  rows, `INFO/AF`, gnomAD (loaded, with records on the chromosomes of 90% of
+  the cohort's variants, and a record for at least 10% of a sample of up to 5,000
+  of the cohort's own variants, so a one-row or one-gene load does not count as a
+  population filter; after the run, a warning when it found a record for none
+  of the candidates, which says they are probably novel only when the pre-run
+  probe found that gnomAD judges the cohort, and otherwise to check the genome
+  build and chromosome naming). A gate binds at 90% of the rows it reads: GQ, DP and AD
+  are judged on the candidate rows of each selected model (the proband's and the
+  parents' stored rows at the sites where the model's genotype pattern holds and
+  that the INFO/AF and FILTER gates keep, counted over the join `db trio` runs,
+  before any quality gate; the gnomAD filter runs in Python after the query and
+  cannot narrow them, which `strict_missing_dropped` covers after the run), of
+  the genotype classes the gate reads (a parent's 0/0 rows for de novo and for
+  `--parent-alt-screen`, a parent's 0/1 rows for recessive, the proband's het
+  rows for allele balance), the weakest model deciding, and not on the share over
+  all of a sample's rows or of one genotype class, so a caller that fills GQ or
+  AD on its inherited calls and leaves it empty on the de novo ones no longer
+  reads as bound, and `strict-denovo` refuses with a remedy that names the
+  field instead of printing `denovo candidates: 0`. A requested gate that no
+  selected model reads (`--category recessive --min-ab 0.4`: a hom-alt call is
+  not band-gated; `--parent-alt-screen` without the de novo model) is not
+  bound and says `gate_not_applicable`, a warning and never a refusal. An
+  `INFO/AF` gate that binds on some of the variants and not all says so
+  (`gate_partial`: a variant with no `INFO/AF` passes it), and `strict-denovo` is
+  at revision 2 for that: its covers / does-not-cover text says it too (the
+  filters, and so the fingerprint, are unchanged). Gates that cannot
+  bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
+  so is `NO population frequency filter applied` (the cohort-derived-AF case
+  with no gnomAD loaded), a median depth of the proband's non-reference calls
+  (not of all its stored rows, the 0/0 ones of a `--keep-reference` database
+  included) under 1.5 x `min_dp`, and a
+  requested `--gnomad-max-af` with gnomAD not loaded.
+- New opt-in gates on `db trio`, all off by default: `--strict-missing` (a
+  missing GQ, DP or het AD counts as a fail), `--pass-only` (VCF `FILTER` is
+  PASS or unset), `--parent-alt-screen` with `--max-parent-alt-frac` (the de
+  novo model distrusts a parent's stored 0/0 that has alt reads) and
+  `--require-bound-gates` (an error, not a warning, when a gate cannot bind, a
+  selected model cannot run on the database, or no population-frequency filter
+  is in effect). A model the run selected that cannot run (no stored
+  hom-reference calls, no gene table) is a `model_blocked` warning per model, on
+  stdout and in `effective.warnings`, and so `strict-denovo` refuses a database
+  ingested without `--keep-reference` instead of printing `denovo candidates: 0`. `--pass-only` on a VCF whose
+  FILTER column carries no label other than PASS or unset says it removes
+  nothing (`pass_only_no_labels`, a warning and never a refusal), and a typed
+  `--pass-only` is reported like `--parent-alt-screen`. `--parent-alt-screen`
+  on a VCF whose parents carry no allele depths says so (it screens nothing), in a
+  `WARNING:` line (and, on a database without stored hom-reference calls, the
+  `model_blocked` warning for the de novo model it exists for) and an `effective`
+  object that is about that gate alone (the
+  `bound` of the gates it did not examine, `gnomad.bound` and
+  `population_filter` are `null`, not a claim that gnomAD took effect).
+  `strict-denovo` turns the strict ones on, so it refuses to run, with the remedy, on data it cannot be strict
+  about; `--no-require-bound-gates` overrides that for one run, and for that run
+  `--strict-missing` is not applied to the gates that cannot bind (a call
+  without GQ passes `min_gq`, as the warning says, instead of failing every
+  call). `--strict-missing` is held against a gate only when the gate is asked
+  for (`--min-gq 0` asks nothing of GQ). After a `--strict-missing` run, the
+  candidates that pass every other gate and were dropped only because a GQ, DP or
+  allele depth they are judged on is missing are counted (`strict_missing_dropped`,
+  a `WARNING:` line after the listing and an entry in `effective.warnings`). With a preset or
+  `--parent-alt-screen`, de novo candidates show the parents' read counts
+  (`parent_alt_reads`).
+- `db trio --category` takes a comma list (`recessive,comphet`). `all` and a
+  single name behave as before, with the same metavar and the same message for
+  an unknown name; a list prints one summary line per model.
+- `db trio --format json`: a run with a preset ends with `preset` and
+  `effective` objects (`effective` alone with `--strict-missing`,
+  `--require-bound-gates`, `--parent-alt-screen` or `--pass-only`), and `gates`
+  reports
+  `strict_missing` (and `strict_exempt`), `pass_only`, `parent_alt_screen` and
+  `max_parent_alt_frac` when they are on. Additive only: a run without them is byte-identical, which
+  the goldens pin (they gain one preset run).
+- `cli/filter_registry.py` declares every filter once (file key, Click
+  parameter, flag, type, range, default, owner, commands); the options of
+  `db trio` are generated from it, and `tests/test_filter_registry_drift.py`
+  fails when an option is added without being registered.
 
 ### Changed
 
@@ -120,6 +229,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   states the CLI's NULL-tolerant gates against the stricter generic rule,
   lists `comphet` among the models, warns about a cohort-derived `INFO/AF`
   and says how a haploid call is stored.
+- `db trio` decides whether `--max-af` was typed from where the value came from
+  (the command line or the environment), not from "not the default". With no
+  preset this is the same test; with one, a preset's `max_af` is never typed, so it
+  cannot defeat the cohort-derived-AF skip. The `--help` text of the gate options
+  is longer.
 
 ### Fixed
 

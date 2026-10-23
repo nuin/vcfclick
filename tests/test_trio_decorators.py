@@ -16,6 +16,7 @@ import duckdb
 import pytest
 
 import cli.trio_output as out
+from cli.trio_analysis import Gates
 
 NO_ANNOTATIONS = {"genes": False, "clinvar": False, "gnomad": False}
 TRIO_ROW = ["chr1", 100, "A", "G", 1, 0, 0, 0.01]  # the 8-column detail row
@@ -268,14 +269,7 @@ def _analysis() -> SimpleNamespace:
             family_id="fam",
             kind="trio",
         ),  # fmt: skip
-        gates=SimpleNamespace(
-            min_gq=20,
-            min_dp=10,
-            max_af=0.01,
-            min_ab=0.25,
-            max_ab=0.75,
-            af_gate="applied",
-        ),  # fmt: skip
+        gates=Gates(20, 10, 0.01, 0.25, 0.75),
         has_reference=True,
         siblings=[],
         gnomad_max_af=None,

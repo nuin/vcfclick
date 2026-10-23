@@ -28,6 +28,25 @@ from tests.conftest import FIXTURES, run_cli
 BACKENDS = ("chdb", "duckdb")
 TOP_LEVEL = ["trio", "keep_reference", "gates", "annotations", "models"]
 GATE_KEYS = ["min_gq", "min_dp", "max_af", "min_ab", "max_ab", "gnomad_max_af"]
+# reported after af_gate, in this order, and only for a gate that is on
+# (strict_exempt: the strict_missing gates a `--no-require-bound-gates` run did
+# not apply it to, only with strict_missing)
+OPT_IN_GATE_KEYS = [
+    "strict_missing",
+    "strict_exempt",
+    "pass_only",
+    "parent_alt_screen",
+    "max_parent_alt_frac",
+]
+PRESET_KEYS = [
+    "name", "source", "revision", "status", "schema_version", "fingerprint",
+    "pinned", "meta", "path", "requested", "resolved", "overridden", "skipped",
+    "models_not_run", "covers", "does_not_cover", "notes",
+]  # fmt: skip
+EFFECTIVE_KEYS = [
+    "rows", "gq", "dp", "ad", "median_dp", "info_af", "filter_column", "gnomad",
+    "population_filter", "warnings",
+]  # fmt: skip
 
 
 def _is_int(v) -> bool:
@@ -44,9 +63,83 @@ def _check_variant(v: dict) -> None:
     assert v["af"] is None or _is_num(v["af"])
 
 
+def _is_bool_or_null(v) -> bool:
+    return v is None or isinstance(v, bool)
+
+
+def assert_preset_objects(doc: dict) -> None:
+    """The optional `preset` and `effective` objects of a run that used a preset
+    (or insisted on a gate): present at the end of the document, never in the
+    middle, with the shapes an app decodes."""
+    extra = list(doc)[len(TOP_LEVEL) :]
+    assert extra in ([], ["effective"], ["preset", "effective"]), extra
+    if "preset" in doc:
+        p = doc["preset"]
+        assert list(p) == PRESET_KEYS
+        assert p["source"] in ("builtin", "user", "shared", "file")
+        assert p["revision"] is None or _is_int(p["revision"])
+        assert p["status"] in (None, "starting_point")
+        assert isinstance(p["fingerprint"], str) and len(p["fingerprint"]) == 12
+        assert isinstance(p["pinned"], bool)
+        assert list(p["meta"]) == ["approved_by", "approved_on", "locked"]
+        assert isinstance(p["meta"]["locked"], bool)
+        for key, entry in p["resolved"].items():
+            assert entry["from"] in ("preset", "flag", "default", "derived"), key
+            assert set(entry) <= {"value", "from", "bound"}, key
+            assert isinstance(entry.get("bound", True), bool), key
+        for o in p["overridden"]:
+            assert list(o) == ["key", "preset", "flag"]
+        for sk in p["skipped"]:
+            assert list(sk) == ["key", "reason", "widening", "message"]
+            assert sk["reason"] in ("not_applicable", "unavailable")
+        for m in p["models_not_run"]:
+            assert list(m) == ["model", "count"]
+        assert isinstance(p["notes"], list)
+    if "effective" in doc:
+        e = doc["effective"]
+        assert list(e) == EFFECTIVE_KEYS
+        for gate in ("gq", "dp", "ad"):
+            assert _is_bool_or_null(e[gate]["bound"]), gate
+            assert all(
+                v is None or _is_num(v) for k, v in e[gate].items() if k != "bound"
+            ), gate
+        assert all(_is_int(n) for n in e["rows"].values())
+        assert e["info_af"]["state"] in AF_GATE_VALUES
+        assert list(e["filter_column"]) == ["present", "non_pass_variants"]
+        assert isinstance(e["filter_column"]["present"], bool)
+        assert e["filter_column"]["non_pass_variants"] is None or _is_int(
+            e["filter_column"]["non_pass_variants"]
+        )
+        assert list(e["gnomad"]) == [
+            "loaded", "bound", "field", "version", "candidates_checked",
+            "candidates_without_record", "cohort_variants_sampled",
+            "cohort_variants_with_record",
+        ]  # fmt: skip
+        for k in (
+            "candidates_checked", "candidates_without_record",
+            "cohort_variants_sampled", "cohort_variants_with_record",
+        ):  # fmt: skip
+            assert e["gnomad"][k] is None or _is_int(e["gnomad"][k]), k
+        # null: not examined (a run limited to one gate says nothing of the others)
+        assert _is_bool_or_null(e["info_af"]["bound"])
+        assert _is_bool_or_null(e["gnomad"]["bound"])
+        # a gnomAD that is not loaded cannot be bound, and has judged no candidate
+        if not e["gnomad"]["loaded"]:
+            assert e["gnomad"]["bound"] is not True
+            assert e["gnomad"]["candidates_checked"] is None
+            assert e["gnomad"]["candidates_without_record"] is None
+        assert _is_bool_or_null(e["population_filter"])
+        for w in e["warnings"]:
+            assert list(w) == ["code", "level", "key", "message"]
+            assert w["level"] in ("warning", "info")
+            assert isinstance(w["code"], str) and isinstance(w["message"], str)
+            assert w["key"] is None or isinstance(w["key"], str)
+
+
 def assert_trio_document(doc: dict) -> None:
     """Structural checks every trio document must pass, old keys and new."""
     assert list(doc)[: len(TOP_LEVEL)] == TOP_LEVEL
+    assert_preset_objects(doc)
     trio = doc["trio"]
     assert list(trio)[:4] == ["ingest_id", "proband", "father", "mother"]
     # additive, after the original keys: where the proband sits in the pedigree
@@ -67,6 +160,20 @@ def assert_trio_document(doc: dict) -> None:
     # additive, after the original keys
     assert list(gates)[len(GATE_KEYS)] == "af_gate"
     assert gates["af_gate"] in AF_GATE_VALUES
+    opt_in = list(gates)[len(GATE_KEYS) + 1 :]
+    assert opt_in == [k for k in OPT_IN_GATE_KEYS if k in gates], opt_in
+    assert all(
+        gates[k] is True
+        for k in opt_in
+        if k not in ("max_parent_alt_frac", "strict_exempt")
+    )
+    assert ("max_parent_alt_frac" in gates) == ("parent_alt_screen" in gates)
+    if "strict_exempt" in gates:
+        assert "strict_missing" in gates
+        exempt = gates["strict_exempt"]
+        assert exempt and all(
+            k in ("min_gq", "min_dp", "min_ab", "parent_alt_screen") for k in exempt
+        )
     # annotations stays {string: bool}: an app decodes it as a dictionary
     # of booleans and throws on any other value.
     assert doc["annotations"], "annotations is never empty"
@@ -120,6 +227,27 @@ def assert_trio_document(doc: dict) -> None:
                         assert ok(g[opt]), (opt, g[opt])
 
 
+_EFFECTIVE = {
+    "rows": {"proband": 3, "father": 3, "mother": 3},
+    "gq": {"proband": 1.0, "father": 1.0, "mother": 1.0, "bound": True},
+    "dp": {"proband": 1.0, "father": 1.0, "mother": 0.5, "bound": False},
+    "ad": {"proband": 1.0, "father": 1.0, "mother": 1.0, "bound": True},
+    "median_dp": {"proband": 30, "father": 30, "mother": None},
+    "info_af": {"state": "applied", "bound": True},
+    "filter_column": {"present": True, "non_pass_variants": 2},
+    "gnomad": {
+        "loaded": False, "bound": False, "field": "popmax (grpmax else AF)",
+        "version": None, "candidates_checked": None,
+        "candidates_without_record": None, "cohort_variants_sampled": 30,
+        "cohort_variants_with_record": 0,
+    },
+    "population_filter": True,
+    "warnings": [
+        {"code": "gate_unbound", "level": "warning", "key": "min_dp", "message": "m"}
+    ],
+}  # fmt: skip
+
+
 def test_contract_checker_rejects_what_would_blank_an_app():
     """The checker is not vacuous: each of these is a decode failure in at
     least one app."""
@@ -166,6 +294,49 @@ def test_contract_checker_rejects_what_would_blank_an_app():
     broken(lambda d: d["trio"].update(kind="quad"))
     broken(lambda d: d["trio"]["siblings"][0].update(kind="cousin"))
     broken(lambda d: d["trio"]["siblings"][0].pop("kind"))
+    broken(lambda d: d["gates"].update(pass_only=False))  # reported only when on
+    broken(lambda d: d["gates"].update(max_parent_alt_frac=0.05))  # alone: no screen
+    broken(lambda d: d["gates"].update(strict_exempt=["min_gq"]))  # alone: no strict
+    broken(lambda d: d.update(effective={}))
+    broken(lambda d: d.update(preset={}))
+    broken(lambda d: d.update(surprise=1, effective=_EFFECTIVE))
+    with_effective = json.loads(json.dumps(good))
+    with_effective["effective"] = _EFFECTIVE
+    assert_trio_document(with_effective)
+    assert_trio_document(
+        {**with_effective, "gates": {**good["gates"], "strict_missing": True}}
+    )
+    assert_trio_document(
+        {
+            **with_effective,
+            "gates": {
+                **good["gates"],
+                "strict_missing": True,
+                "strict_exempt": ["min_gq", "parent_alt_screen"],
+            },
+        }
+    )
+
+    def broken_effective(mutate):
+        doc = json.loads(json.dumps(with_effective))
+        mutate(doc["effective"])
+        with pytest.raises((AssertionError, KeyError)):
+            assert_trio_document(doc)
+
+    broken_effective(lambda e: e["gq"].update(bound="yes"))
+    broken_effective(lambda e: e["filter_column"].update(non_pass_variants="2"))
+    broken_effective(lambda e: e["gnomad"].update(bound="yes"))
+    broken_effective(lambda e: e["gnomad"].update(bound=True))  # not loaded
+    broken_effective(lambda e: e["gnomad"].update(candidates_checked=4))  # not loaded
+    broken_effective(lambda e: e.update(population_filter=1))
+    scoped = json.loads(json.dumps(with_effective))  # a run limited to one gate
+    scoped["effective"]["gnomad"]["bound"] = None
+    scoped["effective"]["population_filter"] = None
+    scoped["effective"]["info_af"]["bound"] = None
+    scoped["effective"]["gq"]["bound"] = None
+    assert_trio_document(scoped)
+    broken_effective(lambda e: e["warnings"].append({"code": "x"}))
+    broken_effective(lambda e: e["info_af"].update(state="maybe"))
 
 
 @pytest.fixture

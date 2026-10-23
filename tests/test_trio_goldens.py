@@ -50,7 +50,7 @@ ADDED_KEYS = {
     # A key a document decorator adds at the top of one trio document (next to
     # `trio`, `gates`, `models`), e.g. a later `preset` or `effective` object.
     # Applied to every document of a `trios` list.
-    "document": set(),
+    "document": {"preset", "effective"},  # present only for a run with a preset
 }
 
 GIAB = FIXTURES / "giab"
@@ -96,6 +96,15 @@ def _runs(
         for cat in cats:
             out.append((*proband, *extra, "--category", cat, "--format", fmt))
     return tuple(out)
+
+
+def _preset_runs() -> tuple[tuple[str, ...], ...]:
+    """One preset run (`--preset`, with a flag typed over it), JSON and text.
+    The JSON golden is what is left of the document without the `preset` and
+    `effective` objects, so it pins that the old keys do not move under a
+    preset; the text golden pins the `preset:` and `gates:` lines."""
+    args = ("--proband", "CHILD", "--preset", "rare-recessive", "--max-af", "0.3")
+    return tuple((*args, "--format", fmt) for fmt in ("json", "text"))
 
 
 C1 = ("--proband", "C1")
@@ -146,7 +155,7 @@ STORES = (
         "trio_relaxed",
         FIXTURES / "trio.vcf.gz",
         _ped(FIXTURES / "trio.ped"),
-        _runs(("--proband", "CHILD"), extra=("--max-af", "0.3")),
+        _runs(("--proband", "CHILD"), extra=("--max-af", "0.3")) + _preset_runs(),
         gene=("GENEX", "chr1", 1, 100000),
         ingest_id="fam1",
     ),
