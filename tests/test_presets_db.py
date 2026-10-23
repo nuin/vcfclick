@@ -149,6 +149,51 @@ def reference_depth_sites() -> list[Site]:
     return denovo + shallow
 
 
+def common_site_shape_sites() -> list[Site]:
+    """Shape E: 10 rare de novo hets whose proband GQ is '.', then 300 de novo hets at
+    INFO/AF 0.3 with every field. GQ is on 300 of the 310 sites that have the de novo
+    pattern, and on none of the 10 that the rarity gate keeps."""
+    rare = [
+        Site("chr1", 1000 * (i + 1), "A", "G",
+             ("0/1:15,15:.:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info="AF=0.0005", fmt="GT:AD:GQ:DP")
+        for i in range(10)
+    ]  # fmt: skip
+    common = [
+        Site("chr1", 20000 + 100 * i, "A", "G",
+             ("0/1:15,15:99:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info="AF=0.3", fmt="GT:AD:GQ:DP")
+        for i in range(300)
+    ]  # fmt: skip
+    return rare + common
+
+
+def removed_site_shape_sites() -> list[Site]:
+    """Shapes R and S: 15 clean PASS rare de novo hets with every field, 300 de novo
+    hets marked LowQual and 300 at INFO/AF 0.3, both without proband GQ. The sites
+    the FILTER gate and the rarity gate remove are not the clinician's candidates,
+    so the GQ the 15 carry is all that matters."""
+    clean = [
+        Site("chr1", 1000 * (i + 1), "A", "G",
+             ("0/1:15,15:99:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info="AF=0.0005", fmt="GT:AD:GQ:DP")
+        for i in range(15)
+    ]  # fmt: skip
+    low_quality = [
+        Site("chr1", 20000 + 100 * i, "A", "G",
+             ("0/1:15,15:.:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info="AF=0.0005", fmt="GT:AD:GQ:DP", filter="LowQual")
+        for i in range(300)
+    ]  # fmt: skip
+    common = [
+        Site("chr1", 60000 + 100 * i, "A", "G",
+             ("0/1:15,15:.:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info="AF=0.3", fmt="GT:AD:GQ:DP")
+        for i in range(300)
+    ]  # fmt: skip
+    return clean + low_quality + common
+
+
 @dataclass
 class World:
     home: Path
@@ -245,6 +290,17 @@ def world(backend, tmp_path_factory):
     ad_shape = write_vcf(base / "ad_shape.vcf", TRIO_SAMPLES, ad_shape_sites())
     af_gap = write_vcf(base / "af_gap.vcf", TRIO_SAMPLES, af_gap_sites())
     ref_depth = write_vcf(base / "ref_depth.vcf", TRIO_SAMPLES, reference_depth_sites())
+    # the candidates are the sites the rarity and FILTER gates keep: a field missing
+    # only on the sites they remove (or present only on those) is not a gate's field
+    common_shape = write_vcf(
+        base / "common_shape.vcf", TRIO_SAMPLES, common_site_shape_sites()
+    )
+    removed_shape = write_vcf(
+        base / "removed_shape.vcf",
+        TRIO_SAMPLES,
+        removed_site_shape_sites(),
+        filter_header=make_preset_vcf.FILTERS,
+    )
     stores = (
         ("p", FIXTURES / "presets.vcf.gz", ped),
         ("n", FIXTURES / "presets_nogq.vcf.gz", ped),
@@ -255,6 +311,8 @@ def world(backend, tmp_path_factory):
         ("a", ad_shape, cohort_ped),
         ("u", af_gap, cohort_ped),
         ("d", ref_depth, cohort_ped),
+        ("e", common_shape, cohort_ped),
+        ("s", removed_shape, cohort_ped),
     )
     for name, vcf, pedigree in stores:
         run_cli(home, backend, "db", "create", name)
@@ -746,6 +804,76 @@ def test_gq_missing_on_the_candidates_is_a_warning_for_a_warn_only_preset(world)
     )  # fmt: skip
     assert rec["effective"]["gq"]["bound"] is True
     assert not [w for w in rec["effective"]["warnings"] if w["code"] == "gate_unbound"]
+
+
+def test_gq_present_only_on_sites_the_rarity_gate_removes_still_refuses_strict_denovo(
+    world,
+):
+    """300 de novo-pattern sites at INFO/AF 0.3 carry GQ and the 10 rare ones do not:
+    GQ is on 96.8% of the sites with the de novo pattern, and on none that the rarity
+    gate keeps. strict-denovo used to run, say min_gq=30 was enforced on 96.7% of
+    rows, and print `denovo candidates: 0`. It refuses: the gate would fail every
+    candidate the clinician could be shown."""
+    r = trio(world, "e", "--preset", "strict-denovo", *IGNORE_GNOMAD, ok=False)
+    assert r.stdout == ""
+    for text in ("min_gq=30 cannot be enforced",
+                 "only 0% of proband 0/1 or 1/1 rows at denovo candidate sites carry GQ",
+                 "strict_missing counts a call without GQ as a fail",
+                 "Remedy: GQ is missing where the gates read it",
+                 "--no-require-bound-gates"):  # fmt: skip
+        assert text in r.stderr, text
+    assert "min_dp" not in r.stderr and "min_ab" not in r.stderr
+    # run anyway: the gate is exempt, the 10 are listed, and nothing is dropped quietly
+    doc = jtrio(
+        world, "e", "--preset", "strict-denovo", *IGNORE_GNOMAD,
+        "--no-require-bound-gates",
+    )  # fmt: skip
+    assert positions(doc) == DN_POSITIONS and doc["models"]["denovo"]["count"] == 10
+    assert doc["gates"]["strict_exempt"] == ["min_gq"]
+    eff = doc["effective"]
+    assert eff["gq"]["proband"] == round(300 / 310, 4)  # the share that misled
+    assert (eff["gq"]["bound"], eff["dp"]["bound"], eff["ad"]["bound"]) == (
+        False, True, True,
+    )  # fmt: skip
+    assert "strict_missing_dropped" not in [x["code"] for x in eff["warnings"]]
+    # a warn-only preset runs and says the same, on stdout
+    out = trio(world, "e", "--preset", "broad-first-pass", *IGNORE_GNOMAD).stdout
+    assert (
+        "  WARNING: min_gq=15 cannot be enforced: only 0% of proband 0/1 or 1/1 rows "
+        "at denovo candidate sites carry GQ"
+    ) in warning_lines(out)
+    assert re.search(r"^\s*denovo\s+10$", out, re.M)  # the 10, not the 300 common ones
+
+
+def test_fields_missing_only_on_sites_the_gates_remove_do_not_refuse_a_strict_preset(
+    world,
+):
+    """15 clean rare PASS de novo hets with every field, 300 LowQual de novo hets and
+    300 at INFO/AF 0.3, the 600 without GQ. The FILTER gate and the rarity gate remove
+    those, so GQ is on all 15 candidates; it used to be judged on 15 of 615 sites
+    (2.4%) and strict-denovo refused a run that had nothing wrong with it."""
+    doc = jtrio(world, "s", "--preset", "strict-denovo", *IGNORE_GNOMAD)
+    assert positions(doc) == {1000 * (i + 1) for i in range(15)}
+    assert doc["models"]["denovo"]["count"] == 15
+    assert "strict_exempt" not in doc["gates"]
+    eff = doc["effective"]
+    assert (eff["gq"]["bound"], eff["dp"]["bound"], eff["ad"]["bound"]) == (
+        True, True, True,
+    )  # fmt: skip
+    assert eff["gq"]["proband"] == round(15 / 615, 4)  # the share over every row
+    assert not [w for w in eff["warnings"] if w["code"] == "gate_unbound"]
+    assert "strict_missing_dropped" not in [x["code"] for x in eff["warnings"]]
+    # each gate counts: with either one off, the sites it removed are candidates again
+    # and none of them carries GQ (15 of 315 rows, 4.7%)
+    for off in (("--no-pass-only",), ("--max-af", "0.5")):
+        r = trio(
+            world, "s", "--preset", "strict-denovo", *IGNORE_GNOMAD, *off, ok=False
+        )
+        assert r.stdout == ""
+        assert (
+            "only 4.7% of proband 0/1 or 1/1 rows at denovo candidate sites carry GQ"
+            in r.stderr
+        ), off
 
 
 def test_ad_on_the_inherited_reference_calls_and_not_on_the_de_novo_ones_refuses(world):

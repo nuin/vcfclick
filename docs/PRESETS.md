@@ -112,9 +112,14 @@ his 200 inherited hom-alts, and GQ is on 95% of his non-reference rows. So each
 GQ / DP / AD gate is judged on the **candidate rows** of every model the run
 selects: the proband's and the parents' stored rows at the sites where that model's
 genotype pattern holds (for `denovo`, the sites where the proband carries and both
-parents are 0/0), counted over the same join `db trio` runs but before any quality
-or rarity gate (one grouped count per model). Of those rows the gate reads these genotype classes, and the weakest
-model decides:
+parents are 0/0) **and that the rarity (`INFO/AF`) and `FILTER` gates keep**, counted
+over the same join `db trio` runs but before any quality gate (one grouped count per
+model). A site those two gates remove is not a candidate anyone is shown, so a field
+missing on it, or present only on it, says nothing: a caller that leaves GQ off its
+`LowQual` sites or its common ones would make `strict-denovo` refuse a run whose
+candidates all carry GQ, and one that fills GQ on the common sites only would make
+it run, bound, on candidates that all lack it. Of those rows the gate reads these
+genotype classes, and the weakest model decides:
 
 | Model | Proband rows | Parent rows |
 |---|---|---|
@@ -132,7 +137,11 @@ a role with none of those on its whole sample. The warning says which rows fell 
 (`only 0% of father/mother 0/0 rows at denovo candidate sites carry AD`), and a
 refusal's remedy names the field (`GQ is missing where the gates read it`). A gate
 that no selected model reads at all is `bound: false` with a `gate_not_applicable`
-warning, not judged on the sample at large. The
+warning, not judged on the sample at large. The gnomAD filter is the one gate that
+cannot narrow the pool: it runs in Python on the rows the query returns, using a
+store the cohort's database cannot join, so a field missing only on the sites gnomAD
+removes still counts. That case is caught after the run, by `strict_missing_dropped`
+below, as a warning (it does not change the exit status). The
 `gq` / `dp` / `ad` shares in `effective` stay the whole sample's, a fact about the
 data and not the verdict; `bound` is the verdict of the gates that read the field
 (`ad.bound` needs both `min_ab` and `parent_alt_screen`). The

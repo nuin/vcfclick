@@ -199,7 +199,8 @@ def attach_gate_reports(
         """What the rows at each runnable selected model's candidate sites carry:
         the rows the GQ / DP / AD gates are judged on. Counted only for the
         models that read a gate this report judges, and not for one that cannot
-        run (its candidate sites do not exist)."""
+        run (its candidate sites do not exist). The sites the rarity (INFO/AF) and
+        FILTER gates remove are not counted: nobody is shown them."""
         blocked = {model for model, _ in blocked_models(analysis)}
         wanted = [
             m
@@ -208,7 +209,13 @@ def attach_gate_reports(
             )
             if m not in blocked
         ]
-        return collect_candidate_stats(sess, analysis.trio, wanted)
+        return collect_candidate_stats(
+            sess,
+            analysis.trio,
+            wanted,
+            analysis.gates,
+            filter_present=filter_present,
+        )
 
     def strict_check(analysis: TrioAnalysis) -> tuple[str, ...]:
         """The runnable selected models a strict_missing gate in force can drop a

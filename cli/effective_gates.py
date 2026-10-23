@@ -13,11 +13,15 @@ it reads:
   * GQ, DP and AD on the CANDIDATE ROWS of each selected model: the rows of the
     proband and of the parents at the sites where the model's genotype pattern
     holds (`MODEL_PREDICATES`: for de novo the sites where the proband carries
-    and both parents are 0/0), counted over the very join `db trio` runs, before
-    any quality gate. The gate is judged on the genotype classes of those rows
-    that it reads (`gate_reads`: allele balance reads the proband's het rows, the
-    parent-allele screen the parents' 0/0 rows, GQ and DP every row), and the
-    weakest model decides. A caller can fill a field on its inherited calls and
+    and both parents are 0/0) and that the rarity (INFO/AF) and FILTER gates
+    keep, counted over the very join `db trio` runs, before any quality gate. (A
+    caller that leaves GQ off its low-quality or common sites would otherwise
+    make a gate look unbound, or bound, on sites nobody is shown. The gnomAD
+    filter runs in Python on the listed rows and cannot narrow this pool: what it
+    leaves is caught after the run by `strict_missing_dropped`.) The gate is
+    judged on the genotype classes of those rows that it reads (`gate_reads`:
+    allele balance reads the proband's het rows, the parent-allele screen the
+    parents' 0/0 rows, GQ and DP every row), and the weakest model decides. A caller can fill a field on its inherited calls and
     leave it empty on the de novo ones, and neither a share over all of a sample's
     rows nor one over a genotype class says anything about the rows a candidate
     rests on. Only a model with no candidate rows at all (or none of the classes
@@ -93,7 +97,9 @@ from cli.trio_analysis import (
     STRICT_GATE_KEYS,
     Gates,
     Trio,
+    parent_joins,
     parent_sample_joins,
+    site_gate_sql,
 )
 from cli.warning_codes import warning
 
@@ -293,14 +299,19 @@ class CandidateStats:
 
     A candidate site is one where the model's genotype pattern holds
     (`MODEL_PREDICATES`: for de novo the proband carries and both parents are
-    0/0). `roles` gives, for the proband and each parent, the rows at those
-    sites by genotype class with the number that carry GQ, DP and AD. These are
-    the rows the quality gates are applied to, so a field's presence on them is
+    0/0) and that the SQL rarity gate (INFO/AF) and the FILTER gate keep: the
+    sites those remove are not shown to anyone, so a field missing on them
+    decides nothing. (The gnomAD filter runs in Python after the query and is not
+    applied here.) `roles` gives, for the proband and each parent, the rows at
+    those sites by genotype class with the number that carry GQ, DP and AD. These
+    are the rows the quality gates are applied to, so a field's presence on them is
     what decides whether a gate can act; the same field on the sample's other
     rows (the inherited calls of a de novo search) decides nothing."""
 
     model: str
-    sites: int  # candidate sites: the model's predicate only, no quality gate
+    # candidate sites: the model's predicate, the rarity and FILTER gates, no
+    # quality gate
+    sites: int
     roles: Mapping[str, tuple[GenotypeClassStats, ...]]
 
     def share(self, role: str, name: str, classes: Collection[str]) -> float | None:
@@ -311,11 +322,26 @@ class CandidateStats:
         return sum(getattr(c, name) for c in picked) / rows if rows else None
 
 
-def candidate_presence_sql(model: str, trio: Trio) -> str:
+def candidate_presence_sql(
+    model: str,
+    trio: Trio,
+    gates: Gates | None = None,
+    *,
+    filter_present: bool = True,
+) -> str:
     """One grouped count over the join `trio_sql` runs for `model` (proband `g`,
-    parents `f` and `m`, the model's genotype predicate and no quality or rarity
-    gate): per combination of the three genotypes, the number of rows and, for
-    each of the three samples, how many carry GQ, DP and both allele depths."""
+    parents `f` and `m`, the model's genotype predicate and no quality gate): per
+    combination of the three genotypes, the number of rows and, for each of the
+    three samples, how many carry GQ, DP and both allele depths.
+
+    With `gates`, the sites the SQL rarity gate (INFO/AF above max_af) and the
+    FILTER gate (`pass_only`) remove are left out, as they are in the run: they
+    are not candidates, and a field that is missing on them (a caller that leaves
+    GQ off its low-quality or common sites) says nothing about the rows a
+    clinician is shown. The gnomAD filter cannot be applied here: it runs in
+    Python on the rows the model returns, so a field missing only on the sites
+    gnomAD removes still counts in this pool (`strict_missing_dropped` is the
+    check after the run for that case)."""
     from storage import count_expr, sql_quote_str
 
     cols = []
@@ -326,12 +352,26 @@ def candidate_presence_sql(model: str, trio: Trio) -> str:
             f"sum(CASE WHEN {alias}.ad_ref IS NOT NULL AND {alias}.ad_alt IS NOT NULL "
             "THEN 1 ELSE 0 END)",
         ]
+    site_gates = (
+        site_gate_sql(
+            trio, gates, MODEL_PREDICATES[model], filter_present=filter_present
+        )
+        if gates is not None
+        else []
+    )
+    # the variants table is joined only when a gate on it is in force
+    joins = (
+        parent_joins(trio.father, trio.mother)
+        if site_gates
+        else parent_sample_joins(trio.father, trio.mother)
+    )
+    where = " AND ".join([MODEL_PREDICATES[model], *site_gates])
     return (
         f"SELECT g.gt, f.gt, m.gt, {count_expr()}, {', '.join(cols)} "
-        f"FROM genotypes g {parent_sample_joins(trio.father, trio.mother)} "
+        f"FROM genotypes g {joins} "
         f"WHERE g.ingest_id = {sql_quote_str(trio.ingest_id)} "
         f"AND g.sample_id = {sql_quote_str(trio.proband)} "
-        f"AND {MODEL_PREDICATES[model]} GROUP BY g.gt, f.gt, m.gt"
+        f"AND {where} GROUP BY g.gt, f.gt, m.gt"
     )
 
 
@@ -362,13 +402,19 @@ def _candidate_stats(model: str, data: Sequence[Sequence]) -> CandidateStats:
 
 
 def collect_candidate_stats(
-    sess, trio: Trio, models: Sequence[str]
+    sess,
+    trio: Trio,
+    models: Sequence[str],
+    gates: Gates | None = None,
+    *,
+    filter_present: bool = True,
 ) -> dict[str, CandidateStats]:
     """For each of `models` that has a genotype predicate, what the rows at its
-    candidate sites carry. One grouped count per distinct predicate (compound het
-    reads the dominant pattern and shares its count). A model without one, or a
-    trio without both parents, is left out, and its gates are judged on the
-    sample's stored rows instead."""
+    candidate sites carry (`candidate_presence_sql`: the sites `gates` keep, when
+    given). One grouped count per distinct predicate (compound het reads the
+    dominant pattern and shares its count). A model without one, or a trio without
+    both parents, is left out, and its gates are judged on the sample's stored rows
+    instead."""
     out: dict[str, CandidateStats] = {}
     if trio.father is None or trio.mother is None:
         return out
@@ -378,7 +424,10 @@ def collect_candidate_stats(
         if predicate is None:
             continue
         if predicate not in by_predicate:
-            raw = sess.query(candidate_presence_sql(model, trio), "JSONCompact")
+            sql = candidate_presence_sql(
+                model, trio, gates, filter_present=filter_present
+            )
+            raw = sess.query(sql, "JSONCompact")
             data = json.loads(raw.bytes().decode())["data"]
             by_predicate[predicate] = _candidate_stats(model, data)
         out[model] = replace(by_predicate[predicate], model=model)

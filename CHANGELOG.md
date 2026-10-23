@@ -89,9 +89,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   probe found that gnomAD judges the cohort, and otherwise to check the genome
   build and chromosome naming). A gate binds at 90% of the rows it reads: GQ, DP and AD
   are judged on the candidate rows of each selected model (the proband's and the
-  parents' stored rows at the sites where the model's genotype pattern holds,
-  counted over the join `db trio` runs, before any quality gate), of the genotype
-  classes the gate reads (a parent's 0/0 rows for de novo and for
+  parents' stored rows at the sites where the model's genotype pattern holds and
+  that the INFO/AF and FILTER gates keep, counted over the join `db trio` runs,
+  before any quality gate; the gnomAD filter runs in Python after the query and
+  cannot narrow them, which `strict_missing_dropped` covers after the run), of
+  the genotype classes the gate reads (a parent's 0/0 rows for de novo and for
   `--parent-alt-screen`, a parent's 0/1 rows for recessive, the proband's het
   rows for allele balance), the weakest model deciding, and not on the share over
   all of a sample's rows or of one genotype class, so a caller that fills GQ or

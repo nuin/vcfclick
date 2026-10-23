@@ -221,7 +221,8 @@ def parent_sample_joins(father: str | None, mother: str | None) -> str:
     return f"{sample_join('f', father)} {sample_join('m', mother)}"
 
 
-def _parent_joins(father: str | None, mother: str | None) -> str:
+def parent_joins(father: str | None, mother: str | None) -> str:
+    """`parent_sample_joins` and the site's variant `v` (population AF, FILTER)."""
     return (
         f"{parent_sample_joins(father, mother)} "
         "LEFT JOIN variants v ON v.ingest_id = g.ingest_id AND v.chrom = g.chrom "
@@ -323,6 +324,31 @@ def _where_parts(
     return parts
 
 
+# The parts of `_where_parts` that decide WHICH SITES a model lists, not whether
+# a call is trusted: the rarity and FILTER gates. (GQ, DP, allele balance and the
+# parent-allele screen are the quality gates; the gnomAD filter is not SQL at all,
+# it runs on the rows this query returns.)
+SITE_GATE_PARTS: tuple[str, ...] = ("population_af", "pass_only")
+
+
+def site_gate_sql(
+    trio: Trio, gates: Gates, model: str, *, filter_present: bool = True
+) -> list[str]:
+    """The SQL predicates (on the variant `v`) that remove a site before any
+    quality gate is looked at: INFO/AF above `max_af` and, with `pass_only`, a
+    FILTER label other than PASS. The effective-gate report counts what the rows at
+    a model's candidate sites carry, and the sites these two remove are not
+    candidates: a field missing there says nothing about the rows a clinician is
+    shown. `filter_present` False (a variants table without the column) leaves out
+    the FILTER gate, which the report says it cannot enforce."""
+    parts = dict(_where_parts(trio, gates, model))
+    return [
+        parts[name]
+        for name in SITE_GATE_PARTS
+        if name in parts and (filter_present or name != "pass_only")
+    ]
+
+
 def _where(
     trio: Trio, gates: Gates, model: str, *, parent_alt_screen: bool = False
 ) -> str:
@@ -347,7 +373,7 @@ def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> st
         raise ValueError(f"unknown category {category!r}")
     model = MODEL_PREDICATES[category]
 
-    joins = _parent_joins(trio.father, trio.mother)
+    joins = parent_joins(trio.father, trio.mother)
     # parent_alt_screen is about a parent's ABSENCE, so only the model that
     # claims a variant is new in the child reads it.
     where = _where(
@@ -388,7 +414,7 @@ def strict_dropped_sql(
     select = count_expr() if count_only else "g.chrom, g.pos, g.ref, g.alt"
     return (
         f"SELECT {select} FROM genotypes g "
-        f"{_parent_joins(trio.father, trio.mother)} "
+        f"{parent_joins(trio.father, trio.mother)} "
         f"WHERE {_where(trio, tolerant, model, parent_alt_screen=screen)} "
         f"AND NOT ({' AND '.join(changed)})"
     )
@@ -406,7 +432,7 @@ def _comphet_sql(trio: Trio, gates: Gates) -> str:
     )
     return (
         f"SELECT g.chrom, g.pos, g.ref, g.alt, v.info_AF AS af, {origin} "
-        f"FROM genotypes g {_parent_joins(trio.father, trio.mother)} "
+        f"FROM genotypes g {parent_joins(trio.father, trio.mother)} "
         f"WHERE {where} ORDER BY g.chrom, g.pos"
     )
 

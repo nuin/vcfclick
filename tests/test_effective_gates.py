@@ -40,10 +40,12 @@ from cli.effective_gates import (
     unbound_strict_keys,
 )
 from cli.trio_analysis import (
+    AF_GATE_SKIPPED,
     MODEL_PREDICATES,
     Gates,
     Trio,
     TrioAnalysis,
+    site_gate_sql,
     strict_dropped_sql,
     trio_sql,
 )
@@ -634,6 +636,57 @@ def test_one_count_per_distinct_predicate_and_it_reads_the_models_own_join():
         collect_candidate_stats(FakeSession(), Trio("i1", "C", "F", None), ["denovo"])
         == {}
     )
+
+
+def test_the_sites_the_rarity_and_filter_gates_remove_are_not_candidates():
+    """The pool a gate is judged on is the set of candidates the clinician is shown,
+    so the SQL rarity gate and the FILTER gate narrow it as they narrow the run. The
+    quality gates never do (that would make the field look present), and a query
+    without gates is the one `db trio` runs with none."""
+    trio_ = Trio("i1", "CHILD", "FATHER", "MOTHER")
+    plain = candidate_presence_sql("denovo", trio_)
+    assert "info_AF" not in plain and "v.filter" not in plain
+    assert "JOIN variants" not in plain  # nothing to read from the variant
+    gates = GATES._replace(max_af=0.001, pass_only=True, min_gq=30, strict_missing=True)
+    sql = candidate_presence_sql("denovo", trio_, gates)
+    run = trio_sql("denovo", trio_, gates, count_only=True)
+    join = "LEFT JOIN variants v ON v.ingest_id = g.ingest_id"
+    assert join in sql and join in run
+    for gate in site_gate_sql(trio_, gates, MODEL_PREDICATES["denovo"]):
+        assert gate in sql and gate in run  # the very predicates the run applies
+    assert "v.info_AF IS NULL OR v.info_AF <= 0.001" in sql
+    assert "v.filter IS NULL OR v.filter IN ('PASS'" in sql
+    assert "gq >=" not in sql and "dp >=" not in sql  # no quality gate
+    assert sql.count(MODEL_PREDICATES["denovo"]) == 1
+    # each gate is its own: the rarity gate alone, the FILTER gate alone
+    rarity = candidate_presence_sql("denovo", trio_, GATES._replace(max_af=0.001))
+    assert "v.info_AF" in rarity and "v.filter" not in rarity
+    skipped = GATES._replace(af_gate=AF_GATE_SKIPPED, pass_only=True)
+    flt = candidate_presence_sql("denovo", trio_, skipped)
+    assert "v.filter" in flt and "info_AF" not in flt  # the cohort's own AF is skipped
+    # a variants table with no filter column: the gate the report cannot enforce
+    # cannot be put in a query either
+    gone = candidate_presence_sql("denovo", trio_, gates, filter_present=False)
+    assert "v.filter" not in gone and "v.info_AF" in gone
+    # no site gate in force, no join to the variants
+    none = GATES._replace(max_af=1.0, af_gate=AF_GATE_SKIPPED)
+    assert candidate_presence_sql("denovo", trio_, none) == plain
+
+
+def test_collect_candidate_stats_hands_the_gates_to_each_count():
+    trio_ = Trio("i1", "CHILD", "FATHER", "MOTHER")
+    gates = GATES._replace(max_af=0.001, pass_only=True)
+    sess = FakeSession()
+    collect_candidate_stats(sess, trio_, ["denovo", "dominant", "comphet"], gates)
+    assert len(sess.sql) == 2  # comphet still shares dominant's count
+    assert all("v.info_AF" in q and "v.filter" in q for q in sess.sql)
+    sess = FakeSession()
+    collect_candidate_stats(sess, trio_, ["denovo"], gates, filter_present=False)
+    assert "v.info_AF" in sess.sql[0] and "v.filter" not in sess.sql[0]
+    # called as it was before the gates were given: the query is the old one
+    sess = FakeSession()
+    collect_candidate_stats(sess, trio_, ["denovo"])
+    assert sess.sql == [candidate_presence_sql("denovo", trio_)]
 
 
 def test_only_the_models_that_read_a_judged_gate_have_their_candidates_counted():
