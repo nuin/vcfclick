@@ -107,7 +107,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   filters, and so the fingerprint, are unchanged). Gates that cannot
   bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
   so is `NO population frequency filter applied` (the cohort-derived-AF case
-  with no gnomAD loaded), a median proband depth under 1.5 x `min_dp`, and a
+  with no gnomAD loaded), a median depth of the proband's non-reference calls
+  (not of all its stored rows, the 0/0 ones of a `--keep-reference` database
+  included) under 1.5 x `min_dp`, and a
   requested `--gnomad-max-af` with gnomAD not loaded.
 - New opt-in gates on `db trio`, all off by default: `--strict-missing` (a
   missing GQ, DP or het AD counts as a fail), `--pass-only` (VCF `FILTER` is

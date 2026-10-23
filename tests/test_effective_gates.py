@@ -1295,6 +1295,43 @@ def test_thin_coverage_is_one_and_a_half_times_min_dp():
     assert "too thin for the gates" in by_code(plain, "thin_coverage")[0]["message"]
 
 
+def test_thin_coverage_is_the_depth_of_the_proband_s_calls_not_of_all_its_rows():
+    """A keep-reference database stores the proband's 0/0 rows too, and a caller can
+    read those at a very different depth: the median over all of them says nothing
+    about the depth at the variants min_dp is applied to."""
+    gates = GATES._replace(min_dp=25)
+
+    def proband(whole, calls):
+        return SampleGateStats(
+            "proband", "proband", 110, 110, 110, 110, whole,
+            (GenotypeClassStats("ref", 100, 100, 100, 100),
+             GenotypeClassStats("het", 10, 10, 10, 10)), calls,
+        )  # fmt: skip
+
+    # 100 hom-ref rows at DP 4 and 10 calls at DP 31: the calls are what is thin
+    thin_calls = trio(proband=proband(((4, 100), (31, 10)), ((31, 10),)))
+    assert thin_calls[0].median_dp == 4 and thin_calls[0].calls_median_dp == 31
+    (w,) = by_code(report(thin_calls, gates), "thin_coverage")
+    assert w["message"].startswith(
+        "median proband DP is 31 but min_dp is 25 (the median"
+    )
+    assert "over its non-reference calls)" in w["message"]
+    # deep calls beside shallow reference rows are not thin, whatever the whole median
+    deep_calls = trio(proband=proband(((4, 100), (60, 10)), ((60, 10),)))
+    assert deep_calls[0].median_dp == 4
+    assert not by_code(report(deep_calls, gates), "thin_coverage")
+    # the document's per-sample median stays the whole sample's: a fact about the data
+    assert report(deep_calls, gates).document["median_dp"]["proband"] == 4
+    # a proband with no call that has a depth is not judged
+    none = trio(proband=proband(((4, 100),), ()))
+    assert none[0].calls_median_dp is None
+    assert not by_code(report(none, gates), "thin_coverage")
+    # a stand-in with no class split has only its whole sample's rows to go by
+    plain = trio(proband=sample("proband", depths=((31, 100),)))
+    assert plain[0].calls_median_dp == 31
+    assert by_code(report(plain, gates), "thin_coverage")
+
+
 def test_skipped_keys_that_widen_the_search_are_warnings_others_are_not():
     skipped = [
         {

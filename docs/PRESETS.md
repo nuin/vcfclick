@@ -158,7 +158,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gate_unbound` | a requested gate's field is present on under 90% of its rows |
 | `gate_not_applicable` | a requested gate that none of the selected models reads, so it removes nothing and is not bound: the parent-allele screen without the `denovo` model, an allele-balance band in a run of `recessive` alone (a hom-alt call is not band-gated; with `strict_missing` a parent's het call is read, so it applies). A warning, never a refusal: nothing is wrong with the data |
 | `gate_partial` | the gate binds but not on every row (a note on stderr, `info`): a GQ / DP / AD gate whose field is missing on some of the rows it reads, and `max_af` when some variants carry no `INFO/AF` (a variant with none passes the gate) |
-| `thin_coverage` | the proband's median DP is under 1.5 x `min_dp` |
+| `thin_coverage` | the median DP of the proband's non-reference calls is under 1.5 x `min_dp` (not the median over all its stored rows: a `--keep-reference` database holds its 0/0 rows too, often at another depth, and the depth of an assay is the depth at its variants) |
 | `pass_only_no_labels` | `--pass-only` (or the preset's) is on and no variant carries a `FILTER` label other than `PASS` or unset, so it removes nothing (a warning, never a refusal: a VCF hard-filtered before ingest is all `PASS`) |
 | `gnomad_not_loaded` | `--gnomad-max-af` was asked for and no gnomAD data is loaded |
 | `gnomad_no_coverage` | gnomAD is loaded but cannot judge the cohort: it has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere), or a record for under 10% of a sample of the cohort's own variants (a one-row test load, a slice of one gene, another genome build) |
@@ -411,7 +411,8 @@ With a preset, `db trio --format json` adds two top-level objects after
   `--preset-ignore` changed), `skipped`, `models_not_run`, `covers`,
   `does_not_cover`, `notes`.
 - `effective`: `rows`, `gq`, `dp`, `ad` (the share of rows carrying each, per
-  sample, and `bound`), `median_dp`, `info_af` (`state` is `gates.af_gate`),
+  sample, and `bound`), `median_dp` (over all of a sample's stored rows; the
+  `thin_coverage` warning uses the proband's non-reference calls), `info_af` (`state` is `gates.af_gate`),
   `filter_column` (`present`, and `non_pass_variants`: the variants whose `FILTER`
   is a label other than `PASS` or unset), `gnomad` (`loaded`, `bound`, `candidates_checked`,
   `candidates_without_record`, `cohort_variants_sampled`,

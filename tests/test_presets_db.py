@@ -130,6 +130,25 @@ def af_gap_sites() -> list[Site]:
     return denovo + inherited
 
 
+def reference_depth_sites() -> list[Site]:
+    """Ten de novo hets at DP 24, then 100 sites where the proband is 0/0 at DP 4
+    (and the father het): the proband's stored rows are mostly shallow reference
+    calls, and its calls are at DP 24."""
+    denovo = [
+        Site("chr1", 1000 * (i + 1), "A", "G",
+             ("0/1:12,12:99:24", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info="AF=0.0005", fmt="GT:AD:GQ:DP")
+        for i in range(10)
+    ]  # fmt: skip
+    shallow = [
+        Site("chr1", 20000 + 100 * i, "A", "G",
+             ("0/0:4,0:99:4", "0/1:15,15:99:30", "0/0:30,0:99:30"),
+             info="AF=0.002", fmt="GT:AD:GQ:DP")
+        for i in range(100)
+    ]  # fmt: skip
+    return denovo + shallow
+
+
 @dataclass
 class World:
     home: Path
@@ -225,6 +244,7 @@ def world(backend, tmp_path_factory):
     gq_shape = write_vcf(base / "gq_shape.vcf", TRIO_SAMPLES, gq_shape_sites())
     ad_shape = write_vcf(base / "ad_shape.vcf", TRIO_SAMPLES, ad_shape_sites())
     af_gap = write_vcf(base / "af_gap.vcf", TRIO_SAMPLES, af_gap_sites())
+    ref_depth = write_vcf(base / "ref_depth.vcf", TRIO_SAMPLES, reference_depth_sites())
     stores = (
         ("p", FIXTURES / "presets.vcf.gz", ped),
         ("n", FIXTURES / "presets_nogq.vcf.gz", ped),
@@ -234,6 +254,7 @@ def world(backend, tmp_path_factory):
         ("g", gq_shape, cohort_ped),
         ("a", ad_shape, cohort_ped),
         ("u", af_gap, cohort_ped),
+        ("d", ref_depth, cohort_ped),
     )
     for name, vcf, pedigree in stores:
         run_cli(home, backend, "db", "create", name)
@@ -1022,6 +1043,26 @@ def test_a_median_depth_near_min_dp_is_a_warning(world):
     doc = jtrio(world, "p", "--preset", "broad-first-pass", "--min-dp", "30")
     (w,) = [x for x in doc["effective"]["warnings"] if x["code"] == "thin_coverage"]
     assert "median proband DP is 40 but min_dp is 30" in w["message"]
+
+
+def test_thin_coverage_is_judged_on_the_depth_of_the_proband_s_calls(world):
+    """Its stored rows are 100 hom-ref calls at DP 4 and 10 calls at DP 24. The median
+    over all of them is 4, which made every assay look thin; the calls are at 24."""
+    base = ("--preset", "broad-first-pass", *IGNORE_GNOMAD)
+    deep = jtrio(world, "d", *base, "--min-dp", "10")  # 1.5 x 10 = 15 < 24
+    assert deep["effective"]["median_dp"]["proband"] == 4  # the data, all rows
+    assert not [
+        x for x in deep["effective"]["warnings"] if x["code"] == "thin_coverage"
+    ]
+    thin = jtrio(world, "d", *base, "--min-dp", "20")  # 1.5 x 20 = 30 > 24
+    (w,) = [x for x in thin["effective"]["warnings"] if x["code"] == "thin_coverage"]
+    assert w["message"].startswith(
+        "median proband DP is 24 but min_dp is 20 (the median"
+    )
+    out = trio(world, "d", *base, "--min-dp", "20").stdout
+    assert f"  WARNING: {w['message']}" in warning_lines(out)
+    assert not [x for x in warning_lines(trio(world, "d", *base, "--min-dp", "10").stdout)
+                if "thin" in x]  # fmt: skip
 
 
 def test_gnomad_asked_for_and_not_loaded(world):

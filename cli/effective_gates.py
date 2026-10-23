@@ -87,8 +87,10 @@ from cli.warning_codes import warning
 
 # A gate binds when its field is present on at least this share of the rows.
 ENFORCEABLE_MIN = 0.90
-# The proband's median depth below this many times min_dp: the gate is close to
-# the assay's own depth, so the preset may be too strict for it.
+# The median depth of the proband's non-reference calls below this many times
+# min_dp: the gate is close to the assay's own depth, so the preset may be too
+# strict for it. (Not over all of its stored rows: a keep-reference database holds
+# the 0/0 rows too, and the depth of an assay is the depth at its variants.)
 THIN_COVERAGE_FACTOR = 1.5
 # gnomAD binds only when it has a record for at least this share of a sample of
 # the cohort's own variants. A real load has one for most of a cohort's common
@@ -161,6 +163,8 @@ class SampleGateStats:
     depths: tuple[tuple[int, int], ...] = ()  # (dp, rows) histogram
     # the same counts by genotype class; empty for a stand-in with no split
     classes: tuple[GenotypeClassStats, ...] = ()
+    # (dp, rows) histogram of the non-reference rows only: the calls
+    nonref_depths: tuple[tuple[int, int], ...] = ()
 
     def fraction(self, name: str) -> float | None:
         """Share of this sample's rows that carry `name` (gq | dp | ad); None
@@ -176,7 +180,17 @@ class SampleGateStats:
 
     @property
     def median_dp(self) -> float | None:
+        """The median depth over all of the sample's stored rows."""
         return median_from_histogram(self.depths)
+
+    @property
+    def calls_median_dp(self) -> float | None:
+        """The median depth over the sample's non-reference rows, the calls: what
+        the depth of an assay means for a variant. (A stand-in with no class split
+        has only the whole sample's.)"""
+        if not self.classes:
+            return self.median_dp
+        return median_from_histogram(self.nonref_depths)
 
 
 def median_from_histogram(pairs: Sequence[tuple[int, int]]) -> float | None:
@@ -210,8 +224,9 @@ def collect_sample_stats(
     sess, ingest_id: str, samples: Sequence[tuple[str, str]]
 ) -> list[SampleGateStats]:
     """For each (sample, role): row count, rows carrying GQ / DP / AD (in all and
-    by genotype class), and the DP histogram. One statement over the samples'
-    stored rows, however many samples there are."""
+    by genotype class), and the DP histogram (of all the rows, and of the
+    non-reference ones). One statement over the samples' stored rows, however many
+    samples there are."""
     from storage import sql_quote_str
 
     listed = ", ".join(sql_quote_str(s) for s, _ in samples)
@@ -223,13 +238,14 @@ def collect_sample_stats(
         f"AND sample_id IN ({listed}) GROUP BY sample_id, gt, dp"
     )
     data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
-    acc = {s: [0, 0, 0, 0, {}] for s, _ in samples}  # rows, gq, dp, ad, hist
+    acc = {s: [0, 0, 0, 0, {}, {}] for s, _ in samples}  # rows gq dp ad, hists
     by_class: dict[str, dict[str, list[int]]] = {s: {} for s, _ in samples}
     for sample, gt, dp, n, n_gq, n_ad in data:
         a = acc[sample]
         n, n_gq, n_ad = int(n), int(n_gq or 0), int(n_ad or 0)
         n_dp = n if dp is not None else 0
-        c = by_class[sample].setdefault(genotype_class(int(gt)), [0, 0, 0, 0])
+        cls = genotype_class(int(gt))
+        c = by_class[sample].setdefault(cls, [0, 0, 0, 0])
         for tally in (a, c):
             tally[0] += n
             tally[1] += n_gq
@@ -238,6 +254,8 @@ def collect_sample_stats(
         c[2] += n_dp
         if dp is not None:
             a[4][int(dp)] = a[4].get(int(dp), 0) + n
+            if cls != REF:
+                a[5][int(dp)] = a[5].get(int(dp), 0) + n
     return [
         SampleGateStats(
             s,
@@ -250,6 +268,7 @@ def collect_sample_stats(
             tuple(
                 GenotypeClassStats(k, *by_class[s][k]) for k in _ANY if k in by_class[s]
             ),
+            tuple(sorted(a[5].items())),
         )
         for (s, role) in samples
         for a in (acc[s],)
@@ -957,7 +976,7 @@ def build_report(
         )
 
     proband = next((s for s in stats if s.role == "proband"), None)
-    median = proband.median_dp if proband else None
+    median = proband.calls_median_dp if proband else None
     if (
         gates.min_dp > 0
         and bound.get("min_dp")
@@ -970,8 +989,8 @@ def build_report(
                 "thin_coverage",
                 "min_dp",
                 f"median proband DP is {_num(median):g} but min_dp is "
-                f"{gates.min_dp}; this assay may be too thin for the "
-                f"{subject}{hint}",
+                f"{gates.min_dp} (the median over its non-reference calls); this "
+                f"assay may be too thin for the {subject}{hint}",
             )
         )
     about = {m for key in (only or ()) for m in _GATE_MODELS.get(key, ())}
@@ -1225,6 +1244,8 @@ def _document(
         "gq": per_sample("gq", "min_gq"),
         "dp": per_sample("dp", "min_dp"),
         "ad": per_sample("ad", "min_ab", "parent_alt_screen"),
+        # over all of a sample's stored rows, a fact about the data; the
+        # thin_coverage warning uses the proband's non-reference calls instead
         "median_dp": {s.role: _num(s.median_dp) for s in stats},
         "info_af": {
             "state": gates.af_gate,
