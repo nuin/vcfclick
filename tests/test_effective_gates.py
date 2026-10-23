@@ -7,6 +7,7 @@ with synthetic counts. The DB-backed behaviour is in tests/test_presets_db.py.
 
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -32,9 +33,19 @@ from cli.effective_gates import (
     median_from_histogram,
     refusal_message,
     sample_cohort_keys,
+    strict_check_models,
+    strict_gates_in_force,
+    strict_missing_warning,
     unbound_strict_keys,
 )
-from cli.trio_analysis import MODEL_PREDICATES, Gates, Trio, trio_sql
+from cli.trio_analysis import (
+    MODEL_PREDICATES,
+    Gates,
+    Trio,
+    TrioAnalysis,
+    strict_dropped_sql,
+    trio_sql,
+)
 from cli.warning_codes import CODES, warning
 
 GATES = Gates(20, 10, 0.01, 0.25, 0.75)
@@ -931,6 +942,153 @@ def test_the_json_effective_object_carries_the_counts_and_the_late_warning():
     assert "gnomad_no_record" not in [w["code"] for w in doc["warnings"]]
 
 
+# ─────────────── after the run: dropped only for a missing field ───────────────
+
+
+def test_the_warning_says_how_many_candidates_a_missing_field_dropped():
+    w = strict_missing_warning("denovo", 3)
+    assert (w["code"], w["level"], w["key"]) == (
+        "strict_missing_dropped", "warning", "strict_missing",
+    )  # fmt: skip
+    assert w["message"] == (
+        "strict_missing dropped 3 denovo candidates that pass every other gate, only "
+        "because a GQ, DP or allele depth they are judged on is missing from their "
+        "rows; --no-strict-missing lists them"
+    )
+    # compound het candidates are variants here, not genes
+    assert (
+        "dropped 2 comphet candidate variants"
+        in (strict_missing_warning("comphet", 2)["message"])
+    )
+    assert strict_missing_warning("denovo", 0) is None
+
+
+def test_the_check_is_made_only_where_a_strict_gate_is_in_force():
+    strict = GATES._replace(strict_missing=True)
+    assert strict_gates_in_force(GATES) == ()
+    assert strict_gates_in_force(strict) == ("min_gq", "min_dp", "min_ab")
+    # a gate that is not asked for, or that this run exempts, drops nothing
+    off = strict._replace(min_gq=0, min_ab=0.0, max_ab=1.0)
+    assert strict_gates_in_force(off) == ("min_dp",)
+    gone = strict._replace(strict_exempt=("min_gq", "min_dp", "min_ab"))
+    assert strict_gates_in_force(gone) == ()
+    assert strict_check_models(gone, ["all"]) == ()
+    screen = Gates(0, 0, 0.01, 0.0, 1.0, strict_missing=True, parent_alt_screen=True)
+    assert strict_gates_in_force(screen) == ("parent_alt_screen",)
+    assert strict_check_models(screen, ["all"]) == ("denovo",)
+    assert strict_check_models(strict, ["recessive"]) == ("recessive",)
+    # compound het reads dominant's candidates: counted and said once
+    assert strict_check_models(strict, ["all"]) == ("denovo", "recessive", "dominant")
+    assert strict_check_models(strict, ["recessive", "comphet"]) == (
+        "recessive",
+        "comphet",
+    )
+
+
+class AnsweringSession:
+    """Answers every query with one number (a count) or with fixed rows."""
+
+    def __init__(self, count=0, rows=()):
+        self.count, self.rows, self.sql = count, rows, []
+
+    def query(self, sql, fmt):
+        self.sql.append(sql)
+        return self
+
+    def bytes(self):
+        data = [[self.count]] if not self.rows else [list(r) for r in self.rows]
+        return json.dumps({"data": data}).encode()
+
+
+STRICT = Gates(30, 20, 0.01, 0.25, 0.75, strict_missing=True)
+TRIO_ = Trio("i1", "CHILD", "FATHER", "MOTHER")
+
+
+def analysis_of(session, gates=STRICT, gnomad_max_af=None, models=("denovo",)):
+    return TrioAnalysis(
+        session=session,
+        trio=TRIO_,
+        gates=gates,
+        has_reference=True,
+        gnomad_max_af=gnomad_max_af,
+        stats={"strict_models": models},
+    )
+
+
+def test_the_dropped_candidates_are_the_tolerant_rows_the_strict_gates_reject():
+    sql = strict_dropped_sql("denovo", TRIO_, STRICT, count_only=True)
+    # every gate of a run without strict_missing ...
+    assert "(g.gq IS NULL OR g.gq >= 30) AND (g.dp IS NULL OR g.dp >= 20)" in sql
+    assert MODEL_PREDICATES["denovo"] in sql and "v.info_AF" in sql
+    # ... less what the strict ones reject
+    assert "NOT ((g.gq IS NOT NULL AND g.gq >= 30) AND (g.dp IS NOT NULL AND" in sql
+    assert sql.startswith("SELECT count") and "ORDER BY" not in sql
+    # the model's own candidates, and a trio's parents joined as `db trio` joins them
+    rows = strict_dropped_sql("dominant", TRIO_, STRICT, count_only=False)
+    assert rows.startswith("SELECT g.chrom, g.pos, g.ref, g.alt FROM genotypes g")
+    assert MODEL_PREDICATES["dominant"] in rows
+    assert "INNER JOIN genotypes f ON" in rows
+    # the parent-allele screen is a strict gate in de novo only
+    screen = STRICT._replace(parent_alt_screen=True)
+    assert "NOT (" in strict_dropped_sql("denovo", TRIO_, screen, count_only=True)
+    assert "ad_alt < 2" not in strict_dropped_sql(
+        "recessive", TRIO_, screen, count_only=True
+    )
+
+
+def test_what_a_missing_field_dropped_is_counted_once_per_model():
+    session = AnsweringSession(count=3)
+    analysis = analysis_of(session, models=("denovo", "recessive"))
+    assert tgo.strict_missing_lost(analysis) == {"denovo": 3, "recessive": 3}
+    assert len(session.sql) == 2  # one count per model
+    tgo.strict_missing_lost(analysis)
+    assert len(session.sql) == 2  # and once per analysis
+    (first, _) = tgo.strict_missing_warnings(analysis)
+    assert "dropped 3 denovo candidates" in first["message"]
+    assert tgo.strict_missing_footer(analysis)[0] == f"  WARNING: {first['message']}"
+    # nothing dropped: nothing said
+    clean = analysis_of(AnsweringSession(count=0))
+    assert (
+        tgo.strict_missing_lost(clean) == {} and tgo.strict_missing_footer(clean) == []
+    )
+    # a run that was not marked for the check is not made one
+    unmarked = analysis_of(AnsweringSession(count=3), models=())
+    assert tgo.strict_missing_footer(unmarked) == []
+    # nor one with no strict gate in force: no query at all
+    off = analysis_of(AnsweringSession(count=3), STRICT._replace(strict_missing=False))
+    assert off.dropped_by_strict("denovo") == 0 and off.session.sql == []
+    gone = STRICT._replace(strict_exempt=STRICT_KEYS)
+    assert analysis_of(AnsweringSession(count=3), gone).dropped_by_strict("denovo") == 0
+    # the document gets the same warning, after the others
+    effective = report(gates=GATES).document
+    shown = analysis_of(AnsweringSession(count=3))
+    shown.stats["effective_block"] = effective
+    doc = tgo._preset_document({}, SimpleNamespace(analysis=shown))["effective"]
+    assert [w["code"] for w in doc["warnings"]][-1] == "strict_missing_dropped"
+    assert effective["warnings"] == []  # the stored block is not changed by a render
+
+
+def test_with_gnomad_the_dropped_candidates_are_those_it_would_have_kept(monkeypatch):
+    """The gnomAD filter runs on the rows in Python, so the dropped ones are
+    fetched and filtered the way the candidates are: one that gnomAD removes is
+    not dropped for a missing field alone."""
+    from cli import trio_analysis
+
+    seen = {}
+
+    def keep_first(rows, max_af, stats=None):
+        seen["rows"], seen["max_af"] = list(rows), max_af
+        return list(rows)[:1]
+
+    monkeypatch.setattr(trio_analysis, "_gnomad_filter", keep_first)
+    rows = [("chr1", 100, "A", "G"), ("chr1", 200, "A", "G"), ("chr1", 300, "A", "G")]
+    session = AnsweringSession(rows=rows)
+    analysis = analysis_of(session, gnomad_max_af=0.001)
+    assert analysis.dropped_by_strict("denovo") == 1
+    assert seen["max_af"] == 0.001 and len(seen["rows"]) == 3
+    assert session.sql[0].startswith("SELECT g.chrom, g.pos, g.ref, g.alt")
+
+
 # ─────────────────────── a selected model that cannot run ───────────────────────
 
 
@@ -1177,7 +1335,7 @@ def test_warning_codes_are_a_closed_list():
         "gate_unbound", "gate_partial", "thin_coverage", "gnomad_not_loaded",
         "no_population_frequency_filter", "skipped_widening",
         "preset_max_af_not_applied", "gnomad_no_coverage", "gnomad_no_record",
-        "pass_only_no_labels", "model_blocked",
+        "pass_only_no_labels", "model_blocked", "strict_missing_dropped",
     }  # fmt: skip
     # a code is registered by the change that first emits it: none for a run that
     # `db trio` refuses (a duo's de novo answer comes with duo analysis)

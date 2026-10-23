@@ -78,6 +78,7 @@ from cli.trio_analysis import (
     CATEGORIES,
     MODEL_PREDICATES,
     PASS_ONLY_SQL,
+    STRICT_GATE_KEYS,
     Gates,
     Trio,
     parent_sample_joins,
@@ -109,7 +110,7 @@ _BOUND_CODES = (
 )
 # the gates strict_missing turns into "fail when the field is missing": the
 # GQ / DP / AD gates and the parent-allele screen
-STRICT_KEYS = ("min_gq", "min_dp", "min_ab", "parent_alt_screen")
+STRICT_KEYS = STRICT_GATE_KEYS
 # why a model cannot run (the `blocked_reason` values a run can have), said as
 # the end of "<model> cannot run: ..."
 _BLOCKED_WHY = {
@@ -566,6 +567,43 @@ def candidate_models(
             for key in judged_gate_keys(gates, only)
             for model, _ in gate_reads(key, categories, strict=gates.strict_missing)
         )
+    )
+
+
+def strict_gates_in_force(gates: Gates) -> tuple[str, ...]:
+    """The strict_missing gates that fail a call for a missing field in this run:
+    asked for, strict_missing on, and not exempted for want of the field."""
+    return tuple(k for k in judged_gate_keys(gates) if gates.strict_for(k))
+
+
+def strict_check_models(gates: Gates, categories: Sequence[str]) -> tuple[str, ...]:
+    """The selected models that a strict_missing gate in force can drop a candidate
+    from: the ones that read such a gate. A model that shares another's candidates
+    (compound het reads the dominant pattern) is left out when that one is
+    selected: the same variants would be counted and said twice."""
+    models = dict.fromkeys(
+        model
+        for key in strict_gates_in_force(gates)
+        for model, _ in gate_reads(key, categories, strict=True)
+    )
+    by_candidates = {MODEL_PREDICATES.get(m, m): m for m in reversed(list(models))}
+    return tuple(m for m in models if by_candidates[MODEL_PREDICATES.get(m, m)] == m)
+
+
+def strict_missing_warning(model: str, dropped: int) -> dict | None:
+    """After the run: None, or the warning that strict_missing dropped `dropped`
+    candidates of `model` that pass every other gate (the ones a run without
+    strict_missing lists beyond this one), only because a field a gate needs is
+    missing. A candidate is a variant, for compound het too."""
+    if dropped <= 0:
+        return None
+    noun = "candidate variants" if model == "comphet" else "candidates"
+    return warning(
+        "strict_missing_dropped",
+        "strict_missing",
+        f"strict_missing dropped {dropped} {model} {noun} that pass every other "
+        "gate, only because a GQ, DP or allele depth they are judged on is "
+        "missing from their rows; --no-strict-missing lists them",
     )
 
 

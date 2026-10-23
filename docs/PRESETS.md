@@ -160,6 +160,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 | `gnomad_no_coverage` | gnomAD is loaded but cannot judge the cohort: it has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere), or a record for under 10% of a sample of the cohort's own variants (a one-row test load, a slice of one gene, another genome build) |
 | `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare (novel variants, which is what de novo candidates are; the text says how much of the cohort gnomAD does reach) |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
+| `strict_missing_dropped` | after a `strict_missing` run: candidates that pass every other gate (the gnomAD filter too) were dropped only because a GQ, DP or allele depth they are judged on is missing, counted with one query per model (the rows a run without `strict_missing` lists beyond this one). A gate that binds has its field on 90% of its rows, and the other 10% are what this counts. Variants, for `comphet` as for the rest, and said once for `dominant` and `comphet` together. A `WARNING:` line after the listing and an entry in `effective.warnings`; `--no-strict-missing` lists them |
 | `model_blocked` | a model the run selected cannot run on this database: it has no stored hom-reference calls (`denovo`, `dominant` and `comphet` need `--keep-reference`) or no gene table is loaded (`comphet`). The model's count is 0 because of the database, not the genome. Named per model, in the text and in `effective.warnings`; not reported in a run limited to the gates it typed |
 | `skipped_widening` | a preset key was skipped and skipping widens the search |
 | `preset_max_af_not_applied` | the preset's `max_af` was skipped as cohort-derived (`info`) |
@@ -182,7 +183,11 @@ DP. Two opt-in gates turn the warnings into refusals:
   depths cannot be screened). A field nobody asked about is not held against a
   call, so `--strict-missing --min-gq 0 --min-dp 0 --min-ab 0 --max-ab 1` is the
   same run as without it. A requested gate that cannot bind is then an error too
-  (a field missing everywhere would fail everything).
+  (a field missing everywhere would fail everything). A gate that does bind can
+  still drop the candidates whose field is missing, so after the run the candidates
+  that pass every other gate and were dropped only for that are counted and said
+  (`strict_missing_dropped`, on stdout and in `effective.warnings`): a short or
+  empty list is never quietly the data's missing fields.
 
 `strict-denovo` turns both on, so on a family VCF with no gnomAD loaded, or on a
 database ingested without `--keep-reference` (where its one model cannot prove a

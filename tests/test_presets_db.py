@@ -427,9 +427,15 @@ def test_text_has_the_preset_and_gates_lines_after_the_trio_line(world):
     assert "chr1:6000" not in out  # AF 0.0009 is over the typed 0.0005
     # the gnomAD slice holds two of the candidates: the rest it cannot judge, and
     # the line says how much of the cohort it does reach
-    assert lines[-1] == (
+    assert lines[-2] == (
         "  gnomAD: no record for 6 of 8 candidates (kept as rare); it has a "
         "record for 62.7% of a sample of the cohort's variants"
+    )
+    # and last, what strict_missing dropped: dn_null_dp_parent, whose parent's depth
+    # is missing, passes every other gate
+    assert lines[-1].startswith(
+        "  WARNING: strict_missing dropped 1 denovo candidates that pass every other "
+        "gate"
     )
 
 
@@ -856,6 +862,62 @@ def test_depth_missing_on_a_few_rows_binds_and_is_reported_as_partial(preset_run
     assert partial["key"] == "min_dp" and "counts as a fail" in partial["message"]
     assert eff["rows"] == {"proband": 51, "father": 51, "mother": 51}
     assert eff["median_dp"]["proband"] == 40
+
+
+def test_candidates_dropped_only_for_a_missing_field_are_counted_after_the_run(world):
+    """DP binds (it is on 94% of the rows at the candidate sites), so strict-denovo
+    runs, and the one candidate whose parent has no depth is dropped for that alone:
+    dn_null_dp_parent passes every other gate. Said on stdout and in the document."""
+    ignore = (*IGNORE_GNOMAD, "--max-af", "0.001")
+    doc = jtrio(world, "p", "--preset", "strict-denovo", *ignore)
+    assert "dn_null_dp_parent" not in names(doc, "denovo")
+    (w,) = [
+        x for x in doc["effective"]["warnings"] if x["code"] == "strict_missing_dropped"
+    ]
+    assert (w["level"], w["key"]) == ("warning", "strict_missing")
+    assert w["message"].startswith(
+        "strict_missing dropped 1 denovo candidates that pass every other gate, only "
+        "because a GQ, DP or allele depth"
+    )
+    out = trio(world, "p", "--preset", "strict-denovo", *ignore).stdout
+    assert warning_lines(out)[-1] == f"  WARNING: {w['message']}"
+    # the same candidates without strict_missing: the one it dropped is back, and
+    # nothing is said
+    loose = jtrio(
+        world, "p", "--preset", "strict-denovo", *ignore, "--no-strict-missing"
+    )
+    assert names(loose, "denovo") == names(doc, "denovo") | {"dn_null_dp_parent"}
+    assert "strict_missing_dropped" not in [
+        x["code"] for x in loose["effective"]["warnings"]
+    ]
+    # a run that asks for no strictness is not told
+    broad = jtrio(world, "p", "--preset", "broad-first-pass")
+    assert "strict_missing_dropped" not in [
+        x["code"] for x in broad["effective"]["warnings"]
+    ]
+    # --strict-missing typed on its own is the same check, in the same two places
+    alone = jtrio(world, "p", "--category", "denovo", "--strict-missing")
+    assert [x["code"] for x in alone["effective"]["warnings"]].count(
+        "strict_missing_dropped"
+    ) == 1
+    text = trio(world, "p", "--category", "denovo", "--strict-missing").stdout
+    assert any("strict_missing dropped" in x for x in warning_lines(text))
+
+
+def test_strict_missing_that_drops_nothing_says_nothing(world):
+    """No candidate lacks a field that a gate needs: nothing was lost to it."""
+    doc = jtrio(world, "n", "--preset", "strict-denovo", "--no-require-bound-gates")
+    assert "strict_missing_dropped" not in [
+        x["code"] for x in doc["effective"]["warnings"]
+    ]  # the fields are missing, the gates are exempt, so nothing is dropped
+    ok = jtrio(world, "g", "--preset", "strict-denovo", *IGNORE_GNOMAD,
+               "--no-require-bound-gates")  # fmt: skip
+    assert (
+        doc["models"]["denovo"]["count"] > 0 and ok["models"]["denovo"]["count"] == 10
+    )
+    assert "strict_missing_dropped" not in [
+        x["code"] for x in ok["effective"]["warnings"]
+    ]
 
 
 def test_a_median_depth_near_min_dp_is_a_warning(world):

@@ -9,6 +9,11 @@ plain run's output is the bytes it always was.
     for (and the warning when that is all of them: a fact about the candidates,
     which a de novo list is expected to have, and not about whether the filter
     binds, which the pre-run probe of the cohort's own variants decides);
+  * after the run, for a strict_missing run, how many candidates that pass every
+    other gate it dropped only for a missing GQ, DP or allele depth (what the
+    same run without strict_missing would list beyond it): a stdout
+    WARNING and an entry in `effective.warnings`, so that an empty or short list
+    is never quietly the data's missing fields and not the genome;
   * `parent_alt_reads` on each de novo candidate (and a suffix on its line in
     the text listing): the parents' ref / alt read counts at the site, so a
     clinician sees at a glance that a "de novo" has 4 alt reads of 40 in the
@@ -21,8 +26,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-
-from cli.effective_gates import gnomad_record_warning, pct
+from cli.effective_gates import gnomad_record_warning, pct, strict_missing_warning
 from cli.trio_output import (
     Render,
     register_candidate_decorator,
@@ -175,6 +179,46 @@ def _late_warning(analysis, effective: dict) -> dict | None:
     )
 
 
+def strict_missing_lost(analysis) -> dict[str, int]:
+    """{model: candidates it dropped} for each model `db trio` marked for the check
+    (`stats["strict_models"]`) that strict_missing dropped a candidate from: the
+    ones that pass every other gate (the gnomAD filter too) and fail only because
+    a GQ, DP or allele depth a strict gate needs is missing from their rows. One
+    count per model (`TrioAnalysis.dropped_by_strict`), once per analysis."""
+    cached = analysis.stats.get("strict_lost")
+    if cached is not None:
+        return cached
+    lost = {}
+    for model in analysis.stats.get("strict_models", ()):
+        dropped = analysis.dropped_by_strict(model)
+        if dropped:
+            lost[model] = dropped
+    analysis.stats["strict_lost"] = lost
+    return lost
+
+
+def strict_missing_warnings(analysis) -> list[dict]:
+    """The `strict_missing_dropped` warnings of a finished run, one per model."""
+    return [
+        w
+        for model, dropped in strict_missing_lost(analysis).items()
+        if (w := strict_missing_warning(model, dropped)) is not None
+    ]
+
+
+def strict_missing_footer(analysis) -> list[str]:
+    """The `  WARNING:` lines a text run ends with for a strict_missing run."""
+    if not analysis.stats.get("strict_models"):
+        return []
+    return [f"  WARNING: {w['message']}" for w in strict_missing_warnings(analysis)]
+
+
+def run_footer(analysis) -> list[str]:
+    """Everything a text run ends with that only the finished run knows: the
+    gnomAD counts and the candidates strict_missing dropped."""
+    return gnomad_footer(analysis) + strict_missing_footer(analysis)
+
+
 def gnomad_footer(analysis) -> list[str]:
     """The lines a text run ends with about the gnomAD filter: a WARNING when
     it found a record for none of the candidates, otherwise how many it could
@@ -220,6 +264,8 @@ def _preset_document(doc: dict, render: Render) -> dict:
                 effective["warnings"].append(late)
                 if not effective["info_af"]["bound"]:
                     effective["population_filter"] = False
+        if stats.get("strict_models"):
+            effective["warnings"].extend(strict_missing_warnings(analysis))
         doc["effective"] = effective
     return doc
 

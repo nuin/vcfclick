@@ -34,6 +34,10 @@ CODES: dict[str, str] = {
     "gnomad_no_coverage": WARNING,
     # after the run: the gnomAD filter found a record for none of the candidates
     "gnomad_no_record": WARNING,
+    # after the run: strict_missing dropped candidates that pass every other gate
+    # only because a field a gate needs (GQ, DP, allele depth) is missing from
+    # their rows
+    "strict_missing_dropped": WARNING,
     # a model the run selected cannot run on this database (no stored hom-ref
     # calls, no gene table): its count is 0 for a reason that is not the genome
     "model_blocked": WARNING,

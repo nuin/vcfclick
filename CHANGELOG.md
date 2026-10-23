@@ -122,7 +122,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `--strict-missing` is not applied to the gates that cannot bind (a call
   without GQ passes `min_gq`, as the warning says, instead of failing every
   call). `--strict-missing` is held against a gate only when the gate is asked
-  for (`--min-gq 0` asks nothing of GQ). With a preset or
+  for (`--min-gq 0` asks nothing of GQ). After a `--strict-missing` run, the
+  candidates that pass every other gate and were dropped only because a GQ, DP or
+  allele depth they are judged on is missing are counted (`strict_missing_dropped`,
+  a `WARNING:` line after the listing and an entry in `effective.warnings`). With a preset or
   `--parent-alt-screen`, de novo candidates show the parents' read counts
   (`parent_alt_reads`).
 - `db trio --category` takes a comma list (`recessive,comphet`). `all` and a

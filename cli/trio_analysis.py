@@ -98,6 +98,11 @@ class Trio(NamedTuple):
         return {2: "trio", 1: "duo"}.get(len(self.parents), "none")
 
 
+# The gates strict_missing turns into "fail when the field is missing", by file
+# key: the GQ / DP / AD gates and the parent-allele screen.
+STRICT_GATE_KEYS: tuple[str, ...] = ("min_gq", "min_dp", "min_ab", "parent_alt_screen")
+
+
 class Gates(NamedTuple):
     """The tunable quality / rarity thresholds, passed together.
 
@@ -123,7 +128,7 @@ class Gates(NamedTuple):
     pass_only: bool = False
     parent_alt_screen: bool = False
     # The gates strict_missing is NOT applied to in this run, by file key
-    # (min_gq, min_dp, min_ab, parent_alt_screen). Set only by a run told to go
+    # (STRICT_GATE_KEYS). Set only by a run told to go
     # ahead anyway (`--no-require-bound-gates`) for a gate whose field the data
     # lacks: strict there would fail every call, and the run would report "no
     # candidates" for a reason that has nothing to do with the genome.
@@ -360,6 +365,35 @@ def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> st
     )
 
 
+def strict_dropped_sql(
+    category: str, trio: Trio, gates: Gates, *, count_only: bool
+) -> str:
+    """The candidates of `category` that pass every gate of a run WITHOUT
+    strict_missing and fail only because strict_missing counts a missing GQ, DP or
+    allele depth as a fail: the rows of the tolerant query that the strict gates
+    reject. (The strict gates are a subset of the tolerant ones: a NULL fails
+    instead of passing, a value is judged the same, and each strict predicate is a
+    plain boolean, never NULL, so the NOT below loses no row.) A candidate here is
+    a variant, for compound het too."""
+    from storage import count_expr
+
+    model = MODEL_PREDICATES[category]
+    screen = gates.parent_alt_screen and category == "denovo"
+    tolerant = gates._replace(strict_exempt=STRICT_GATE_KEYS)
+    changed = [
+        sql
+        for name, sql in _where_parts(trio, gates, model, parent_alt_screen=screen)
+        if name.startswith("quality") or name in ("allele_balance", "parent_alt_screen")
+    ]
+    select = count_expr() if count_only else "g.chrom, g.pos, g.ref, g.alt"
+    return (
+        f"SELECT {select} FROM genotypes g "
+        f"{_parent_joins(trio.father, trio.mother)} "
+        f"WHERE {_where(trio, tolerant, model, parent_alt_screen=screen)} "
+        f"AND NOT ({' AND '.join(changed)})"
+    )
+
+
 def _comphet_sql(trio: Trio, gates: Gates) -> str:
     """Candidate variants for compound-het: each is a rare proband het
     inherited from exactly one parent (the dominant pattern), tagged with
@@ -536,6 +570,28 @@ class TrioAnalysis:
         return json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
             "data"
         ][0][0]
+
+    def dropped_by_strict(self, category: str) -> int:
+        """How many candidates of this model pass every gate (the gnomAD filter
+        too) and are dropped only because strict_missing counts a missing GQ, DP
+        or allele depth as a fail: what a run without strict_missing would list
+        beyond this one. Variants, for compound het as for the others. 0 when no
+        strict gate is in force."""
+        gates = self.gates
+        if not any(gates.strict_for(k) for k in STRICT_GATE_KEYS):
+            return 0
+        if self.gnomad_max_af is None:
+            sql = strict_dropped_sql(category, self.trio, gates, count_only=True)
+            return int(
+                json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
+                    "data"
+                ][0][0]
+            )
+        sql = strict_dropped_sql(category, self.trio, gates, count_only=False)
+        rows = json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
+            "data"
+        ]
+        return len(_gnomad_filter(rows, self.gnomad_max_af))
 
     def comphet_genes(self) -> dict:
         sql = _comphet_sql(self.trio, self.gates)

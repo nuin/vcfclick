@@ -49,12 +49,13 @@ from cli.effective_gates import (
     collect_sample_stats,
     collect_variant_stats,
     refusal_message,
+    strict_check_models,
     unbound_strict_keys,
 )
 from cli.preset_echo import header_lines, preset_block, skipped_items
 from cli.preset_options import PresetState, is_explicit
 from cli.trio_analysis import TrioAnalysis
-from cli.trio_gate_output import gnomad_footer
+from cli.trio_gate_output import run_footer
 from cli.trio_output import (
     MODELS,
     _annotation_status,
@@ -209,6 +210,19 @@ def attach_gate_reports(
         ]
         return collect_candidate_stats(sess, analysis.trio, wanted)
 
+    def strict_check(analysis: TrioAnalysis) -> tuple[str, ...]:
+        """The runnable selected models a strict_missing gate in force can drop a
+        candidate from: after the run, the candidates it dropped for a missing
+        field alone are counted (`trio_gate_output.strict_missing_lost`)."""
+        blocked = {model for model, _ in blocked_models(analysis)}
+        return tuple(
+            m
+            for m in strict_check_models(
+                analysis.gates, selected_categories(options.category)
+            )
+            if m not in blocked
+        )
+
     def make_report(analysis: TrioAnalysis, gates, candidates):
         trio = analysis.trio
         roles = (
@@ -251,9 +265,13 @@ def attach_gate_reports(
                 analysis = replace(analysis, gates=gates)
                 report = make_report(analysis, gates, candidates)
         ready.append(analysis)
+        strict_models = strict_check(analysis) if only is None else ()
+        if strict_models:
+            analysis.stats["strict_models"] = strict_models
         if wants_gnomad and only is None:
             analysis.stats["gnomad_reported"] = True
-            analysis.stats["text_footer"] = partial(gnomad_footer, analysis)
+        if strict_models or (wants_gnomad and only is None):
+            analysis.stats["text_footer"] = partial(run_footer, analysis)
         if report.errors:
             who = f" (proband {trio.proband})" if len(analyses) > 1 else ""
             refusals.append(refusal_message(report.errors, subject=subject + who))
