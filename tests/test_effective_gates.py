@@ -672,6 +672,36 @@ def test_info_af_must_be_on_most_variants_and_not_the_cohorts_own():
     assert not [w for w in by_code(skipped, "gate_unbound") if w["key"] == "max_af"]
 
 
+def test_an_info_af_gate_that_binds_on_some_variants_says_how_many():
+    rep = report(variants=VariantStats(100, 97))
+    assert rep.bound["max_af"] is True
+    (w,) = [w for w in rep.warnings if w["key"] == "max_af"]
+    assert (w["code"], w["level"]) == ("gate_partial", "info")
+    assert w["message"] == (
+        "max_af=0.01 enforced on 97% of variants (a variant with no INFO/AF passes)"
+    )
+    # never rounded up to 100, and not said when every variant carries it
+    nearly = report(variants=VariantStats(10000, 9999))
+    assert (
+        "99.9% of variants"
+        in [w for w in nearly.warnings if w["key"] == "max_af"][0]["message"]
+    )
+    assert not [
+        w
+        for w in report(variants=VariantStats(100, 100)).warnings
+        if w["key"] == "max_af"
+    ]
+    # not bound: its own warning, not a partial one
+    low = report(variants=VariantStats(100, 80))
+    assert [w["code"] for w in low.warnings if w["key"] == "max_af"] == ["gate_unbound"]
+    # a gate that is skipped (the cohort's own AF) is not enforced on any
+    skipped = report(
+        gates=GATES._replace(af_gate="skipped_cohort_derived"),
+        variants=VariantStats(100, 97),
+    )
+    assert not [w for w in skipped.warnings if w["key"] == "max_af"]
+
+
 def test_no_population_filter_is_said_with_the_reason():
     cohort = report(gates=GATES._replace(af_gate="skipped_cohort_derived"))
     (w,) = by_code(cohort, "no_population_frequency_filter")

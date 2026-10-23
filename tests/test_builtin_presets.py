@@ -20,7 +20,7 @@ from cli.trio_output import MODELS
 # name -> (revision, fingerprint). Change a number here only with the revision.
 PINNED = {
     "broad-first-pass": (1, "cd3726cc3853"),
-    "strict-denovo": (1, "30ffc72499a2"),
+    "strict-denovo": (2, "30ffc72499a2"),
     "rare-recessive": (1, "c19bb0a98ece"),
     "rare-dominant": (1, "466b94313b5c"),
 }
@@ -82,6 +82,9 @@ def test_strict_denovo_says_where_its_gates_do_not_reach():
     ):
         assert limit in b.does_not_cover, limit
     assert "or fewer than 2 alt reads" in b.covers
+    # a variant with no INFO/AF passes the INFO/AF gate, and the text says so
+    assert "a variant with no INFO/AF passes it" in b.covers
+    assert "A variant with no INFO/AF passes the INFO/AF gate" in b.does_not_cover
     assert 'unset or "." counts as PASS' in b.covers
     assert "heterozygous proband call" in b.covers
 
@@ -119,3 +122,12 @@ def test_the_user_visible_numbers_are_the_documented_ones():
 
 def test_a_built_in_title_names_the_parent_phenotype_limit():
     assert "parent phenotype not considered" in BUILTINS["rare-dominant"].title
+
+
+def test_strict_denovo_revision_two_changed_the_words_and_not_the_filters():
+    """The fingerprint is a hash of the filters: a revision that only corrects what the
+    text claims keeps it, and the history says what changed."""
+    first, second = BUILTINS["strict-denovo"].history
+    assert (first["revision"], second["revision"]) == (1, 2)
+    assert first["fingerprint"] == second["fingerprint"] == PINNED["strict-denovo"][1]
+    assert "INFO/AF" in second["note"] and "fingerprint is too" in second["note"]

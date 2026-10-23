@@ -127,7 +127,7 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "to run when a gate cannot be enforced in the data "
                 "(--no-require-bound-gates overrides for one run)."
             ),
-            revision=1,
+            revision=2,
             covers=(
                 "De novo single-nucleotide and indel calls in the proband "
                 "where both parents have a stored 0/0 with under 5% alt "
@@ -135,7 +135,8 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 'is unset or "." counts as PASS, so a VCF with no FILTER '
                 "label is not narrowed by it), GQ >= 30, DP >= 20, "
                 "allele balance 0.30-0.70 for a heterozygous proband call, INFO/AF "
-                "<= 0.001 and gnomAD popmax <= 0.0001. A missing GQ or DP "
+                "<= 0.001 (a variant with no INFO/AF passes it) and gnomAD popmax "
+                "<= 0.0001. A missing GQ or DP "
                 "counts as a fail, and so does a missing allele depth on a "
                 "heterozygous call or on a parent's 0/0."
             ),
@@ -147,8 +148,9 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 f"says so). {_ABSENT_FROM_GNOMAD} A homozygous-alt "
                 "proband call is not allele-balance gated and a missing "
                 "allele depth does not fail it. A parent 0/0 with fewer than "
-                "2 alt reads is trusted whatever the fraction. "
-                f"{_COHORT_AF} {_NO_CONSEQUENCE}"
+                "2 alt reads is trusted whatever the fraction. A variant with no "
+                "INFO/AF passes the INFO/AF gate (the run says what share of "
+                f"the variants carry it). {_COHORT_AF} {_NO_CONSEQUENCE}"
             ),
             filters={
                 "category": ["denovo"],
@@ -173,6 +175,13 @@ BUILTINS: dict[str, BuiltinPreset] = {
                     "revision": 1,
                     "fingerprint": "30ffc72499a2",
                     "note": "first release",
+                },
+                {
+                    "revision": 2,
+                    "fingerprint": "30ffc72499a2",
+                    "note": "covers and does-not-cover say that a variant with no "
+                    "INFO/AF passes the INFO/AF gate; the filters are unchanged, so "
+                    "the fingerprint is too",
                 },
             ),
         ),

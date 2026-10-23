@@ -111,6 +111,25 @@ def ad_shape_sites() -> list[Site]:
     return de_novo + from_father + from_mother
 
 
+def af_gap_sites() -> list[Site]:
+    """Three de novo hets (INFO/AF 0.0005, 0.5 and none) and 100 inherited hets, 5 of
+    them with no INFO/AF: the AF gate binds (97 of 103 variants carry it) but not on
+    every variant, and a variant without INFO/AF passes it."""
+    denovo = [
+        Site("chr1", pos, "A", "G",
+             ("0/1:15,15:99:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+             info=info, fmt="GT:AD:GQ:DP")
+        for pos, info in ((1000, "AF=0.0005"), (2000, "AF=0.5"), (3000, ".")) 
+    ]  # fmt: skip
+    inherited = [
+        Site("chr1", 20000 + 100 * i, "A", "G",
+             ("0/1:15,15:99:30", "0/1:15,15:99:30", "0/0:30,0:99:30"),
+             info="." if i < 5 else "AF=0.002", fmt="GT:AD:GQ:DP")
+        for i in range(100)
+    ]  # fmt: skip
+    return denovo + inherited
+
+
 @dataclass
 class World:
     home: Path
@@ -205,6 +224,7 @@ def world(backend, tmp_path_factory):
     # 95.2% of the class the gate reads and on none of the rows at the candidates
     gq_shape = write_vcf(base / "gq_shape.vcf", TRIO_SAMPLES, gq_shape_sites())
     ad_shape = write_vcf(base / "ad_shape.vcf", TRIO_SAMPLES, ad_shape_sites())
+    af_gap = write_vcf(base / "af_gap.vcf", TRIO_SAMPLES, af_gap_sites())
     stores = (
         ("p", FIXTURES / "presets.vcf.gz", ped),
         ("n", FIXTURES / "presets_nogq.vcf.gz", ped),
@@ -213,6 +233,7 @@ def world(backend, tmp_path_factory):
         ("m", mismatch, cohort_ped),
         ("g", gq_shape, cohort_ped),
         ("a", ad_shape, cohort_ped),
+        ("u", af_gap, cohort_ped),
     )
     for name, vcf, pedigree in stores:
         run_cli(home, backend, "db", "create", name)
@@ -415,7 +436,7 @@ def test_text_has_the_preset_and_gates_lines_after_the_trio_line(world):
     out = trio(world, "p", "--preset", "strict-denovo", "--max-af", "0.0005").stdout
     lines = out.splitlines()
     assert lines[0].startswith("trio: proband=CHILD")
-    assert lines[1].startswith("preset: strict-denovo (builtin, rev 1, ")
+    assert lines[1].startswith("preset: strict-denovo (builtin, rev 2, ")
     assert lines[1].endswith("starting point)")
     assert lines[2].startswith("  gates: ")
     assert "max_af=0.0005 [flag; preset 0.001]" in lines[2]
@@ -933,6 +954,27 @@ def test_candidates_dropped_only_for_a_missing_field_are_counted_after_the_run(w
     ) == 1
     text = trio(world, "p", "--category", "denovo", "--strict-missing").stdout
     assert any("strict_missing dropped" in x for x in warning_lines(text))
+
+
+def test_an_info_af_gate_that_binds_on_some_variants_says_how_many(world):
+    """INFO/AF is on 97 of 103 variants, so the gate binds, and on the other six a
+    variant with no INFO/AF passes it. It used to bind in silence."""
+    args = ("--preset", "broad-first-pass", "--category", "denovo", *IGNORE_GNOMAD)
+    doc = jtrio(world, "u", *args)
+    (w,) = [x for x in doc["effective"]["warnings"] if x["key"] == "max_af"]
+    assert (w["code"], w["level"]) == ("gate_partial", "info")
+    assert w["message"] == (
+        "max_af=0.01 enforced on 94.1% of variants (a variant with no INFO/AF passes)"
+    )
+    assert doc["effective"]["info_af"]["bound"] is True
+    # the gate does what the message says: 0.5 is removed, no INFO/AF passes
+    assert positions(doc) == {1000, 3000}
+    r = trio(world, "u", *args)
+    assert f"note: {w['message']}" in r.stderr  # an info note, not a WARNING line
+    assert not [x for x in warning_lines(r.stdout) if "max_af" in x]
+    # a store that carries INFO/AF on every variant says nothing of the kind
+    full = jtrio(world, "p", *args)
+    assert not [x for x in full["effective"]["warnings"] if x["key"] == "max_af"]
 
 
 def test_strict_missing_that_drops_nothing_says_nothing(world):

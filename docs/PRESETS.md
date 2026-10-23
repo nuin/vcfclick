@@ -49,8 +49,9 @@ check against the gnomAD release in use). All four say that a variant absent fro
 the loaded gnomAD slice is **kept** as rare, and that the `INFO/AF` gate steps
 aside when `INFO/AF` is the cohort's own frequency; `strict-denovo` also says that
 a homozygous-alt proband call is not allele-balance gated and a missing allele
-depth does not fail it, and that a parent 0/0 with fewer than two alt reads is
-trusted whatever the fraction.
+depth does not fail it, that a parent 0/0 with fewer than two alt reads is
+trusted whatever the fraction, and that a variant with no `INFO/AF` passes the
+`INFO/AF` gate (revision 2; the filters, and so the fingerprint, did not change).
 
 Built-ins are read-only. A built-in only changes when a release adds a model or
 a filter that belongs in it; the change bumps its `revision`, adds a line to its
@@ -156,7 +157,7 @@ preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
 |---|---|
 | `gate_unbound` | a requested gate's field is present on under 90% of its rows |
 | `gate_not_applicable` | a requested gate that none of the selected models reads, so it removes nothing and is not bound: the parent-allele screen without the `denovo` model, an allele-balance band in a run of `recessive` alone (a hom-alt call is not band-gated; with `strict_missing` a parent's het call is read, so it applies). A warning, never a refusal: nothing is wrong with the data |
-| `gate_partial` | the gate binds but not on every row (a note on stderr, `info`) |
+| `gate_partial` | the gate binds but not on every row (a note on stderr, `info`): a GQ / DP / AD gate whose field is missing on some of the rows it reads, and `max_af` when some variants carry no `INFO/AF` (a variant with none passes the gate) |
 | `thin_coverage` | the proband's median DP is under 1.5 x `min_dp` |
 | `pass_only_no_labels` | `--pass-only` (or the preset's) is on and no variant carries a `FILTER` label other than `PASS` or unset, so it removes nothing (a warning, never a refusal: a VCF hard-filtered before ingest is all `PASS`) |
 | `gnomad_not_loaded` | `--gnomad-max-af` was asked for and no gnomAD data is loaded |

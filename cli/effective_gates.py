@@ -892,6 +892,17 @@ def build_report(
     af_ok = af_run and af_share is not None and af_share >= ENFORCEABLE_MIN
     if af_run:
         bound["max_af"] = af_ok
+        if af_ok and af_share < 1.0:
+            # NULL INFO/AF passes the gate (absence is not evidence of rarity
+            # either way), so on the variants without it the gate removes nothing
+            warnings.append(
+                warning(
+                    "gate_partial",
+                    "max_af",
+                    f"max_af={gates.max_af:g} enforced on {pct(af_share)} of "
+                    "variants (a variant with no INFO/AF passes)",
+                )
+            )
         if not af_ok:
             have = (
                 "no variants"

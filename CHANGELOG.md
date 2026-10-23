@@ -51,7 +51,7 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - Filter presets (`docs/PRESETS.md`). `db trio --preset NAME` applies a named
   set of filters: the four built-in starting points `broad-first-pass`,
   `strict-denovo`, `rare-recessive` and `rare-dominant` (each with
-  covers / does-not-cover text, revision 1, a fingerprint, and labelled
+  covers / does-not-cover text, a revision (1; `strict-denovo` 2), a fingerprint, and labelled
   `starting point, not validated`), or your own. A flag typed next to
   `--preset` wins over it, and `--preset-ignore KEY` switches one key off for
   one run. `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, also for a
@@ -100,7 +100,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   field instead of printing `denovo candidates: 0`. A requested gate that no
   selected model reads (`--category recessive --min-ab 0.4`: a hom-alt call is
   not band-gated; `--parent-alt-screen` without the de novo model) is not
-  bound and says `gate_not_applicable`, a warning and never a refusal. Gates that cannot
+  bound and says `gate_not_applicable`, a warning and never a refusal. An
+  `INFO/AF` gate that binds on some of the variants and not all says so
+  (`gate_partial`: a variant with no `INFO/AF` passes it), and `strict-denovo` is
+  at revision 2 for that: its covers / does-not-cover text says it too (the
+  filters, and so the fingerprint, are unchanged). Gates that cannot
   bind are `WARNING:` lines on stdout and an `effective` object in the JSON;
   so is `NO population frequency filter applied` (the cohort-derived-AF case
   with no gnomAD loaded), a median proband depth under 1.5 x `min_dp`, and a
