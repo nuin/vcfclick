@@ -316,11 +316,27 @@ def x_guard_sql(build: str, *, father: bool, proband_male: bool) -> str | None:
     return f"NOT ({where} AND ({' OR '.join(impossible)}))"
 
 
-def comphet_x_model() -> str:
-    """The female compound-het candidate predicate on NPX: a proband het from
-    a hemizygous-ALT father with a 0/0 mother, or from a carrier mother with
-    a 0/0 father. A het father cannot be tagged paternal."""
-    return "g.gt = 1 AND ((f.gt = 2 AND m.gt = 0) OR (f.gt = 0 AND m.gt > 0))"
+def comphet_x_sql(trio, gates, build: str) -> str:
+    """The female compound-het candidates on NPX, (chrom, pos, ref, alt, af,
+    origin): a proband het from a hemizygous-ALT father with a 0/0 mother, or
+    from a carrier mother with a 0/0 father (a het father cannot be tagged
+    paternal), under the X model's own gates (`gate_sql("female", ...)`): the
+    hemizygous father at the male DP floor, the het-AB band on the proband and
+    on a het mother, the X rarity cap. Grouped by gene in Python
+    (cli/trio_analysis._comphet_genes)."""
+    paternal = "t.f_gt = 2 AND t.m_gt = 0"
+    maternal = "t.f_gt = 0 AND t.m_gt > 0"
+    where = " AND ".join(
+        [f"t.p_gt = 1 AND (({paternal}) OR ({maternal}))", *gate_sql("female", gates)]
+    )
+    return (
+        "SELECT t.chrom, t.pos, t.ref, t.alt, v.info_AF AS af, "
+        f"CASE WHEN {paternal} THEN 'paternal' WHEN {maternal} THEN 'maternal' END "
+        f"AS origin FROM ({_pivot(trio, build)}) t "
+        "LEFT JOIN variants v ON v.ingest_id = t.ingest_id AND v.chrom = t.chrom "
+        "AND v.pos = t.pos AND v.ref = t.ref AND v.alt = t.alt "
+        f"WHERE {where} ORDER BY t.chrom, t.pos, t.ref, t.alt"
+    )
 
 
 # ───────────────────────────── context ─────────────────────────────

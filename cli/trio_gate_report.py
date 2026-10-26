@@ -215,6 +215,7 @@ def attach_gate_reports(
             wanted,
             analysis.gates,
             filter_present=filter_present,
+            x_guard=analysis.x_guard_sql(),
         )
 
     def strict_check(analysis: TrioAnalysis) -> tuple[str, ...]:

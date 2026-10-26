@@ -465,21 +465,13 @@ def _comphet_sql(
     gates: Gates,
     *,
     x_guard: str | None = None,
-    x_only: str | None = None,
 ) -> str:
     """Candidate variants for compound-het: each is a rare proband het
     inherited from exactly one parent (the dominant pattern), tagged with
     parent-of-origin. The gene grouping happens in Python — genes live in
-    the annotation store, which can't be SQL-joined to the cohort.
-
-    `x_only`, an NPX predicate on `g` (cli/xchrom.npx_sql), makes this the
-    X model's female compound het: NPX sites only, a paternal het only from
-    a hemizygous-ALT father (cli/xlinked.comphet_x_model)."""
+    the annotation store, which can't be SQL-joined to the cohort. (The X
+    model's female compound het is cli/xlinked.comphet_x_sql.)"""
     model = MODEL_PREDICATES["comphet"]
-    if x_only is not None:
-        from cli.xlinked import comphet_x_model
-
-        model = f"{comphet_x_model()} AND {x_only}"
     where = _where(trio, gates, model, x_guard=x_guard)
     origin = (
         "CASE WHEN f.gt > 0 AND m.gt = 0 THEN 'paternal' "
@@ -710,7 +702,7 @@ class TrioAnalysis:
     def x_genes(self) -> dict:
         """Female compound het on non-PAR X: {gene: {paternal, maternal}}."""
         if "x_genes" not in self._cache:
-            from cli.xchrom import npx_sql
+            from cli.xlinked import comphet_x_sql
 
             ctx = self.x_context()
             genes: dict = {}
@@ -720,17 +712,10 @@ class TrioAnalysis:
                 and ctx.proband_sex == "female"
                 and self.has_reference
             ):
-                where = npx_sql(ctx.region_build, chrom="g.chrom", pos="g.pos")
-                sql = _comphet_sql(self.trio, self.x_gates(), x_only=where)
+                sql = comphet_x_sql(self.trio, self.gates, ctx.region_build)
                 genes = _comphet_genes(self._gnomad(self._query(sql)))
             self._cache["x_genes"] = genes
         return self._cache["x_genes"]
-
-    def x_gates(self) -> Gates:
-        """The gates with the X rarity cap: max_af = min(max_af, max_af_x)."""
-        from cli.xlinked import x_max_af
-
-        return self.gates._replace(max_af=x_max_af(self.gates))
 
     def x_guard_excluded(self, category: str) -> int | None:
         """How many candidates (genes for comphet) the X guard removed from a
@@ -774,12 +759,15 @@ class TrioAnalysis:
         too) and are dropped only because strict_missing counts a missing GQ, DP
         or allele depth as a fail: what a run without strict_missing would list
         beyond this one. Variants, for compound het as for the others. 0 when no
-        strict gate is in force, and for a model without a classic genotype
-        predicate (xlinked)."""
+        strict gate is in force. For xlinked: its rows without strict_missing,
+        less its rows with it (the strict gates are a subset of the tolerant
+        ones, so the difference is what strict dropped)."""
         gates = self.gates
-        if category not in MODEL_PREDICATES:
-            return 0
         if not any(gates.strict_for(k) for k in STRICT_GATE_KEYS):
+            return 0
+        if category == "xlinked":
+            return self._x_dropped_by_strict()
+        if category not in MODEL_PREDICATES:
             return 0
         guard = self.x_guard_sql()
         if self.gnomad_max_af is None:
@@ -791,6 +779,19 @@ class TrioAnalysis:
             category, self.trio, gates, count_only=False, x_guard=guard
         )
         return len(_gnomad_filter(self._query(sql), self.gnomad_max_af))
+
+    def _x_dropped_by_strict(self) -> int:
+        from cli.xlinked import decode_rows, xlinked_sql
+
+        ctx = self.x_context()
+        if not ctx.has_x or ctx.blocked_reason is not None:
+            return 0
+        tolerant = self.gates._replace(strict_exempt=STRICT_GATE_KEYS)
+        sql = xlinked_sql(self.trio, tolerant, ctx.proband_sex, ctx.region_build)
+        rows = decode_rows(self._query(sql), ctx.affected)
+        if self.gnomad_max_af is not None:
+            rows = _gnomad_filter(rows, self.gnomad_max_af)
+        return len(rows) - len(self.x_rows())
 
     def comphet_genes(self) -> dict:
         sql = _comphet_sql(self.trio, self.gates, x_guard=self.x_guard_sql())
