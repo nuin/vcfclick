@@ -118,7 +118,7 @@ ZKID_SITE = "A1"  # ZMUM and ZKID het there; every other Z call is 0/0
 # pattern table by hand in docs/TRIO.md terms; the tests also derive them.
 EXPECTED = {
     "XSON": {"count": 29, "recessive": 18, "denovo": 11},
-    "XDAU": {"count": 23, "recessive": 3, "female_het": 14, "denovo": 6},
+    "XDAU": {"count": 28, "recessive": 3, "female_het": 14, "denovo": 11},
 }
 
 MALE_DP, FEMALE_DP, GQ = 15, 30, 50

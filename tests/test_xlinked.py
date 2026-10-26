@@ -4,8 +4,10 @@ Fixture: tests/fixtures/xlinked.vcf (make_xlinked_vcf.py). Every expectation
 is checked two ways: against the planted cases (numbers derived by hand from
 the pattern table, see the generator) and against a pure-Python reading of
 the VCF (`reference`), which applies the same gates to the genotypes as
-ingest stores them. The reference uses `cli.xlinked.classify`, whose table
-tests/test_xlinked_oracle.py checks against allele transmission.
+ingest stores them. The reference imports nothing from the code under test:
+its regions are the GRC PAR coordinates written out below, and its classes
+come from allele transmission (a son's X is one of his mother's; a daughter
+has her father's X and one of her mother's).
 
 One ingest per database per backend (module scope); never a chDB session in
 the pytest process.
@@ -23,8 +25,6 @@ from unittest import mock
 
 import pytest
 
-from cli.xchrom import region
-from cli.xlinked import BY_NAME, classify
 from tests.conftest import FIXTURES, bgzip_vcf, run_cli
 
 BACKENDS = ("chdb", "duckdb")
@@ -145,6 +145,72 @@ def _het_ok(c: Call | None, o: Opts) -> bool:
     return f is None or o.min_ab <= f <= o.max_ab
 
 
+# Non-PAR X per build, and an unknown build's bands, from the GRC PAR
+# coordinates: GRCh38 PAR1 10,001-2,781,479, PAR2 155,701,383-156,030,895;
+# GRCh37 PAR1 60,001-2,699,520, PAR2 154,931,044-155,260,560, chrX length
+# 155,270,560. Unknown: non-PAR on both builds.
+REF_NPX = {
+    "GRCh38": ((2_781_480, 155_701_382),),
+    "GRCh37": ((2_699_521, 154_931_043), (155_260_561, 155_270_560)),
+    "unknown": ((2_781_480, 154_931_043), (155_260_561, 155_701_382)),
+}
+REF_BAND = {"unknown": ((2_699_521, 2_781_479), (154_931_044, 155_260_560))}
+
+
+def ref_region(pos: int, build: str) -> str:
+    inside = lambda iv: any(lo <= pos <= hi for lo, hi in iv)  # noqa: E731
+    if inside(REF_NPX[build]):
+        return "npx"
+    return "ambiguous" if inside(REF_BAND.get(build, ())) else "par"
+
+
+MOTHER_ALLELES = {0: (0,), 1: (0, 1), 2: (1,)}
+# The parents whose 0/0 a de novo pattern rests on (their alt reads are capped).
+DENOVO_CAP = {
+    "x_denovo_son": ("m",),
+    "x_denovo_daughter": ("f", "m"),
+    "x_denovo_daughter_mat": ("m",),
+    "x_denovo_daughter_pat": ("f",),
+}
+
+
+def ref_class(sex, p, f, m) -> tuple[str, str | None]:
+    """(class, mode) from allele transmission: a pattern name with its mode, or
+    an excluded class with mode None, or ("", None) for a site no class
+    covers (a proband without ALT, a parent without a stored call)."""
+    if p in (None, 0):
+        return "", None
+    if sex == "male":
+        if p == 1:
+            return "male_het", None  # a male has one X
+        if m is None:
+            return "", None
+        if 1 not in MOTHER_ALLELES[m]:
+            return "x_denovo_son", "denovo"
+        # his X is one of his mother's: a carrier mother is the pattern
+        return ("xlr_son", "recessive") if m == 1 else ("consistent_unpatterned", None)
+    if f == 1:
+        return "father_het", None  # a father has one X
+    if f is None or m is None:
+        return "", None
+    fa = 1 if f == 2 else 0
+    diffs = [p - fa - a for a in MOTHER_ALLELES[m]]
+    if 0 in diffs:  # Mendel-consistent
+        if p == 2:
+            return ("xlr_hom_daughter", "recessive") if m == 1 else (
+                "consistent_unpatterned", None)  # fmt: skip
+        if fa and m == 0:
+            return "xhet_paternal", "female_het"
+        if not fa:
+            return "xhet_maternal", "female_het"
+        return "consistent_unpatterned", None  # both parents carry
+    if 1 in diffs:  # one new ALT allele
+        if p == 1:
+            return "x_denovo_daughter", "denovo"
+        return ("x_denovo_daughter_mat" if fa else "x_denovo_daughter_pat"), "denovo"
+    return "mendel_error_other", None
+
+
 def reference(rows, proband, sex, build, o: Opts, has_ref=True):
     """(candidates {(pos, pattern)}, excluded counters) for one proband."""
     father, mother = PARENTS[proband]
@@ -155,7 +221,7 @@ def reference(rows, proband, sex, build, o: Opts, has_ref=True):
          "mendel_consistent_unpatterned", "mendel_error_other"), 0,
     )  # fmt: skip
     for r in rows:
-        reg = region(r["chrom"], r["pos"], build)
+        reg = ref_region(r["pos"], build)
         p = r["calls"].get(proband)
         if reg == "ambiguous" and p is not None and p.gt > 0:
             excluded["ambiguous_band"] += 1
@@ -163,19 +229,18 @@ def reference(rows, proband, sex, build, o: Opts, has_ref=True):
             continue
         f, m = r["calls"].get(father), r["calls"].get(mother)
         fg, mg = (None if c is None else c.gt for c in (f, m))
-        cls = classify(sex, p.gt, fg, mg)
+        cls, mode = ref_class(sex, p.gt, fg, mg)
         key = {
             "male_het": "male_het_calls",
             "father_het": "father_het_calls",
             "consistent_unpatterned": "mendel_consistent_unpatterned",
             "mendel_error_other": "mendel_error_other",
-        }.get(cls or "")
+        }.get(cls)
         if key:
             excluded[key] += 1
-        if cls not in BY_NAME:
+        if mode is None:
             continue
-        pat = BY_NAME[cls]
-        if pat.mode in ("denovo", "female_het") and not has_ref:
+        if mode in ("denovo", "female_het") and not has_ref:
             continue
         roles = {"p": (p, male_dp if sex == "male" else o.min_dp), "m": (m, o.min_dp)}
         if sex == "female":
@@ -184,7 +249,7 @@ def reference(rows, proband, sex, build, o: Opts, has_ref=True):
         ok = ok and _het_ok(p, o) and _het_ok(m, o)
         if sex == "male" and p.gt == 2 and _frac(p) is not None:
             ok = ok and _frac(p) >= o.min_hemi_ab
-        for role in pat.cap:
+        for role in DENOVO_CAP.get(cls, ()):
             c = {"f": f, "m": m}[role]
             ok = ok and (c.ad[1] is None or c.ad[1] <= o.max_parent_alt_reads)
         ok = ok and r["af"] <= cap_af
@@ -281,15 +346,20 @@ def test_planted_counts_under_defaults(world):
     docs = trios(world, "k")
     son, dau = docs["XSON"], docs["XDAU"]
     assert xl(son)["count"] == 29 and modes(son) == {"recessive": 18, "denovo": 11}
-    assert xl(dau)["count"] == 23
-    assert modes(dau) == {"recessive": 3, "female_het": 14, "denovo": 6, "comphet": 1}
+    assert xl(dau)["count"] == 28
+    assert modes(dau) == {"recessive": 3, "female_het": 14, "denovo": 11, "comphet": 1}
     assert [g["gene"] for g in xl(dau)["genes"]] == ["XCH1"]
     patterns = {c["pattern"] for c in xl(dau)["candidates"] if c["mode"] == "denovo"}
-    assert patterns == {"x_denovo_daughter", "x_denovo_daughter_mat"}
+    assert patterns == {
+        "x_denovo_daughter", "x_denovo_daughter_mat", "x_denovo_daughter_pat",
+    }  # fmt: skip
+    # B2: daughter hom-alt, father 0, carrier mother: the paternal allele is new
+    by_pos = {c["pos"]: c["pattern"] for c in xl(dau)["candidates"]}
+    assert by_pos[20_100_001] == "x_denovo_daughter_pat"
     ex_son, ex_dau = xl(son)["context"]["excluded"], xl(dau)["context"]["excluded"]
     assert ex_son["male_het_calls"] == 5  # A6, G1, G2, L3, L6
     assert ex_dau["father_het_calls"] == 2  # L1, L2
-    assert ex_dau["mendel_error_other"] == 10
+    assert ex_dau["mendel_error_other"] == 5
     for doc in (son, dau):
         ctx = xl(doc)["context"]
         assert (ctx["build"], ctx["build_source"]) == ("GRCh38", "data")
@@ -316,10 +386,10 @@ def test_planted_positives_and_negatives(world):
 @pytest.mark.parametrize(
     "extra,son,dau",
     [
-        ((), 29, 23),
-        (("--min-male-x-dp", "8"), 28, 23),  # A9 (son DP 6) drops
-        (("--max-af-x", "0.01"), 30, 24),  # + R1, + S1
-        (("--max-parent-alt-reads", "10"), 30, 23),  # + L5
+        ((), 29, 28),
+        (("--min-male-x-dp", "8"), 28, 28),  # A9 (son DP 6) drops
+        (("--max-af-x", "0.01"), 30, 29),  # + R1, + S1
+        (("--max-parent-alt-reads", "10"), 30, 28),  # + L5
     ],
 )
 def test_option_sets_and_the_reference_agree(world, extra, son, dau):
@@ -370,7 +440,7 @@ def test_text_lines(world):
     text = vc(world, "db", "trio", "k", "--proband", "XSON").stdout
     assert "  xlinked        29  (recessive 18, denovo 11)" in text
     text = vc(world, "db", "trio", "k", "--proband", "XDAU").stdout
-    assert "  xlinked        23  (recessive 3, female_het 14, denovo 6)" in text
+    assert "  xlinked        28  (recessive 3, female_het 14, denovo 11)" in text
     r = vc(world, "db", "trio", "k", "--proband", "XSON", "--category", "xlinked")
     assert (
         "xlinked candidates: 29  (proband=XSON male [pedigree], father=XDAD male "
@@ -436,7 +506,7 @@ def test_build_auto_unknown_and_explicit(world):
     assert xl(b37["XSON"])["count"] == 29  # P2, P6 join; P7 leaves
     assert xl(b37["XSON"])["context"]["build_source"] == "option"
     for docs, build in ((auto, "unknown"), (b38, "GRCh38"), (b37, "GRCh37")):
-        assert xl(docs["XDAU"])["count"] == 23
+        assert xl(docs["XDAU"])["count"] == 28
         rows = parse(_le37_path(world), True)
         for p in ("XSON", "XDAU"):
             want, excluded = reference(rows, p, SEX[p], build, Opts())
@@ -464,7 +534,7 @@ def test_sex_paths(world, tmp_path):
             ctx = xl(docs[p])["context"]
             assert (ctx["proband_sex"], ctx["proband_sex_source"]) == (sex, "inferred")
             assert ctx["father_sex_source"] == "inferred"
-        assert xl(docs["XSON"])["count"] == 29 and xl(docs["XDAU"])["count"] == 23
+        assert xl(docs["XSON"])["count"] == 29 and xl(docs["XDAU"])["count"] == 28
 
         docs = load("xlinked_conflict.ped")
         ctx = xl(docs["XSON"])["context"]
@@ -481,7 +551,7 @@ def test_sex_paths(world, tmp_path):
 
         docs = load("xlinked_affected.ped")
         assert modes(docs["XDAU"]) == {
-            "recessive": 3, "dominant": 14, "denovo": 6, "comphet": 1,
+            "recessive": 3, "dominant": 14, "denovo": 11, "comphet": 1,
         }  # fmt: skip
         paternal = [c for c in xl(docs["XDAU"])["candidates"]
                     if c["pattern"] == "xhet_paternal"]  # fmt: skip
@@ -512,7 +582,7 @@ def test_db_ped_flags_never_make_dominant_and_sex_comes_from_chrx(world):
         vc(world, "db", "trio", "f", "--proband", "XDAU", "--format", "json").stdout
     )
     assert xl(doc)["context"]["proband_sex_source"] == "pedigree"
-    assert xl(doc)["count"] == 23
+    assert xl(doc)["count"] == 28
 
 
 def test_db_qc_x_nonpar_reports_the_sex_db_trio_uses(world):
@@ -529,6 +599,61 @@ def test_db_qc_x_nonpar_reports_the_sex_db_trio_uses(world):
     assert npx["XDAD"]["chrx_het_frac"] < by["XDAD"]["chrx_het_frac"]
     r = vc(world, "db", "qc", "k", "--x-nonpar", "--build", "GRCh37", ok=False)
     assert "not GRCh37" in r.stderr
+
+
+def test_db_qc_x_nonpar_resolves_the_build_per_ingestion(world):
+    """Two ingestions: the full fixture proves GRCh38, the copy without the
+    records past the GRCh37 length does not."""
+    vc(world, "db", "create", "q")
+    vc(world, "db", "ingest", "q", str(VCF), "--ingest-id", "i1", "--serial")
+    le37 = _le37(world.home.parent / "xlinked_le37_qc.vcf")
+    vc(world, "db", "ingest", "q", str(le37), "--ingest-id", "i2", "--serial")
+    r = vc(world, "db", "qc", "q", "--x-nonpar", "--format", "json")
+    assert "(GRCh38 [data]) for ingestion i1" in r.stderr
+    assert "(unknown [unknown]) for ingestion i2" in r.stderr
+
+
+def test_x_compound_het_holds_the_father_to_the_male_floor(world):
+    """--min-dp 20: the daughter's hemizygous father (DP 15) passes the male
+    floor (10), so the paternal het of XCH1 is a candidate row and the gene."""
+    dau = trios(world, "k", "--min-dp", "20")["XDAU"]
+    rows = {c["pos"]: c["pattern"] for c in xl(dau)["candidates"]}
+    assert rows[50_000_001] == "xhet_paternal"
+    assert [g["gene"] for g in xl(dau)["genes"]] == ["XCH1"]
+
+
+def test_a_preset_report_judges_the_xlinked_gates(world):
+    out = vc(world, "db", "trio", "k", "--proband", "XDAU", "--preset",
+             "rare-recessive", "--category", "xlinked", "--format", "json").stdout  # fmt: skip
+    effective = json.loads(out)["effective"]
+    for gate in ("gq", "dp", "ad"):
+        assert effective[gate]["bound"] is True, gate
+    codes = {w["code"] for w in effective["warnings"]}
+    assert "gate_not_applicable" not in codes and "gate_unbound" not in codes
+
+
+def test_strict_missing_counts_what_it_dropped_from_xlinked(world, tmp_path):
+    """A1's son call without GQ: a strict run drops it from xlinked and says
+    so after the run."""
+    lines = []
+    for line in VCF.read_text().splitlines():
+        cols = line.split("\t")
+        if not line.startswith("#") and cols[2] == "A1":
+            cols[11] = cols[11].replace(":50:", ":.:", 1)  # XSON's GQ
+        lines.append("\t".join(cols))
+    vcf = tmp_path / "xlinked_nogq.vcf"
+    vcf.write_text("\n".join(lines) + "\n")
+    vc(world, "db", "create", "g")
+    vc(world, "db", "ingest", "g", str(vcf), "--ingest-id", "i1", "--serial",
+       "--keep-reference")  # fmt: skip
+    vc(world, "db", "ped", "g", str(FIXTURES / "xlinked.ped"))
+    out = vc(world, "db", "trio", "g", "--proband", "XSON", "--category", "xlinked",
+             "--strict-missing", "--format", "json").stdout  # fmt: skip
+    doc = json.loads(out)
+    assert xl(doc)["count"] == 28
+    dropped = [w for w in doc["effective"]["warnings"]
+               if w["code"] == "strict_missing_dropped"]  # fmt: skip
+    assert len(dropped) == 1 and "dropped 1 xlinked" in dropped[0]["message"]
 
 
 # ───────────────────────────── bcftools (optional) ─────────────────────────────

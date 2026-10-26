@@ -100,6 +100,8 @@ PATTERNS: tuple[Pattern, ...] = (
     Pattern("xhet_maternal", "female", "female_het", (1,), (0,), (1, 2), (), ("m",)),
     Pattern("x_denovo_daughter", "female", "denovo", (1,), (0,), (0,), ("f", "m")),
     Pattern("x_denovo_daughter_mat", "female", "denovo", (2,), (2,), (0,), ("m",)),
+    # the mirror: the maternal ALT inherited, the paternal one new
+    Pattern("x_denovo_daughter_pat", "female", "denovo", (2,), (0,), (1, 2), ("f",)),
 )
 BY_NAME: dict[str, Pattern] = {p.name: p for p in PATTERNS}
 

@@ -72,6 +72,13 @@ def test_artefacts_and_missing_calls():
     assert classify("male", 2, 2, None) is None
     assert classify(None, 2, 0, 1) is None
     assert classify("female", 0, 2, 1) is None
+    # one new ALT allele in a daughter: maternal, or paternal (the mirror)
+    assert classify("female", 2, 2, 0) == "x_denovo_daughter_mat"
+    assert classify("female", 2, 0, 1) == "x_denovo_daughter_pat"
+    assert classify("female", 2, 0, 2) == "x_denovo_daughter_pat"
+    # two new alleles, or an ALT lost: an error, not a de novo
+    assert classify("female", 2, 0, 0) == "mendel_error_other"
+    assert classify("female", 1, 2, 2) == "mendel_error_other"
 
 
 @pytest.mark.parametrize("sex", ["male", "female"])

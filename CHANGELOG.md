@@ -161,7 +161,7 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   build-aware, with no schema change and no re-ingest. A son is read with his
   mother only (`xlr_son`, `x_denovo_son`); a daughter needs a hemizygous father
   (`xlr_hom_daughter`, `xhet_paternal`, `xhet_maternal`, `x_denovo_daughter`,
-  `x_denovo_daughter_mat`) and gets female compound het by gene. Het daughters
+  `x_denovo_daughter_mat`, `x_denovo_daughter_pat`) and gets female compound het by gene. Het daughters
   are `female_het`, relabelled `dominant` only when the PED marks the proband
   and the transmitting parent affected. Male hets, het fathers, unpatterned
   Mendelian combinations and Mendel errors are counted in

@@ -174,6 +174,11 @@ On NPX, with stored genotypes (`*` = any or absent):
 | daughter | `xhet_maternal` | 1 | 0 | 1 or 2 | female_het |
 | daughter | `x_denovo_daughter` | 1 | 0 | 0 | denovo |
 | daughter | `x_denovo_daughter_mat` | 2 | 2 | 0 | denovo |
+| daughter | `x_denovo_daughter_pat` | 2 | 0 | 1 or 2 | denovo |
+
+A de novo pattern needs exactly one new ALT allele: in a hom-alt daughter
+it is the maternal one (`_mat`) or the paternal one (`_pat`). A daughter who
+needs two new alleles, or who lost one, is `mendel_error_other`.
 
 - A son's X is his mother's, so his patterns read the proband and the mother
   only. The father is shown (`father_flag`: `hemizygous_alt` or
@@ -210,8 +215,13 @@ The X model applies the quality gates only to the roles a pattern reads:
   `--pass-only` apply as for the other models. gnomAD hemizygote counts are not
   in the annotation store, so this is a stand-in, not a prevalence-derived cap.
 
-The effective-gate report of a preset run judges the four classic models; the
-X model's own gates are not in it.
+The effective-gate report of a preset run judges the X model on the roles
+its gates read: the proband, the father (hemizygous 0 or 2) and the mother,
+whose het calls are held to the allele-balance band. It does not know the
+proband's sex at that point, so a son's father is judged too, which can only
+make the report stricter. A `--strict-missing` run counts what it dropped
+from `xlinked` after the run, as for the other models. The female compound
+het uses the X model's gates (the father at the male DP floor).
 
 ### Phenotype
 
