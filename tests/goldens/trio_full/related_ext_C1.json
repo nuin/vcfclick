@@ -33,7 +33,11 @@
     "min_ab": 0.25,
     "max_ab": 0.75,
     "gnomad_max_af": null,
-    "af_gate": "applied"
+    "af_gate": "applied",
+    "min_male_x_dp": 5,
+    "max_af_x": 0.001,
+    "min_hemi_ab": 0.75,
+    "max_parent_alt_reads": 1
   },
   "annotations": {
     "genes": false,
@@ -60,21 +64,24 @@
           "gnomad_popmax": null,
           "clinvar": null
         }
-      ]
+      ],
+      "x_guard_excluded": 0
     },
     "recessive": {
       "count": 0,
       "blocked": false,
       "blocked_reason": null,
       "truncated": false,
-      "candidates": []
+      "candidates": [],
+      "x_guard_excluded": 0
     },
     "dominant": {
       "count": 0,
       "blocked": false,
       "blocked_reason": null,
       "truncated": false,
-      "candidates": []
+      "candidates": [],
+      "x_guard_excluded": 0
     },
     "comphet": {
       "count": 0,
@@ -82,7 +89,37 @@
       "blocked_reason": "needs_genes",
       "needs_genes": true,
       "truncated": false,
+      "genes": [],
+      "x_guard_excluded": 0
+    },
+    "xlinked": {
+      "count": 0,
+      "blocked": true,
+      "blocked_reason": "no_x_data",
+      "truncated": false,
+      "needs_genes": false,
+      "context": {
+        "build": null,
+        "build_source": null,
+        "proband_sex": null,
+        "proband_sex_source": "unknown",
+        "father_sex": null,
+        "father_sex_source": "unknown",
+        "mother_sex": null,
+        "mother_sex_source": "unknown",
+        "warnings": [],
+        "excluded": {
+          "male_het_calls": 0,
+          "father_het_calls": 0,
+          "ambiguous_band": 0,
+          "mendel_consistent_unpatterned": 0,
+          "mendel_error_other": 0
+        }
+      },
+      "modes": {},
+      "candidates": [],
       "genes": []
     }
-  }
+  },
+  "x_guard": true
 }

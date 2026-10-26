@@ -94,6 +94,7 @@ from cli.trio_analysis import (
     AF_GATE_SKIPPED,
     CATEGORIES,
     MODEL_PREDICATES,
+    X_CATEGORIES,
     PASS_ONLY_SQL,
     STRICT_GATE_KEYS,
     Gates,
@@ -599,10 +600,14 @@ def gate_reads(
                           het call must carry its depths too
       parent_alt_screen   the parents' 0/0 rows, in the de novo model only
 
-    A model this version does not know reads every row (never none)."""
+    A model this version does not know reads every row (never none). The
+    X-linked model is not judged here: it applies its own gates per role
+    (cli/xlinked.gate_sql), on non-PAR chrX only."""
     models = CATEGORIES if "all" in categories else tuple(categories)
     out: list[Read] = []
     for model in models:
+        if model in X_CATEGORIES:
+            continue
         rows = _SITE_ROWS.get(model) or dict.fromkeys(_ROLES, _ANY)
         if key == "parent_alt_screen":
             read = (

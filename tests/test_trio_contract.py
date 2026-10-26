@@ -26,8 +26,12 @@ from cli.trio_analysis import AF_GATE_VALUES, BLOCKED_REASONS, CATEGORIES
 from tests.conftest import FIXTURES, run_cli
 
 BACKENDS = ("chdb", "duckdb")
-TOP_LEVEL = ["trio", "keep_reference", "gates", "annotations", "models"]
+# x_guard: additive, after models (the X guard on the classic models)
+TOP_LEVEL = ["trio", "keep_reference", "gates", "annotations", "models", "x_guard"]
 GATE_KEYS = ["min_gq", "min_dp", "max_af", "min_ab", "max_ab", "gnomad_max_af"]
+# the X-linked model's gates, always reported after af_gate, as the values it
+# applies (min_male_x_dp half of min_dp unless given, max_af_x capped by max_af)
+X_GATE_KEYS = ["min_male_x_dp", "max_af_x", "min_hemi_ab", "max_parent_alt_reads"]
 # reported after af_gate, in this order, and only for a gate that is on
 # (strict_exempt: the strict_missing gates a `--no-require-bound-gates` run did
 # not apply it to, only with strict_missing)
@@ -152,6 +156,7 @@ def assert_trio_document(doc: dict) -> None:
         assert isinstance(sib["sample"], str)
         assert sib["kind"] in ("full", "half_paternal", "half_maternal")
     assert isinstance(doc["keep_reference"], bool)
+    assert isinstance(doc["x_guard"], bool)
     gates = doc["gates"]
     assert list(gates)[: len(GATE_KEYS)] == GATE_KEYS
     assert _is_int(gates["min_gq"]) and _is_int(gates["min_dp"])
@@ -160,7 +165,11 @@ def assert_trio_document(doc: dict) -> None:
     # additive, after the original keys
     assert list(gates)[len(GATE_KEYS)] == "af_gate"
     assert gates["af_gate"] in AF_GATE_VALUES
-    opt_in = list(gates)[len(GATE_KEYS) + 1 :]
+    x_gates = list(gates)[len(GATE_KEYS) + 1 : len(GATE_KEYS) + 1 + len(X_GATE_KEYS)]
+    assert x_gates == X_GATE_KEYS
+    assert _is_int(gates["min_male_x_dp"]) and _is_int(gates["max_parent_alt_reads"])
+    assert _is_num(gates["max_af_x"]) and gates["max_af_x"] <= gates["max_af"]
+    opt_in = list(gates)[len(GATE_KEYS) + 1 + len(X_GATE_KEYS) :]
     assert opt_in == [k for k in OPT_IN_GATE_KEYS if k in gates], opt_in
     assert all(
         gates[k] is True
@@ -263,7 +272,13 @@ def test_contract_checker_rejects_what_would_blank_an_app():
         },
         "keep_reference": True,
         "gates": dict.fromkeys(GATE_KEYS, 1)
-        | {"gnomad_max_af": None, "af_gate": "applied"},
+        | {"gnomad_max_af": None, "af_gate": "applied"}
+        | {
+            "min_male_x_dp": 5,
+            "max_af_x": 0.001,
+            "min_hemi_ab": 0.75,
+            "max_parent_alt_reads": 1,
+        },  # fmt: skip
         "annotations": {"genes": False},
         "models": {
             "recessive": {
@@ -274,6 +289,7 @@ def test_contract_checker_rejects_what_would_blank_an_app():
                 "candidates": [],
             }
         },
+        "x_guard": True,
     }
     assert_trio_document(good)
 
@@ -400,9 +416,10 @@ def test_trio_json_contract_and_blocked_reason(
     doc = _trio(vcfclick_home, backend, monkeypatch, with_genes, "--max-af", "0.3")
     assert_trio_document(doc)
     assert list(doc["models"]) == list(CATEGORIES)
-    assert {m: v["blocked_reason"] for m, v in doc["models"].items()} == dict.fromkeys(
-        CATEGORIES
-    )
+    # xlinked is always present; this trio has no chrX data
+    assert {m: v["blocked_reason"] for m, v in doc["models"].items()} == {
+        **dict.fromkeys(CATEGORIES), "xlinked": "no_x_data",
+    }  # fmt: skip
     assert doc["models"]["comphet"]["genes"], "GENEX has a paternal and a maternal het"
     assert doc["models"]["denovo"]["candidates"]
 
@@ -438,11 +455,13 @@ def test_sparse_ingest_blocks_with_keep_reference_reason(
         "dominant": "needs_keep_reference",
         # blocked wins over needs_genes: fix the first requirement first
         "comphet": "needs_keep_reference",
+        "xlinked": "no_x_data",
     }
     assert [m for m, v in doc["models"].items() if v["blocked"]] == [
         "denovo",
         "dominant",
         "comphet",
+        "xlinked",
     ]
 
 

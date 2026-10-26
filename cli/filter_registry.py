@@ -351,6 +351,71 @@ register(
     )
 )
 
+# ───────────────────────────── the keys of X ─────────────────────────────
+
+register(
+    FilterKey(
+        "min_male_x_dp",
+        "min_male_x_dp",
+        "--min-male-x-dp",
+        "int",
+        DERIVED,
+        "X",
+        ("trio",),
+        lo=0,
+        hi=10000,
+        help="xlinked: minimum DP of a hemizygous call (a male proband, and the "
+        "father of a daughter) on non-PAR chrX. Default: half of --min-dp, "
+        "rounded down (one X copy gives half the reads).",
+    )
+)
+register(
+    FilterKey(
+        "max_af_x",
+        "max_af_x",
+        "--max-af-x",
+        "float",
+        0.001,
+        "X",
+        ("trio",),
+        lo=0.0,
+        hi=1.0,
+        help="xlinked: rarity cap on non-PAR chrX; the model uses the lower of "
+        "this and --max-af. A hemizygous male is affected at the allele "
+        "frequency q, not q squared, so X needs a stricter ceiling.",
+    )
+)
+register(
+    FilterKey(
+        "min_hemi_ab",
+        "min_hemi_ab",
+        "--min-hemi-ab",
+        "float",
+        0.75,
+        "X",
+        ("trio",),
+        lo=0.0,
+        hi=1.0,
+        help="xlinked: lowest alt fraction (alt reads / all reads) of a male "
+        "proband's hemizygous ALT call. A call without allele depths passes.",
+    )
+)
+register(
+    FilterKey(
+        "max_parent_alt_reads",
+        "max_parent_alt_reads",
+        "--max-parent-alt-reads",
+        "int",
+        1,
+        "X",
+        ("trio",),
+        lo=0,
+        hi=10000,
+        help="xlinked de novo: most alt reads a parent's stored 0/0 may carry "
+        "(a missing allele depth passes).",
+    )
+)
+
 DEFAULTS: dict[str, Any] = {
     k.file_key: k.default for k in REGISTRY.values() if k.default is not DERIVED
 }

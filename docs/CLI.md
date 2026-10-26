@@ -766,7 +766,9 @@ Options:
 
 ### db trio
 
-Candidate variants under Mendelian models (de-novo/recessive/dominant/comp-het). See [TRIO.md](TRIO.md).
+Candidate variants under Mendelian models (de-novo/recessive/dominant/comp-het) and the sex-aware X-linked model. See [TRIO.md](TRIO.md).
+
+`--category xlinked` lists the X-linked candidates (hemizygous sons, het and hom-alt daughters, X de novo, female compound het on non-PAR chrX); `--build auto|GRCh37|GRCh38` decides where non-PAR X is; `--min-male-x-dp`, `--max-af-x`, `--min-hemi-ab` and `--max-parent-alt-reads` are its gates. The X guard (on by default, `--no-x-guard` off) drops a het father and a het male proband on non-PAR X from the four classic models. See [TRIO.md](TRIO.md#chromosome-x).
 
 ```bash
 vcfclick db trio trio --proband HG002 --category denovo
@@ -819,7 +821,7 @@ Options:
                                   marked unaffected and parents who have
                                   children of their own (the rule before
                                   probands were defined).
-  --category [denovo|recessive|dominant|comphet|all]
+  --category [denovo|recessive|dominant|comphet|xlinked|all]
                                   Inheritance model: a name, a comma list
                                   (recessive,comphet) or 'all'. 'all' prints
                                   per-model candidate counts.  [default: all]
@@ -876,6 +878,36 @@ Options:
                                   effect. --strict-missing implies it for the
                                   GQ, DP and AD gates; --no-require-bound-
                                   gates overrides both for this run.
+  --min-male-x-dp INTEGER         xlinked: minimum DP of a hemizygous call (a
+                                  male proband, and the father of a daughter)
+                                  on non-PAR chrX. Default: half of --min-dp,
+                                  rounded down (one X copy gives half the
+                                  reads).
+  --max-af-x FLOAT                xlinked: rarity cap on non-PAR chrX; the
+                                  model uses the lower of this and --max-af. A
+                                  hemizygous male is affected at the allele
+                                  frequency q, not q squared, so X needs a
+                                  stricter ceiling.  [default: 0.001]
+  --min-hemi-ab FLOAT             xlinked: lowest alt fraction (alt reads /
+                                  all reads) of a male proband's hemizygous
+                                  ALT call. A call without allele depths
+                                  passes.  [default: 0.75]
+  --max-parent-alt-reads INTEGER  xlinked de novo: most alt reads a parent's
+                                  stored 0/0 may carry (a missing allele depth
+                                  passes).  [default: 1]
+  --build [auto|GRCh37|GRCh38]    Assembly of chrX, for its non-PAR region
+                                  (xlinked and the X guard). auto: GRCh38 when
+                                  a chrX position exceeds the GRCh37 chrX
+                                  length (155,270,560), else unknown: the two
+                                  bands where GRCh37 and GRCh38 disagree are
+                                  left out and counted. CHM13/T2T is not
+                                  supported.  [default: auto]
+  --x-guard / --no-x-guard        On sure non-PAR chrX, drop a het father, and
+                                  a het male proband, from denovo, recessive,
+                                  dominant and comphet: a male has one X, so
+                                  those calls are artefacts. --no-x-guard
+                                  restores the unguarded models.  [default:
+                                  x-guard]
   --format [text|json]            json: every model's count and candidates
                                   (with gene, gnomAD and ClinVar when loaded)
                                   in one document; without --proband, a
@@ -909,6 +941,7 @@ Per-sample QC: het/hom, Ti/Tv, chrX-het sex check. See [QC.md](QC.md).
 
 ```bash
 vcfclick db qc trio
+vcfclick db qc trio --x-nonpar     # chrX het fraction on non-PAR X only
 ```
 
 <details><summary>options</summary>
@@ -919,8 +952,16 @@ Usage: vcfclick db qc [OPTIONS] NAME
   Per-sample QC: het/hom ratio, Ti/Tv, and a chrX-het sex check.
 
 Options:
-  --format [table|json]  [default: table]
-  --help                 Show this message and exit.
+  --format [table|json]         [default: table]
+  --x-nonpar                    Take the chrX het fraction on sure non-PAR X
+                                only (the region `db trio` infers sex on), so
+                                both commands report the same sex.
+  --build [auto|GRCh37|GRCh38]  With --x-nonpar: the assembly whose PAR is
+                                left out. auto: GRCh38 when a chrX position
+                                exceeds the GRCh37 chrX length, else only the
+                                region that is non-PAR on both builds.
+                                CHM13/T2T is not supported.  [default: auto]
+  --help                        Show this message and exit.
 ```
 
 </details>

@@ -386,7 +386,9 @@ def preset_runs(world):
 @pytest.mark.parametrize("name", list(BUILTINS))
 def test_each_builtin_keeps_exactly_the_planted_rows(name, preset_runs):
     doc = preset_runs[name]
-    expected = KEPT[name]
+    expected = dict(KEPT[name])
+    if name in ("broad-first-pass", "rare-recessive"):
+        expected["xlinked"] = []  # runs it; presets.vcf has no chrX
     assert set(doc["models"]) == set(expected), (
         "the preset's category is the model list"
     )
@@ -477,9 +479,12 @@ def test_related_vcf_cannot_tell_a_strict_gate_from_a_loose_one(
 def test_a_plain_run_carries_no_preset_block_and_prints_no_new_stderr(world):
     r = trio(world, "p", "--format", "json")
     doc = json.loads(r.stdout)
-    assert list(doc) == ["trio", "keep_reference", "gates", "annotations", "models"]
+    assert list(doc) == [
+        "trio", "keep_reference", "gates", "annotations", "models", "x_guard",
+    ]  # fmt: skip
     assert list(doc["gates"]) == [
-        "min_gq", "min_dp", "max_af", "min_ab", "max_ab", "gnomad_max_af", "af_gate"
+        "min_gq", "min_dp", "max_af", "min_ab", "max_ab", "gnomad_max_af", "af_gate",
+        "min_male_x_dp", "max_af_x", "min_hemi_ab", "max_parent_alt_reads",
     ]  # fmt: skip
     assert quiet(r.stderr) == ""
     assert "parent_alt_reads" not in doc["models"]["denovo"]["candidates"][0]
@@ -493,7 +498,7 @@ def test_the_preset_object_says_what_ran_and_where_each_value_came_from(world):
         "pinned", "meta", "path", "requested", "resolved", "overridden", "skipped",
         "models_not_run", "covers", "does_not_cover", "notes",
     ]  # fmt: skip
-    assert (p["source"], p["revision"], p["status"]) == ("builtin", 1, "starting_point")
+    assert (p["source"], p["revision"], p["status"]) == ("builtin", 2, "starting_point")
     assert p["path"] is None and p["pinned"] is False
     assert p["meta"] == {"approved_by": None, "approved_on": None, "locked": False}
     assert p["resolved"]["max_af"] == {"value": 0.005, "from": "flag", "bound": True}
@@ -515,7 +520,7 @@ def test_text_has_the_preset_and_gates_lines_after_the_trio_line(world):
     out = trio(world, "p", "--preset", "strict-denovo", "--max-af", "0.0005").stdout
     lines = out.splitlines()
     assert lines[0].startswith("trio: proband=CHILD")
-    assert lines[1].startswith("preset: strict-denovo (builtin, rev 2, ")
+    assert lines[1].startswith("preset: strict-denovo (builtin, rev 3, ")
     assert lines[1].endswith("starting point)")
     assert lines[2].startswith("  gates: ")
     assert "max_af=0.0005 [flag; preset 0.001]" in lines[2]

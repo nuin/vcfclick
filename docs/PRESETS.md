@@ -35,13 +35,18 @@ vcfclick preset import id-panel.vcfclick-preset.json                        # a 
 |---|---|---|---|---|---|---|
 | `broad-first-pass` | all | 15 / 8 | 0.20-0.80 | 0.01 | 0.01 | warn-only |
 | `strict-denovo` | denovo | 30 / 20 | 0.30-0.70 | 0.001 | 0.0001 | `strict_missing`, `require_bound`, `pass_only`, `parent_alt_screen` |
-| `rare-recessive` | recessive, comphet | 20 / 10 | 0.25-0.75 | 0.01 | 0.01 | warn-only |
+| `rare-recessive` | recessive, comphet, xlinked | 20 / 10 | 0.25-0.75 | 0.01 | 0.01 | warn-only |
 | `rare-dominant` | dominant, denovo | 25 / 12 | 0.25-0.75 | 0.001 | 0.0001 | warn-only |
 
 `preset show NAME` prints, for each, two short paragraphs: **covers** (what the
 numbers select, in words) and **does not cover** (what they cannot see). Before
 there is a consequence filter, none of them excludes non-coding variants; none
-looks for chrX in males, UPD or mosaic variants; `rare-dominant` keeps a variant
+looks for UPD or mosaic variants; `broad-first-pass` (through `all`) and
+`rare-recessive` run the X-linked model, and `strict-denovo` and `rare-dominant`
+exclude it with a reason and say what the X guard does to their models (the
+revisions of the X-linked step: `broad-first-pass` 2, `strict-denovo` 3 and
+`rare-dominant` 2 changed only their words, `rare-recessive` 2 added `xlinked`
+and so has a new fingerprint); `rare-dominant` keeps a variant
 inherited from either parent because parent phenotype is not considered;
 `rare-recessive` takes a single 1% ceiling, which is the usual carrier-frequency
 limit but can still hide alleles near 1% popmax (some *CFTR* and *GJB2* alleles;
@@ -156,7 +161,7 @@ The text puts the `preset:` and `gates:` lines under the `trio:` line, then one
 
 ```
 trio: proband=C1 father=F mother=M
-preset: broad-first-pass (builtin, rev 1, cd3726cc3853, starting point)
+preset: broad-first-pass (builtin, rev 2, cd3726cc3853, starting point)
   gates: category=all [preset]  min_gq=15 [preset]  ... max_af=0.01 [preset; skipped: INFO/AF is cohort-derived] ...
   WARNING: min_gq=15 cannot be enforced: only 31% of proband/father/mother rows carry GQ
   WARNING: NO population frequency filter applied: INFO/AF is this cohort's own frequency, so the --max-af gate was skipped, and no gnomAD data is loaded

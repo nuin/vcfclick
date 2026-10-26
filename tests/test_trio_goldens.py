@@ -43,14 +43,26 @@ BACKENDS = ("chdb", "duckdb")
 # Keys that may be added to a trio document, by location. Anything else
 # that is not in the pre-refactor golden fails the comparison.
 ADDED_KEYS = {
-    "model": {"blocked_reason"},  # models.<name>.blocked_reason
-    "gates": {"af_gate"},  # gates.af_gate
+    # models.<name>.blocked_reason; x_guard_excluded (step X)
+    "model": {"blocked_reason", "x_guard_excluded"},
+    # gates.af_gate; the X-linked model's gates (step X)
+    "gates": {
+        "af_gate",
+        "min_male_x_dp",
+        "max_af_x",
+        "min_hemi_ab",
+        "max_parent_alt_reads",
+    },  # fmt: skip
+    # a whole model added to `models` (step X: xlinked, always present)
+    "models": {"xlinked"},
     "trio": {"family_id", "kind", "siblings"},  # trio.<key> (pedigree P1)
     "top": {"families"},  # the families of a no-`--proband` {"trios": [...]}
     # A key a document decorator adds at the top of one trio document (next to
     # `trio`, `gates`, `models`), e.g. a later `preset` or `effective` object.
     # Applied to every document of a `trios` list.
-    "document": {"preset", "effective"},  # present only for a run with a preset
+    # `preset` and `effective` are present only for a run with a preset;
+    # `x_guard` (step X) is always present.
+    "document": {"preset", "effective", "x_guard"},
 }
 
 GIAB = FIXTURES / "giab"
@@ -240,6 +252,8 @@ def _strip_added(doc: dict) -> dict:
             d["trio"].pop(key, None)
         for key in ADDED_KEYS["gates"]:
             d["gates"].pop(key, None)
+        for key in ADDED_KEYS["models"]:
+            d["models"].pop(key, None)
         for model in d["models"].values():
             for key in ADDED_KEYS["model"]:
                 model.pop(key, None)
@@ -255,6 +269,7 @@ def test_strip_added_handles_every_location(monkeypatch):
         ("trio", "t_new"),
         ("top", "top_new"),
         ("document", "d_new"),
+        ("models", "new_model"),
     ):
         monkeypatch.setitem(ADDED_KEYS, location, {key})
 
@@ -270,6 +285,7 @@ def test_strip_added_handles_every_location(monkeypatch):
         d["trio"]["t_new"] = 1
         d["gates"]["g_new"] = 2
         d["models"]["denovo"]["m_new"] = 3
+        d["models"]["new_model"] = {"count": 1}
         d["d_new"] = {"nested": True}
         return d
 

@@ -110,7 +110,12 @@ def test_json_reports_every_model(vcfclick_home):
     assert list(res["trio"])[: len(old)] == list(old)
     assert res["trio"]["family_id"] == "fam1" and res["trio"]["kind"] == "trio"
     assert res["keep_reference"] is True
-    assert set(res["models"]) == {"denovo", "recessive", "dominant", "comphet"}
+    assert set(res["models"]) == {
+        "denovo", "recessive", "dominant", "comphet", "xlinked",
+    }  # fmt: skip
+    # always present; related.vcf has no chrX, and the text has no xlinked line
+    xl = res["models"]["xlinked"]
+    assert (xl["blocked"], xl["blocked_reason"], xl["count"]) == (True, "no_x_data", 0)
 
     dn = res["models"]["denovo"]
     assert dn["blocked"] is False
@@ -156,6 +161,7 @@ def test_text_output_unchanged(vcfclick_home):
     out = _vc(vcfclick_home, "db", "trio", "t", "--proband", "C1").stdout
     assert "trio: proband=C1 father=F mother=M" in out
     assert "denovo" in out and "recessive" in out
+    assert "xlinked" not in out  # no chrX data: no line
 
 
 def test_ped_declares_siblings_without_a_file(vcfclick_home):

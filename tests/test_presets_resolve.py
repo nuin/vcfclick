@@ -112,7 +112,8 @@ def test_no_preset_changes_nothing(vcfclick_home):
     )
     assert out["values"]["category"] == ["all"]
     assert out["pinned"] is None and out["skipped"] is None
-    assert all(r[1] in ("flag", "default") for r in out["resolved"].values())
+    # min_male_x_dp has a derived default (half of min_dp)
+    assert all(r[1] in ("flag", "default", "derived") for r in out["resolved"].values())
 
 
 def test_a_preset_supplies_defaults_and_a_flag_wins(put):

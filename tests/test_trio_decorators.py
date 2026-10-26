@@ -272,6 +272,7 @@ def _analysis() -> SimpleNamespace:
         gates=Gates(20, 10, 0.01, 0.25, 0.75),
         has_reference=True,
         siblings=[],
+        x_guard=True,
         gnomad_max_af=None,
     )
 
@@ -298,12 +299,15 @@ def test_document_decorators_edit_the_whole_document_in_order(
 
     doc = out._trio_json(_analysis(), "all", 10)
     assert list(doc) == [
-        "trio", "keep_reference", "gates", "annotations", "models",
+        "trio", "keep_reference", "gates", "annotations", "models", "x_guard",
         "preset", "replaced",
     ]  # fmt: skip
     assert doc["trio"]["parentage"] == {"verdict": "ok"}
     assert seen == [
-        ("first", ["trio", "keep_reference", "gates", "annotations", "models"]),
+        (
+            "first",
+            ["trio", "keep_reference", "gates", "annotations", "models", "x_guard"],
+        ),
         ("second", True),
     ]
 

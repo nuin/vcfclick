@@ -1,6 +1,6 @@
 trio: proband=CHILD father=FATHER mother=MOTHER
-preset: rare-recessive (builtin, rev 1, c19bb0a98ece, starting point)
-  gates: category=recessive,comphet [preset]  min_gq=20 [preset]  min_dp=10 [preset]  max_af=0.3 [flag; preset 0.01]  min_ab=0.25 [preset]  max_ab=0.75 [preset]  gnomad_max_af=0.01 [preset]
+preset: rare-recessive (builtin, rev 2, 8bfd197cdbe5, starting point)
+  gates: category=recessive,comphet,xlinked [preset]  min_gq=20 [preset]  min_dp=10 [preset]  max_af=0.3 [flag; preset 0.01]  min_ab=0.25 [preset]  max_ab=0.75 [preset]  gnomad_max_af=0.01 [preset]
   WARNING: gnomad_max_af=0.01 cannot be enforced: no gnomAD data is loaded (`vcfclick annotations load-gnomad`)
   recessive       1
   comphet         1  genes

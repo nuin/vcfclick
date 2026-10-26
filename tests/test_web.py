@@ -453,3 +453,24 @@ def test_trio_endpoint_skips_a_cohort_derived_af_gate_unless_asked(
 
     assert 'id="t-af" type="number" step="0.01" placeholder' in INDEX_HTML
     assert "if($('t-af').value !== '') q.max_af" in INDEX_HTML
+
+
+def test_trio_endpoint_serves_xlinked_and_guards_the_classic_models(trio_web_store):
+    """The X fixture: the X-linked model in the same envelope, with mode and
+    pattern columns and the proband's sex; the classic models carry the X
+    guard exactly as `db trio` does (tests/test_xlinked.py has the numbers)."""
+    trio_web_store(FIX / "xlinked.vcf", ped=FIX / "xlinked.ped")
+
+    def get(proband: str, category: str) -> dict:
+        params = {"proband": proband, "category": category}
+        return client.get("/api/trio", params=params).json()
+
+    d = get("XSON", "xlinked")
+    assert "error" not in d, d
+    assert d["columns"][-2:] == ["mode", "pattern"]
+    assert d["row_count"] == 29 and d["proband_sex"] == "male"
+    assert {r[8] for r in d["rows"]} == {"recessive", "denovo"}
+    assert (d["father"], d["mother"]) == ("XDAD", "XMUM")
+    blocked = get("ZKID", "xlinked")
+    assert blocked["rows"] == [] and "needs proband sex" in blocked["note"]
+    assert "unknown category" in get("XSON", "ylinked")["error"]

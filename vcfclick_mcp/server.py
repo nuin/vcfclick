@@ -22,12 +22,15 @@ from annotations import gene_at as _gene_at
 from annotations import gnomad_af as _gnomad_af
 from annotations import position_for_gene as _position_for_gene
 from cli.family_checks import PROBE_FRACTION, PROBE_MIN_SITES, PROBE_REL_TOLERANCE
+from cli.filter_registry import DEFAULTS as _FILTER_DEFAULTS
 from cli.trio_analysis import CATEGORY_CHOICES, DEFAULT_MAX_AF
+from cli.xchrom import GRCH37_CHRX_LENGTH, NPX_INTERVALS
 from storage import get_session
 from storage.sql import AF_EPSILON
 from storage.sql_guard import is_read_only
 
 mcp = FastMCP("vcfclick")
+DEFAULT_MAX_AF_X = _FILTER_DEFAULTS["max_af_x"]
 
 
 # Convention 8 of the briefing is built from these paragraphs, joined once
@@ -67,6 +70,7 @@ _TRIO_MODELS = f"""\
      - comphet:    two rare proband hets in the SAME gene, one inherited
                    from each parent (the dominant pattern grouped by gene,
                    so it needs the annotation tools, not one SQL query)
+     - xlinked:    sex- and PAR-aware patterns on non-PAR chrX (below)
    `vcfclick db trio --category` takes: {", ".join(CATEGORY_CHOICES)}."""
 
 _TRIO_DENOVO_CAVEAT = """\
@@ -104,11 +108,37 @@ _TRIO_COHORT_AF = f"""\
    ac_called/an_called before using it as a rarity filter, or use
    gnomad_lookup for a population frequency."""
 
+_TRIO_XLINKED = f"""\
+   CHROMOSOME X: a male is hemizygous on non-PAR chrX (NPX), and his
+   haploid call is stored as gt=2 (ALT) or gt=0 (REF), exactly like a
+   diploid 1/1 or 0/0, so hemizygosity is never read from gt: it comes
+   from chrom + sex (pedigree.sex) + region. GRCh38 NPX is chrX
+   {NPX_INTERVALS["GRCh38"][0][0]:,}-{NPX_INTERVALS["GRCh38"][0][1]:,};
+   the rest is PAR (pseudo-autosomal) and behaves like an autosome. A chrX
+   POS above {GRCH37_CHRX_LENGTH:,} proves GRCh38; without one the build is
+   unknown and the bands where GRCh37 and GRCh38 disagree are left out.
+   On NPX a male het (gt=1, including a partial ./1) and a het father are
+   artefacts. `vcfclick db trio` therefore applies an X GUARD to denovo,
+   recessive, dominant and comphet (on by default, --no-x-guard off):
+       AND NOT (g.chrom IN ('chrX', 'X', 'chr23', '23')
+                AND g.pos BETWEEN <NPX start> AND <NPX end>
+                AND (f.gt = 1 OR g.gt = 1))
+   (the `g.gt = 1` term only for a male proband). The xlinked model reads
+   a son with his mother only (his X is hers): recessive = son gt=2 and
+   mother het; de novo = son gt=2 and mother 0/0. For a daughter the
+   father must be hemizygous (gt 0 or 2): recessive = daughter gt=2,
+   father gt=2, mother het; female_het = daughter het from a gt=2 father
+   with a 0/0 mother, or from a carrier mother with a 0/0 father. Its
+   rarity cap is min(max_af, max_af_x = {DEFAULT_MAX_AF_X:g}). Use the CLI
+   (`db trio --category xlinked --format json`) rather than hand-written
+   SQL for X: it resolves sex and build first."""
+
 _TRIO_CONVENTION = "\n\n".join(
     [
         _TRIO_PEDIGREE,
         _TRIO_FAMILIES,
         _TRIO_MODELS,
+        _TRIO_XLINKED,
         _TRIO_DENOVO_CAVEAT,
         _TRIO_GATES,
         _TRIO_COHORT_AF,
@@ -157,6 +187,8 @@ genotypes — sparse: ONLY non-reference calls are stored.
   chrX/chrY, chrM) is stored as gt=2 with phased=1, i.e. as if it were
   1/1: there is no hemizygous code, so gt alone cannot tell a haploid
   ALT call from a diploid hom-alt, and an_called counts ONE allele for it.
+  Hemizygosity is derived from chrom + sex + region at query time (see
+  CHROMOSOME X under convention 8).
 
 samples — (ingest_id, sample_id, cohort, sex).
   Sample identity is (ingest_id, sample_id).

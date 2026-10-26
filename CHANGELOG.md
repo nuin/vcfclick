@@ -157,8 +157,49 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   parameter, flag, type, range, default, owner, commands); the options of
   `db trio` are generated from it, and `tests/test_filter_registry_drift.py`
   fails when an option is added without being registered.
+- `db trio --category xlinked`: an X-linked model on non-PAR chrX, sex- and
+  build-aware, with no schema change and no re-ingest. A son is read with his
+  mother only (`xlr_son`, `x_denovo_son`); a daughter needs a hemizygous father
+  (`xlr_hom_daughter`, `xhet_paternal`, `xhet_maternal`, `x_denovo_daughter`,
+  `x_denovo_daughter_mat`) and gets female compound het by gene. Het daughters
+  are `female_het`, relabelled `dominant` only when the PED marks the proband
+  and the transmitting parent affected. Male hets, het fathers, unpatterned
+  Mendelian combinations and Mendel errors are counted in
+  `context.excluded`. Sex comes from the pedigree, then a chrX inference on
+  non-PAR X checked by X transmission, then the parent's role; a parent whose
+  sex contradicts the role blocks the model (`parent_sex_conflict`), an
+  unresolved proband is `needs_sex`. New options `--build auto|GRCh37|GRCh38`
+  (auto: GRCh38 when a chrX position exceeds 155,270,560, else `unknown`, which
+  leaves the two bands where the builds disagree out and counts them; a
+  contradicting `--build GRCh37` is `build_conflict`), `--min-male-x-dp`
+  (default half `--min-dp`), `--max-af-x` (default 0.001, applied as
+  min(`--max-af`, `--max-af-x`)), `--min-hemi-ab` (0.75) and
+  `--max-parent-alt-reads` (1), all registered filters. See `docs/TRIO.md`.
+- `db trio --format json`: `models.xlinked` is present for every trio
+  (`blocked_reason: no_x_data` without chrX data), `gates` gains
+  `min_male_x_dp`, `max_af_x`, `min_hemi_ab` and `max_parent_alt_reads`, the
+  document gains `x_guard`, and each classic model `x_guard_excluded`.
+  Additive; the `all` text gains an `xlinked` line only when the trio has chrX
+  data.
+- `db qc --x-nonpar [--build ...]`: the chrX het fraction on non-PAR X only,
+  the region `db trio` infers sex on. Default output unchanged.
+- The web Trio tab and `/api/trio` serve `xlinked` (with `mode` and `pattern`
+  columns and `proband_sex`); the MCP briefing explains hemizygosity, PAR, the
+  build rule, the X guard predicate and the X patterns.
+- `tests/fixtures/make_xlinked_vcf.py`: a 162-site GRCh38 chrX fixture (three
+  families, haploid- and diploid-coded males) and five PEDs.
 
 ### Changed
+
+- Built-in presets, for the X-linked model: `rare-recessive` revision 2 runs
+  `xlinked` too (new fingerprint `8bfd197cdbe5`); `strict-denovo` revision 3
+  and `rare-dominant` revision 2 exclude it with a reason and say what the X
+  guard does (words only, fingerprints unchanged); `broad-first-pass`
+  revision 2 says that `all` now includes `xlinked` (words only).
+- `cli/sex.py` holds the chrX sex thresholds and the inference that `db qc`
+  and `db trio` share (`cli.db_qc._infer_sex` still works).
+- A filter with a derived default (`min_male_x_dp`) is not listed on a preset
+  run's `gates:` line unless it was set.
 
 - `db trio` without `--proband` now analyses the **probands** of every
   family, ordered by family and sample id: children with both parents

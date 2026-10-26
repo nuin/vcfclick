@@ -21,7 +21,9 @@ ROW_CATEGORIES: tuple[str, ...] = (
     "dominant",
 )  # one row per variant
 GENE_CATEGORIES: tuple[str, ...] = ("comphet",)  # reported per gene
-CATEGORIES: tuple[str, ...] = ROW_CATEGORIES + GENE_CATEGORIES
+# Sex- and region-aware models with their own row shape (cli/xlinked.py).
+X_CATEGORIES: tuple[str, ...] = ("xlinked",)
+CATEGORIES: tuple[str, ...] = ROW_CATEGORIES + GENE_CATEGORIES + X_CATEGORIES
 CATEGORY_CHOICES: tuple[str, ...] = CATEGORIES + ("all",)
 
 # DEFAULT_MAX_AF, the default for `db trio --max-af` (and the web API's
@@ -30,8 +32,9 @@ CATEGORY_CHOICES: tuple[str, ...] = CATEGORIES + ("all",)
 # Why a model reports `blocked_reason` instead of results: the closed
 # vocabulary of the JSON `blocked_reason` key (null when not blocked).
 # Defined once here; each desktop app mirrors it in one reason -> text map.
-# The four classic models use the first two; the rest are reserved for the
-# family models that are not implemented yet (phasing, X-linked, ...).
+# The four classic models use the first two; xlinked also uses needs_sex,
+# no_x_data, parent_sex_conflict and build_conflict; the rest are reserved
+# for the family models that are not implemented yet (phasing, ...).
 BLOCKED_REASONS: tuple[str, ...] = (
     "needs_keep_reference",  # no stored hom-ref rows to prove a 0/0 parent
     "needs_genes",  # gene annotations not loaded (comphet)
@@ -133,6 +136,11 @@ class Gates(NamedTuple):
     # lacks: strict there would fail every call, and the run would report "no
     # candidates" for a reason that has nothing to do with the genome.
     strict_exempt: tuple[str, ...] = ()
+    # The X-linked model (cli/xlinked.py). min_male_x_dp None: half min_dp.
+    min_male_x_dp: int | None = None
+    max_af_x: float = DEFAULTS["max_af_x"]
+    min_hemi_ab: float = DEFAULTS["min_hemi_ab"]
+    max_parent_alt_reads: int = DEFAULTS["max_parent_alt_reads"]
 
     def strict_for(self, key: str) -> bool:
         """Does strict_missing apply to the gate `key`?"""
@@ -275,11 +283,18 @@ def parent_ref_ok(alias: str, gates: Gates) -> str:
 
 
 def _where_parts(
-    trio: Trio, gates: Gates, model: str, *, parent_alt_screen: bool = False
+    trio: Trio,
+    gates: Gates,
+    model: str,
+    *,
+    parent_alt_screen: bool = False,
+    x_guard: str | None = None,
 ) -> list[tuple[str, str]]:
     """The predicates of the shared WHERE clause, in application order, each
-    with its name: model, quality_proband, quality_father, quality_mother,
-    allele_balance, population_af, pass_only, parent_alt_screen. `_where`
+    with its name: model, x_guard, quality_proband, quality_father,
+    quality_mother, allele_balance, population_af, pass_only,
+    parent_alt_screen. `x_guard` (cli/xlinked.x_guard_sql) drops the
+    genotypes that cannot exist on non-PAR X. `_where`
     joins them; a diagnostic that wants to count what each removes (the
     funnel) walks them. A part is absent when its gate is off. (`trio` is
     unused today; the scope predicate of a later step needs it.)"""
@@ -299,8 +314,10 @@ def _where_parts(
         allele_balance += " AND " + " AND ".join(
             _het_ad_present(alias) for alias in ("g", "f", "m")
         )
-    parts = [
-        ("model", model),
+    parts = [("model", model)]
+    if x_guard:
+        parts.append(("x_guard", x_guard))
+    parts += [
         ("quality_proband", quality("g")),
         ("quality_father", quality("f")),
         ("quality_mother", quality("m")),
@@ -350,13 +367,20 @@ def site_gate_sql(
 
 
 def _where(
-    trio: Trio, gates: Gates, model: str, *, parent_alt_screen: bool = False
+    trio: Trio,
+    gates: Gates,
+    model: str,
+    *,
+    parent_alt_screen: bool = False,
+    x_guard: str | None = None,
 ) -> str:
     """Shared WHERE clause: the genotype model plus the quality / rarity
     gates, scoped to this proband and ingest."""
     from storage import sql_quote_str
 
-    parts = _where_parts(trio, gates, model, parent_alt_screen=parent_alt_screen)
+    parts = _where_parts(
+        trio, gates, model, parent_alt_screen=parent_alt_screen, x_guard=x_guard
+    )
     predicate = " AND ".join(sql for _, sql in parts)
     return (
         f"g.ingest_id = {sql_quote_str(trio.ingest_id)} "
@@ -364,9 +388,17 @@ def _where(
     )
 
 
-def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> str:
+def trio_sql(
+    category: str,
+    trio: Trio,
+    gates: Gates,
+    *,
+    count_only: bool,
+    x_guard: str | None = None,
+) -> str:
     """Build the SQL for one inheritance model. The proband row is `g`;
-    parents are joined as `f`/`m`; `v` brings population AF."""
+    parents are joined as `f`/`m`; `v` brings population AF. `x_guard` is
+    the X guard predicate (None: the text it always was)."""
     from storage import count_expr
 
     if category not in ROW_CATEGORIES:
@@ -381,6 +413,7 @@ def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> st
         gates,
         model,
         parent_alt_screen=gates.parent_alt_screen and category == "denovo",
+        x_guard=x_guard,
     )
     if count_only:
         return f"SELECT {count_expr()} FROM genotypes g {joins} WHERE {where}"
@@ -392,7 +425,12 @@ def trio_sql(category: str, trio: Trio, gates: Gates, *, count_only: bool) -> st
 
 
 def strict_dropped_sql(
-    category: str, trio: Trio, gates: Gates, *, count_only: bool
+    category: str,
+    trio: Trio,
+    gates: Gates,
+    *,
+    count_only: bool,
+    x_guard: str | None = None,
 ) -> str:
     """The candidates of `category` that pass every gate of a run WITHOUT
     strict_missing and fail only because strict_missing counts a missing GQ, DP or
@@ -408,24 +446,41 @@ def strict_dropped_sql(
     tolerant = gates._replace(strict_exempt=STRICT_GATE_KEYS)
     changed = [
         sql
-        for name, sql in _where_parts(trio, gates, model, parent_alt_screen=screen)
+        for name, sql in _where_parts(
+            trio, gates, model, parent_alt_screen=screen, x_guard=x_guard
+        )
         if name.startswith("quality") or name in ("allele_balance", "parent_alt_screen")
     ]
     select = count_expr() if count_only else "g.chrom, g.pos, g.ref, g.alt"
     return (
         f"SELECT {select} FROM genotypes g "
         f"{parent_joins(trio.father, trio.mother)} "
-        f"WHERE {_where(trio, tolerant, model, parent_alt_screen=screen)} "
+        f"WHERE {_where(trio, tolerant, model, parent_alt_screen=screen, x_guard=x_guard)} "
         f"AND NOT ({' AND '.join(changed)})"
     )
 
 
-def _comphet_sql(trio: Trio, gates: Gates) -> str:
+def _comphet_sql(
+    trio: Trio,
+    gates: Gates,
+    *,
+    x_guard: str | None = None,
+    x_only: str | None = None,
+) -> str:
     """Candidate variants for compound-het: each is a rare proband het
     inherited from exactly one parent (the dominant pattern), tagged with
     parent-of-origin. The gene grouping happens in Python — genes live in
-    the annotation store, which can't be SQL-joined to the cohort."""
-    where = _where(trio, gates, MODEL_PREDICATES["comphet"])
+    the annotation store, which can't be SQL-joined to the cohort.
+
+    `x_only`, an NPX predicate on `g` (cli/xchrom.npx_sql), makes this the
+    X model's female compound het: NPX sites only, a paternal het only from
+    a hemizygous-ALT father (cli/xlinked.comphet_x_model)."""
+    model = MODEL_PREDICATES["comphet"]
+    if x_only is not None:
+        from cli.xlinked import comphet_x_model
+
+        model = f"{comphet_x_model()} AND {x_only}"
+    where = _where(trio, gates, model, x_guard=x_guard)
     origin = (
         "CASE WHEN f.gt > 0 AND m.gt = 0 THEN 'paternal' "
         "WHEN m.gt > 0 AND f.gt = 0 THEN 'maternal' END AS origin"
@@ -576,52 +631,167 @@ class TrioAnalysis:
     # command and by the filter that has the fact, read by the document and
     # text decorators.
     stats: dict = field(default_factory=dict, compare=False)
+    # The chrX handling (cli/xchrom.py, cli/xlinked.py): the --build option
+    # (auto | GRCh37 | GRCh38) and whether the X guard is on.
+    build: str = "auto"
+    x_guard: bool = False
+    # Answers computed once per analysis (the X context, its rows), private.
+    _cache: dict = field(default_factory=dict, compare=False, repr=False)
 
     def _gnomad(self, rows: list) -> list:
         if self.gnomad_max_af is None:
             return rows
         return _gnomad_filter(rows, self.gnomad_max_af, self.stats)
 
-    def detail_rows(self, category: str) -> list:
-        sql = trio_sql(category, self.trio, self.gates, count_only=False)
-        rows = json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
+    def _query(self, sql: str) -> list:
+        return json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
             "data"
         ]
-        return self._gnomad(rows)
+
+    # ─────────────────────────── chrX ───────────────────────────
+
+    def x_context(self):
+        """The X model's context (cli/xlinked.XContext): build, sexes, why it
+        is blocked. Computed once; a trio without both parents has none."""
+        if "x_context" not in self._cache:
+            from cli.xlinked import XContext, build_context
+
+            if self.trio.father is None or self.trio.mother is None:
+                ctx = XContext(has_x=False, blocked_reason="needs_parents")
+            else:
+                ctx = build_context(self.session, self.trio, self.build)
+            self._cache["x_context"] = ctx
+        return self._cache["x_context"]
+
+    def x_guard_sql(self) -> str | None:
+        """The X guard predicate for the classic models, or None (guard off,
+        no chrX data): a het father on sure non-PAR X, and a het proband
+        there when the proband is male."""
+        if not self.x_guard:
+            return None
+        ctx = self.x_context()
+        if not ctx.has_x:
+            return None
+        from cli.xlinked import x_guard_sql
+
+        sexes = ctx.sexes
+        return x_guard_sql(
+            ctx.region_build,
+            father=sexes.father_sex != "female",
+            proband_male=sexes.proband_sex == "male",
+        )
+
+    def x_rows(self) -> list:
+        """The X-linked candidates (cli/xlinked.XRow), gnomAD-filtered, empty
+        when the context blocks the model."""
+        if "x_rows" not in self._cache:
+            from cli.xlinked import decode_rows, xlinked_sql
+
+            ctx = self.x_context()
+            rows: list = []
+            if ctx.has_x and ctx.blocked_reason is None:
+                sql = xlinked_sql(
+                    self.trio, self.gates, ctx.proband_sex, ctx.region_build
+                )
+                rows = self._gnomad(decode_rows(self._query(sql), ctx.affected))
+            self._cache["x_rows"] = rows
+        return self._cache["x_rows"]
+
+    def x_excluded(self) -> dict:
+        """`context.excluded` of the X model (cli/xlinked.excluded_counts)."""
+        if "x_excluded" not in self._cache:
+            from cli.xlinked import excluded_counts
+
+            self._cache["x_excluded"] = excluded_counts(
+                self.session, self.trio, self.x_context()
+            )
+        return self._cache["x_excluded"]
+
+    def x_genes(self) -> dict:
+        """Female compound het on non-PAR X: {gene: {paternal, maternal}}."""
+        if "x_genes" not in self._cache:
+            from cli.xchrom import npx_sql
+
+            ctx = self.x_context()
+            genes: dict = {}
+            if (
+                ctx.has_x
+                and ctx.blocked_reason is None
+                and ctx.proband_sex == "female"
+                and self.has_reference
+            ):
+                where = npx_sql(ctx.region_build, chrom="g.chrom", pos="g.pos")
+                sql = _comphet_sql(self.trio, self.x_gates(), x_only=where)
+                genes = _comphet_genes(self._gnomad(self._query(sql)))
+            self._cache["x_genes"] = genes
+        return self._cache["x_genes"]
+
+    def x_gates(self) -> Gates:
+        """The gates with the X rarity cap: max_af = min(max_af, max_af_x)."""
+        from cli.xlinked import x_max_af
+
+        return self.gates._replace(max_af=x_max_af(self.gates))
+
+    def x_guard_excluded(self, category: str) -> int | None:
+        """How many candidates (genes for comphet) the X guard removed from a
+        classic model. 0 with no chrX data; None when the guard is off or the
+        gnomAD filter is set (the count would need every row)."""
+        if not self.x_guard:
+            return None
+        guard = self.x_guard_sql()
+        if guard is None:
+            return 0
+        if self.gnomad_max_af is not None:
+            return None
+        if category == "comphet":
+            plain = _comphet_genes(self._query(_comphet_sql(self.trio, self.gates)))
+            return len(plain) - len(self.comphet_genes())
+        sql = trio_sql(category, self.trio, self.gates, count_only=True)
+        return int(self._query(sql)[0][0]) - int(self.count(category))
+
+    # ─────────────────────── classic models ───────────────────────
+
+    def detail_rows(self, category: str) -> list:
+        sql = trio_sql(
+            category,
+            self.trio,
+            self.gates,
+            count_only=False,
+            x_guard=self.x_guard_sql(),
+        )
+        return self._gnomad(self._query(sql))
 
     def count(self, category: str) -> int:
         if self.gnomad_max_af is not None:
             return len(self.detail_rows(category))
-        sql = trio_sql(category, self.trio, self.gates, count_only=True)
-        return json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
-            "data"
-        ][0][0]
+        sql = trio_sql(
+            category, self.trio, self.gates, count_only=True, x_guard=self.x_guard_sql()
+        )
+        return self._query(sql)[0][0]
 
     def dropped_by_strict(self, category: str) -> int:
         """How many candidates of this model pass every gate (the gnomAD filter
         too) and are dropped only because strict_missing counts a missing GQ, DP
         or allele depth as a fail: what a run without strict_missing would list
         beyond this one. Variants, for compound het as for the others. 0 when no
-        strict gate is in force."""
+        strict gate is in force, and for a model without a classic genotype
+        predicate (xlinked)."""
         gates = self.gates
+        if category not in MODEL_PREDICATES:
+            return 0
         if not any(gates.strict_for(k) for k in STRICT_GATE_KEYS):
             return 0
+        guard = self.x_guard_sql()
         if self.gnomad_max_af is None:
-            sql = strict_dropped_sql(category, self.trio, gates, count_only=True)
-            return int(
-                json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
-                    "data"
-                ][0][0]
+            sql = strict_dropped_sql(
+                category, self.trio, gates, count_only=True, x_guard=guard
             )
-        sql = strict_dropped_sql(category, self.trio, gates, count_only=False)
-        rows = json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
-            "data"
-        ]
-        return len(_gnomad_filter(rows, self.gnomad_max_af))
+            return int(self._query(sql)[0][0])
+        sql = strict_dropped_sql(
+            category, self.trio, gates, count_only=False, x_guard=guard
+        )
+        return len(_gnomad_filter(self._query(sql), self.gnomad_max_af))
 
     def comphet_genes(self) -> dict:
-        sql = _comphet_sql(self.trio, self.gates)
-        rows = json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
-            "data"
-        ]
-        return _comphet_genes(self._gnomad(rows))
+        sql = _comphet_sql(self.trio, self.gates, x_guard=self.x_guard_sql())
+        return _comphet_genes(self._gnomad(self._query(sql)))

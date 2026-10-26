@@ -55,13 +55,13 @@ def test_save_list_show_round_trip(run, vcfclick_home):
     doc = saved(vcfclick_home, "id-panel")
     assert doc["name"] == "id-panel" and doc["description"] == "ID recessive"
     assert doc["filters"]["max_af"] == 0.002
-    assert doc["filters"]["category"] == ["recessive", "comphet"]  # copied
+    assert doc["filters"]["category"] == ["recessive", "comphet", "xlinked"]  # copied
     assert doc["meta"]["created_with"] and doc["meta"]["updated"]
 
     rows = json.loads(run("list", "--format", "json").stdout)["presets"]
     mine = next(p for p in rows if p["name"] == "id-panel")
     assert (mine["source"], mine["available"], mine["problems"]) == ("user", True, [])
-    assert mine["categories"] == ["recessive", "comphet"]
+    assert mine["categories"] == ["recessive", "comphet", "xlinked"]
     assert mine["revision"] is None and mine["status"] is None
     assert [p["name"] for p in rows[:4]] == [
         "broad-first-pass", "strict-denovo", "rare-recessive", "rare-dominant"
@@ -839,7 +839,7 @@ def test_save_from_result_says_when_a_built_in_has_changed_since(
     result = tmp_path / "r.json"
     result.write_text(_result_with(block))
     r = run("save", "redo", "--from-result", str(result))
-    assert "rare-recessive rev 0 aaaaaaaaaaaa -> now rev 1 c19bb0a98ece" in r.output
+    assert "rare-recessive rev 0 aaaaaaaaaaaa -> now rev 2 8bfd197cdbe5" in r.output
 
 
 def test_save_from_a_result_without_a_preset_block_says_what_to_do(run, tmp_path):

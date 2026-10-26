@@ -387,7 +387,9 @@ def test_only_the_models_the_run_selected_decide():
     assert report(stats, no_band, categories=["recessive"]).warnings == ()
     assert report(stats, categories=["denovo"]).bound["min_gq"] is False
     # a model name this version does not know reads everything, never nothing
-    assert report(stats, categories=["xlinked"]).bound["min_gq"] is True
+    assert report(stats, categories=["mosaic"]).bound["min_gq"] is True
+    # the X-linked model applies its own per-role gates: it is not judged here
+    assert report(stats, categories=["xlinked"]).bound["min_gq"] is not True
 
 
 # ─────────────────── a gate is judged on the candidate rows ───────────────────
@@ -1189,6 +1191,9 @@ def analysis_of(session, gates=STRICT, gnomad_max_af=None, models=("denovo",)):
         has_reference=True,
         gnomad_max_af=gnomad_max_af,
         stats={"strict_models": models},
+        # these count the strict queries; the X guard's own probes of the
+        # session are tested in tests/test_xlinked.py
+        x_guard=False,
     )
 
 
