@@ -27,6 +27,23 @@ sex and a mismatch is flagged (`female*`) with a warning — the classic
 signal of a sample swap or mislabel. Samples with too few chrX calls to
 decide are reported as `unknown`.
 
+By default the fraction is taken over the whole of chrX, PAR included, so
+a male's pseudo-autosomal hets raise it a little. `--x-nonpar` takes it on
+sure non-PAR X only, the region `db trio` infers sex on, so the two
+commands report the same sex:
+
+```bash
+vcfclick db qc fam1 --x-nonpar                 # build from the data
+vcfclick db qc fam1 --x-nonpar --build GRCh37
+```
+
+`--build auto` (the default) uses GRCh38 when a chrX position exceeds the
+GRCh37 chrX length (155,270,560), and otherwise only the region that is
+non-PAR on both builds; an explicit `GRCh37` that the data contradicts is an
+error. The output keys are the same with or without the flag; a note on
+stderr says which region was used. See [TRIO.md](TRIO.md#chromosome-x) for the
+regions.
+
 ## Relatedness
 
 `vcfclick db relatedness <name>` estimates kinship for every pair of
