@@ -471,6 +471,10 @@ def test_trio_endpoint_serves_xlinked_and_guards_the_classic_models(trio_web_sto
     assert d["row_count"] == 29 and d["proband_sex"] == "male"
     assert {r[8] for r in d["rows"]} == {"recessive", "denovo"}
     assert (d["father"], d["mother"]) == ("XDAD", "XMUM")
+    counts = {
+        c: get("XSON", c)["row_count"] for c in ("denovo", "recessive", "dominant")
+    }
+    assert counts == {"denovo": 6, "recessive": 3, "dominant": 0}
     blocked = get("ZKID", "xlinked")
     assert blocked["rows"] == [] and "needs proband sex" in blocked["note"]
     assert "unknown category" in get("XSON", "ylinked")["error"]

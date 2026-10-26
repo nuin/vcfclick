@@ -634,7 +634,7 @@ class TrioAnalysis:
     # The chrX handling (cli/xchrom.py, cli/xlinked.py): the --build option
     # (auto | GRCh37 | GRCh38) and whether the X guard is on.
     build: str = "auto"
-    x_guard: bool = False
+    x_guard: bool = True
     # Answers computed once per analysis (the X context, its rows), private.
     _cache: dict = field(default_factory=dict, compare=False, repr=False)
 

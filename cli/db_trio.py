@@ -155,7 +155,7 @@ class TrioOptions:
 @click.option(
     "--x-guard/--no-x-guard",
     "x_guard",
-    default=False,
+    default=True,
     show_default=True,
     help="On sure non-PAR chrX, drop a het father, and a het male proband, "
     "from denovo, recessive, dominant and comphet: a male has one X, so "

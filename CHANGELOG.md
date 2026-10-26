@@ -191,6 +191,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
+  `recessive`, `dominant` and `comphet` now drop a het father and, for a male
+  proband, a het proband: genotypes a single X cannot have. Counts change only
+  for trios with chrX calls (none of the shipped fixtures outside the new X
+  fixture has any). `--no-x-guard` restores the previous models; the web route
+  applies the same guard.
 - Built-in presets, for the X-linked model: `rare-recessive` revision 2 runs
   `xlinked` too (new fingerprint `8bfd197cdbe5`); `strict-denovo` revision 3
   and `rare-dominant` revision 2 exclude it with a reason and say what the X

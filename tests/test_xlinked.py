@@ -391,7 +391,7 @@ def _legacy(doc: dict) -> dict:
 
 
 def test_x_guard_and_no_x_guard(world):
-    on, off = trios(world, "k", "--x-guard"), trios(world, "k")
+    on, off = trios(world, "k"), trios(world, "k", "--no-x-guard")
     assert _legacy(on["XSON"]) == {"denovo": 6, "recessive": 3, "dominant": 0}
     assert _legacy(off["XSON"]) == {"denovo": 7, "recessive": 4, "dominant": 4}
     assert _legacy(on["XDAU"]) == {"denovo": 6, "recessive": 0, "dominant": 15}
@@ -415,7 +415,7 @@ def test_x_guard_and_no_x_guard(world):
 def test_af_exactly_at_the_cap_is_kept_on_both_backends(world):
     """INFO/AF 0.001 is a Float32 just above 0.001: the gate's epsilon keeps it
     on chDB as on DuckDB."""
-    doc = trios(world, "k", "--max-af", "0.001", "--x-guard")["XDAU"]
+    doc = trios(world, "k", "--max-af", "0.001")["XDAU"]
     assert doc["models"]["dominant"]["count"] == 14  # S1 (0.005) out, L1 guarded
 
 
