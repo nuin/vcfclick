@@ -21,6 +21,7 @@ by its start.
 
 from __future__ import annotations
 
+from storage.contigs import PAR_NAMES
 from storage.contigs import X_NAMES as X_NAMES
 
 GRCH37, GRCH38, UNKNOWN = "GRCh37", "GRCh38", "unknown"
@@ -48,8 +49,9 @@ AMBIGUOUS_BAND: dict[str, Intervals] = {
     UNKNOWN: ((2_699_521, 2_781_479), (154_931_044, 155_260_560)),
 }
 
-# Sex contigs vcfclick does not interpret: data on them is not X data.
-UNSUPPORTED_SEX_CONTIGS: tuple[str, ...] = ("XY", "chrXY", "25", "PAR", "chrPAR")
+# Sex contigs vcfclick does not interpret: the PAR given as a contig of its
+# own (storage.contigs.PAR_NAMES). Data on them is not X data.
+UNSUPPORTED_SEX_CONTIGS: tuple[str, ...] = PAR_NAMES
 
 
 def npx_intervals(build: str) -> Intervals:
