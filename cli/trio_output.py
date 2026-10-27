@@ -387,8 +387,9 @@ class ModelSpec:
     applies: Callable[[object], bool]
     # The JSON object for `models.<name>`.
     build: Callable[[Render], dict]
-    # One line for `--category all`, and the listing for `--category <name>`.
-    summary: Callable[[TrioAnalysis], str]
+    # One line for `--category all` (None: no line for this trio), and the
+    # listing for `--category <name>`.
+    summary: Callable[[TrioAnalysis], str | None]
     detail: Callable[[TrioAnalysis], None]
     # Needs stored hom-reference calls to prove a parent is 0/0 (the
     # `--keep-reference` note, and the `blocked` flag, key off this).
@@ -449,6 +450,7 @@ def _row_model(name: str, *, needs_reference: bool) -> ModelSpec:
             "blocked_reason": _model_reason(blocked),
             "truncated": len(rows) > limit,
             "candidates": _candidates(rows[:limit], name, render),
+            "x_guard_excluded": analysis.x_guard_excluded(name),
         }
 
     def summary(analysis: TrioAnalysis) -> str:
@@ -520,6 +522,7 @@ def _build_comphet(render: Render) -> dict:
         "needs_genes": needs_genes,
         "truncated": len(genes) > limit,
         "genes": entries,
+        "x_guard_excluded": analysis.x_guard_excluded("comphet"),
     }
 
 
@@ -555,6 +558,12 @@ register_model(
         needs_genes=True,
     )
 )
+
+# The X-linked model: cli/trio_xlinked_output.py registers it here, after the
+# four classic models, so it is always the last key of `models`.
+from cli.trio_xlinked_output import XLINKED_MODEL  # noqa: E402
+
+register_model(XLINKED_MODEL)
 
 # The registry and the shared CATEGORIES constant describe the same models.
 if tuple(MODELS) != CATEGORIES:
@@ -607,6 +616,13 @@ def _gates_json(analysis: TrioAnalysis) -> dict:
         "gnomad_max_af": analysis.gnomad_max_af,
         "af_gate": gates.af_gate,
     }
+    # the X model's gates, as the values it applies (cli/xlinked.py)
+    from cli.xlinked import male_x_dp, x_max_af
+
+    out["min_male_x_dp"] = male_x_dp(gates)
+    out["max_af_x"] = x_max_af(gates)
+    out["min_hemi_ab"] = gates.min_hemi_ab
+    out["max_parent_alt_reads"] = gates.max_parent_alt_reads
     # additive: a gate is reported only when it is on
     if gates.strict_missing:
         out["strict_missing"] = True
@@ -642,6 +658,8 @@ def _trio_json(
             "gates": _gates_json(analysis),
             "annotations": render.have,
             "models": models,
+            # the X guard on the classic models (cli/xlinked.x_guard_sql)
+            "x_guard": analysis.x_guard,
         }
         # Inside the block: the store stays open for a decorator that looks
         # something up.
@@ -678,7 +696,9 @@ def trio_text(analysis: TrioAnalysis, category: str | Sequence[str]) -> None:
         MODELS[wanted[0]].detail(analysis)  # one model: the listing
     else:
         for spec in _applicable(analysis, wanted):  # `all` or a list: a line each
-            click.echo(spec.summary(analysis))
+            line = spec.summary(analysis)
+            if line is not None:
+                click.echo(line)
     # what only the finished run knows (cli/trio_gate_output.py)
     footer = analysis.stats.get("text_footer")
     for line in footer() if footer else ():

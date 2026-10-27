@@ -18,18 +18,22 @@ import json
 import click
 
 from cli.main import _set_db, db
+from cli.sex import FEMALE_MIN_HETFRAC, MALE_MAX_HETFRAC, MIN_CHRX_CALLS, infer_sex
+from cli.xchrom import BUILD_CHOICES, npx_sql, resolve_build
 from storage.contigs import X_NAMES
-from storage.sql import str_list
+from storage.sql import sql_quote_str, str_list
 
-# chrX names come from storage.contigs (non-PAR handling is left to the
-# caller's data; PAR variants slightly inflate male het and are rare relative
-# to the whole X).
+# chrX names come from storage.contigs. By default the het fraction is taken
+# over the whole X (PAR variants slightly inflate a male's het count and are
+# rare relative to the whole X); --x-nonpar restricts it to sure non-PAR X
+# (cli/xchrom.py), the region `db trio` infers sex on.
 
-# Below this chrX-het fraction a sample reads as male (hemizygous → few
-# hets); above the upper bound, female. Between, ambiguous.
-_MALE_MAX_HETFRAC = 0.10
-_FEMALE_MIN_HETFRAC = 0.20
-_MIN_CHRX_CALLS = 20  # too few X calls to infer sex
+# The thresholds and the call live in cli/sex.py, shared with `db trio`.
+# `_infer_sex` keeps its name here: scripts/compare_somalier.py imports it.
+_MALE_MAX_HETFRAC = MALE_MAX_HETFRAC
+_FEMALE_MIN_HETFRAC = FEMALE_MIN_HETFRAC
+_MIN_CHRX_CALLS = MIN_CHRX_CALLS
+_infer_sex = infer_sex
 
 
 def _transition() -> str:
@@ -44,11 +48,26 @@ def _count(expr: str, alias: str) -> str:
     return f"sum(CASE WHEN {expr} THEN 1 ELSE 0 END) AS {alias}"
 
 
-def _qc_sql() -> str:
+def _qc_sql(x_builds: dict[str, str] | None = None) -> str:
+    """The per-sample counts. `x_builds` ({ingest_id: build}, `--x-nonpar`)
+    restricts each ingestion's chrX counts to sure non-PAR X of its own build;
+    None counts the whole X."""
     snv = "length(ref) = 1 AND length(alt) = 1"
     ti = f"{snv} AND {_transition()}"
     tv = f"{snv} AND NOT {_transition()}"
-    chrx = f"chrom IN ({str_list(X_NAMES)})"
+    if x_builds is None:
+        chrx = f"chrom IN ({str_list(X_NAMES)})"
+    elif x_builds:
+        chrx = (
+            "("
+            + " OR ".join(
+                f"(ingest_id = {sql_quote_str(i)} AND {npx_sql(b)})"
+                for i, b in sorted(x_builds.items())
+            )
+            + ")"
+        )
+    else:
+        chrx = "(1 = 0)"
     cols = ", ".join(
         [
             "ingest_id",
@@ -66,17 +85,6 @@ def _qc_sql() -> str:
         f"SELECT {cols} FROM genotypes WHERE gt > 0 "
         "GROUP BY ingest_id, sample_id ORDER BY ingest_id, sample_id"
     )
-
-
-def _infer_sex(chrx_het: int, chrx_calls: int) -> tuple[str, float | None]:
-    if chrx_calls < _MIN_CHRX_CALLS:
-        return "unknown", None
-    frac = chrx_het / chrx_calls
-    if frac <= _MALE_MAX_HETFRAC:
-        return "male", frac
-    if frac >= _FEMALE_MIN_HETFRAC:
-        return "female", frac
-    return "ambiguous", frac
 
 
 def _ped_sex(sess) -> dict:
@@ -97,6 +105,29 @@ def _ped_sex(sess) -> dict:
     }
 
 
+def _qc_builds(sess, option: str) -> dict[str, tuple[str, str]]:
+    """{ingest_id: (build, source)} for --x-nonpar: each ingestion's build
+    from its own chrX positions (an ingestion with none is `unknown`). An
+    explicit GRCh37 that an ingestion's data contradicts is an error."""
+    raw = sess.query(
+        "SELECT i.ingest_id, max(v.pos) FROM ingestions i LEFT JOIN variants v "
+        f"ON v.ingest_id = i.ingest_id AND v.chrom IN ({str_list(X_NAMES)}) "
+        "GROUP BY i.ingest_id ORDER BY i.ingest_id",
+        "JSONCompact",
+    )
+    out = {}
+    for ingest_id, max_pos in json.loads(raw.bytes().decode())["data"]:
+        build, source, conflict = resolve_build(option, max_pos)
+        if conflict:
+            raise click.ClickException(
+                f"--build GRCh37, but ingestion {ingest_id!r} has chrX positions "
+                "beyond the GRCh37 chrX length (155,270,560): the data is not "
+                "GRCh37."
+            )
+        out[ingest_id] = (build, source)
+    return out
+
+
 def _ratio(num: int, denom: int) -> str:
     return "inf" if denom == 0 else f"{num / denom:.2f}"
 
@@ -110,7 +141,22 @@ def _ratio(num: int, denom: int) -> str:
     default="table",
     show_default=True,
 )
-def db_qc(name: str, out_format: str) -> None:
+@click.option(
+    "--x-nonpar",
+    is_flag=True,
+    help="Take the chrX het fraction on sure non-PAR X only (the region "
+    "`db trio` infers sex on), so both commands report the same sex.",
+)
+@click.option(
+    "--build",
+    type=click.Choice(BUILD_CHOICES),
+    default="auto",
+    show_default=True,
+    help="With --x-nonpar: the assembly whose PAR is left out. auto: GRCh38 "
+    "when a chrX position exceeds the GRCh37 chrX length, else only the "
+    "region that is non-PAR on both builds. CHM13/T2T is not supported.",
+)
+def db_qc(name: str, out_format: str, x_nonpar: bool, build: str) -> None:
     """Per-sample QC: het/hom ratio, Ti/Tv, and a chrX-het sex check."""
     from storage import db_path, get_session
 
@@ -119,7 +165,17 @@ def db_qc(name: str, out_format: str) -> None:
     _set_db(name)
     sess = get_session(name)
 
-    raw = sess.query(_qc_sql(), "JSONCompact").bytes().decode()
+    x_builds = None
+    if x_nonpar:
+        resolved = _qc_builds(sess, build)
+        x_builds = {i: b for i, (b, _) in resolved.items()}
+        for ingest_id, (b, source) in resolved.items():
+            click.echo(
+                f"note: chrX het fraction on non-PAR X ({b} [{source}]) for "
+                f"ingestion {ingest_id}",
+                err=True,
+            )
+    raw = sess.query(_qc_sql(x_builds), "JSONCompact").bytes().decode()
     rows = json.loads(raw)["data"]
     ped = _ped_sex(sess)
 

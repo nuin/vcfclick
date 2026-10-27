@@ -138,7 +138,12 @@ def test_allele_balance_reads_the_proband_unless_strict_then_the_parents_too():
     parents_without_ad = trio(
         father=sample("father", ad=0), mother=sample("mother", ad=0)
     )
-    assert report(parents_without_ad).bound["min_ab"] is True
+    classic = ["denovo", "recessive", "dominant", "comphet"]
+    assert report(parents_without_ad, categories=classic).bound["min_ab"] is True
+    # the X model holds a het mother to the band too, without strict_missing
+    assert report(parents_without_ad).bound["min_ab"] is False
+    xl = report(parents_without_ad, categories=["xlinked"])
+    assert xl.bound["min_ab"] is False
     strict = report(parents_without_ad, GATES._replace(strict_missing=True))
     assert strict.bound["min_ab"] is False
     off = report(trio(proband=sample("proband", ad=0)))
@@ -387,7 +392,10 @@ def test_only_the_models_the_run_selected_decide():
     assert report(stats, no_band, categories=["recessive"]).warnings == ()
     assert report(stats, categories=["denovo"]).bound["min_gq"] is False
     # a model name this version does not know reads everything, never nothing
-    assert report(stats, categories=["xlinked"]).bound["min_gq"] is True
+    assert report(stats, categories=["mosaic"]).bound["min_gq"] is True
+    # the X-linked model is judged on the roles its gates read
+    assert report(stats, categories=["xlinked"]).bound["min_gq"] is False
+    assert not by_code(report(stats, categories=["xlinked"]), "gate_not_applicable")
 
 
 # ─────────────────── a gate is judged on the candidate rows ───────────────────
@@ -704,6 +712,7 @@ def test_only_the_models_that_read_a_judged_gate_have_their_candidates_counted()
         "recessive",
         "dominant",
         "comphet",
+        "xlinked",
     )
     nothing = GATES._replace(min_gq=0, min_dp=0, min_ab=0.0, max_ab=1.0)
     assert candidate_models(nothing, ["all"]) == ()
@@ -1155,7 +1164,9 @@ def test_the_check_is_made_only_where_a_strict_gate_is_in_force():
     assert strict_check_models(screen, ["all"]) == ("denovo",)
     assert strict_check_models(strict, ["recessive"]) == ("recessive",)
     # compound het reads dominant's candidates: counted and said once
-    assert strict_check_models(strict, ["all"]) == ("denovo", "recessive", "dominant")
+    assert strict_check_models(strict, ["all"]) == (
+        "denovo", "recessive", "dominant", "xlinked",
+    )  # fmt: skip
     assert strict_check_models(strict, ["recessive", "comphet"]) == (
         "recessive",
         "comphet",
@@ -1189,7 +1200,21 @@ def analysis_of(session, gates=STRICT, gnomad_max_af=None, models=("denovo",)):
         has_reference=True,
         gnomad_max_af=gnomad_max_af,
         stats={"strict_models": models},
+        # these count the strict queries; the X guard's own probes of the
+        # session are tested in tests/test_xlinked.py
+        x_guard=False,
     )
+
+
+def test_the_candidate_pool_carries_the_x_guard():
+    """The pool the report counts is the join trio_sql runs, the X guard too."""
+    from cli.xchrom import GRCH38
+    from cli.xlinked import x_guard_sql
+
+    guard = x_guard_sql(GRCH38, father=True, proband_male=True)
+    sql = candidate_presence_sql("dominant", TRIO_, GATES, x_guard=guard)
+    assert guard in sql
+    assert guard not in candidate_presence_sql("dominant", TRIO_, GATES)
 
 
 def test_the_dropped_candidates_are_the_tolerant_rows_the_strict_gates_reject():

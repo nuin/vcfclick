@@ -346,7 +346,12 @@ as `gt = 2` with `phased = 1`: indistinguishable by `gt` alone from a
 diploid hom-alt call, and a haploid `0` becomes `gt = 0` (with
 `--keep-reference`). Count alleles from `an_called` / `ac_called` on
 `variants`, which are ploidy-aware, rather than assuming two alleles per
-sample on sex chromosomes.
+sample on sex chromosomes. Hemizygosity is derived at query time from the
+chromosome, the position (PAR or not, which depends on the build) and the
+sample's sex; `db trio --category xlinked` does this (see
+[TRIO.md](TRIO.md#chromosome-x)). A partial `./1` is stored as `gt = 1`, so
+in a male on non-PAR X it reads as a het, which that model counts as an
+artefact.
 
 ### Reserved FORMAT scalars
 

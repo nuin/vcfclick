@@ -21,12 +21,15 @@ from cli.trio_analysis import (
     DEFAULT_MAX_AF,
     GENE_CATEGORIES,
     ROW_CATEGORIES,
+    X_CATEGORIES,
     _quality_gate,
 )
 
 
 def test_the_constant_is_the_row_models_then_the_gene_model():
-    assert CATEGORIES == ROW_CATEGORIES + GENE_CATEGORIES
+    # then the sex- and region-aware X model (step X)
+    assert CATEGORIES == ROW_CATEGORIES + GENE_CATEGORIES + X_CATEGORIES
+    assert X_CATEGORIES == ("xlinked",)
     assert CATEGORY_CHOICES == CATEGORIES + ("all",)
     assert len(set(CATEGORY_CHOICES)) == len(CATEGORY_CHOICES)
 

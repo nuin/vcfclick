@@ -19,10 +19,10 @@ from cli.trio_output import MODELS
 
 # name -> (revision, fingerprint). Change a number here only with the revision.
 PINNED = {
-    "broad-first-pass": (1, "cd3726cc3853"),
-    "strict-denovo": (2, "30ffc72499a2"),
-    "rare-recessive": (1, "c19bb0a98ece"),
-    "rare-dominant": (1, "466b94313b5c"),
+    "broad-first-pass": (2, "cd3726cc3853"),
+    "strict-denovo": (3, "30ffc72499a2"),
+    "rare-recessive": (2, "8bfd197cdbe5"),
+    "rare-dominant": (2, "466b94313b5c"),
 }
 
 
@@ -117,7 +117,28 @@ def test_the_user_visible_numbers_are_the_documented_ones():
     assert f["strict-denovo"]["max_af"] == 0.001
     assert f["rare-recessive"]["max_af"] == f["rare-recessive"]["gnomad_max_af"] == 0.01
     assert f["rare-dominant"]["category"] == ["dominant", "denovo"]
-    assert f["rare-recessive"]["category"] == ["recessive", "comphet"]
+    assert f["rare-recessive"]["category"] == ["recessive", "comphet", "xlinked"]
+
+
+def test_the_xlinked_revision_decided_about_x_for_each_built_in():
+    """Step X: rare-recessive runs xlinked (a new fingerprint); strict-denovo
+    and rare-dominant exclude it with a reason and say what the X guard does
+    (words only, same fingerprint); broad-first-pass picks it up through
+    'all' and says so."""
+    b = BUILTINS
+    assert "xlinked" in b["rare-recessive"].filters["category"]
+    assert (
+        b["rare-recessive"].history[-1]["fingerprint"]
+        != (b["rare-recessive"].history[0]["fingerprint"])
+    )
+    for name in ("strict-denovo", "rare-dominant"):
+        assert b[name].excludes["xlinked"]
+        assert "X guard" in b[name].does_not_cover
+        first, last = b[name].history[0], b[name].history[-1]
+        assert first["fingerprint"] == last["fingerprint"] and "xlinked" in last["note"]
+    assert "X-linked" in b["broad-first-pass"].covers
+    for name in BUILTINS:
+        assert "no hemizygous male logic" not in b[name].does_not_cover
 
 
 def test_a_built_in_title_names_the_parent_phenotype_limit():
@@ -127,7 +148,7 @@ def test_a_built_in_title_names_the_parent_phenotype_limit():
 def test_strict_denovo_revision_two_changed_the_words_and_not_the_filters():
     """The fingerprint is a hash of the filters: a revision that only corrects what the
     text claims keeps it, and the history says what changed."""
-    first, second = BUILTINS["strict-denovo"].history
+    first, second, _third = BUILTINS["strict-denovo"].history
     assert (first["revision"], second["revision"]) == (1, 2)
     assert first["fingerprint"] == second["fingerprint"] == PINNED["strict-denovo"][1]
     assert "INFO/AF" in second["note"] and "fingerprint is too" in second["note"]

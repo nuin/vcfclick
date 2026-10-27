@@ -329,6 +329,7 @@ def candidate_presence_sql(
     gates: Gates | None = None,
     *,
     filter_present: bool = True,
+    x_guard: str | None = None,
 ) -> str:
     """One grouped count over the join `trio_sql` runs for `model` (proband `g`,
     parents `f` and `m`, the model's genotype predicate and no quality gate): per
@@ -366,7 +367,11 @@ def candidate_presence_sql(
         if site_gates
         else parent_sample_joins(trio.father, trio.mother)
     )
-    where = " AND ".join([MODEL_PREDICATES[model], *site_gates])
+    # the X guard (TrioAnalysis.x_guard_sql) removes the same rows here as in
+    # the run, so the pool is the join trio_sql runs
+    where = " AND ".join(
+        [MODEL_PREDICATES[model], *([x_guard] if x_guard else []), *site_gates]
+    )
     return (
         f"SELECT g.gt, f.gt, m.gt, {count_expr()}, {', '.join(cols)} "
         f"FROM genotypes g {joins} "
@@ -409,6 +414,7 @@ def collect_candidate_stats(
     gates: Gates | None = None,
     *,
     filter_present: bool = True,
+    x_guard: str | None = None,
 ) -> dict[str, CandidateStats]:
     """For each of `models` that has a genotype predicate, what the rows at its
     candidate sites carry (`candidate_presence_sql`: the sites `gates` keep, when
@@ -426,7 +432,7 @@ def collect_candidate_stats(
             continue
         if predicate not in by_predicate:
             sql = candidate_presence_sql(
-                model, trio, gates, filter_present=filter_present
+                model, trio, gates, filter_present=filter_present, x_guard=x_guard
             )
             raw = sess.query(sql, "JSONCompact")
             data = json.loads(raw.bytes().decode())["data"]
@@ -574,7 +580,15 @@ _SITE_ROWS: dict[str, dict[str, tuple[str, ...]]] = {
     "recessive": {"proband": (ALT,), "father": (HET,), "mother": (HET,)},
     "dominant": {"proband": (HET,), "father": _ANY, "mother": _ANY},
     "comphet": {"proband": (HET,), "father": _ANY, "mother": _ANY},
+    # the X model (cli/xlinked.gate_sql) on non-PAR chrX: a son's proband and
+    # mother, a daughter's proband, hemizygous father (0 or 2) and mother. The
+    # report does not know the proband's sex here, so it reads the daughter's
+    # roles, a son's father included (judged, never gating: stricter, not looser)
+    "xlinked": {"proband": (HET, ALT), "father": (REF, ALT), "mother": _ANY},
 }
+# The roles whose het calls a model holds to the allele-balance band without
+# strict_missing: the proband always; the X model a het mother too.
+_AB_ROLES: dict[str, tuple[str, ...]] = {"xlinked": ("proband", "mother")}
 _ROLES = ("proband", "father", "mother")
 # The models a gate typed on its own is about. In a report limited to such a gate
 # (`only`), a model it is about that cannot run is still said: a parent-allele
@@ -609,10 +623,11 @@ def gate_reads(
                 {r: (REF,) for r in ("father", "mother")} if model == "denovo" else {}
             )
         elif key == "min_ab":
+            ab_roles = _AB_ROLES.get(model, ("proband",))
             read = {
                 role: (HET,)
                 for role, classes in rows.items()
-                if HET in classes and (strict or role == "proband")
+                if HET in classes and (strict or role in ab_roles)
             }
         else:
             read = dict(rows)

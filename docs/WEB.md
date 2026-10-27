@@ -41,9 +41,12 @@ Stop the server with `Ctrl-C`.
   several ingestions it falls back to every child with two parents; `/api/meta`
   also returns a `families` list, see [TRIO.md](TRIO.md#probands-and-db-families)),
   an inheritance model (de-novo / recessive /
-  dominant / comphet: the list is the CLI's `--category` list, so a new
+  dominant / comphet / xlinked: the list is the CLI's `--category` list, so a new
   model appears here without a page edit) and quality thresholds; reuses
-  `db trio`. De-novo / dominant / comphet show a note if the cohort lacks
+  `db trio`, including its X guard on the classic models. `xlinked` adds
+  `mode` and `pattern` columns and the response carries `proband_sex`; a
+  blocked X model (no chrX data, sex unknown, a parent-sex or build conflict)
+  says why in `note`. De-novo / dominant / comphet show a note if the cohort lacks
   stored hom-reference rows (re-ingest with `--keep-reference`). Compound
   hets are listed one row per candidate variant under its gene and need the
   gene annotations loaded. Leave *max AF* blank for the default 0.01, which

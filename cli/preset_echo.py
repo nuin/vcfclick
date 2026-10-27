@@ -152,7 +152,9 @@ def gates_line(
     screen = resolved.get("parent_alt_screen")  # trio only
     parts = []
     for key, r in resolved.items():
-        listed = key in _ALWAYS or r.source != fr.FROM_DEFAULT or key in over
+        # a derived default (min_male_x_dp: half of min_dp) is a default too
+        default = r.source in (fr.FROM_DEFAULT, fr.FROM_DERIVED)
+        listed = key in _ALWAYS or not default or key in over
         if key == "max_parent_alt_frac" and screen is not None:
             listed = bool(screen.value)  # only meaningful with the screen
         if not listed:

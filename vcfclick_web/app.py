@@ -266,6 +266,7 @@ def _comphet_result(
         gnomad_max_af=None,
     )
     genes = analysis.comphet_genes()
+    guard = analysis.x_guard_sql()
     rows = [
         [sym, origin, chrom, int(pos), ref, alt, af]
         for sym in sorted(genes)
@@ -273,7 +274,7 @@ def _comphet_result(
         for chrom, pos, ref, alt, af in genes[sym][origin]
     ]
     result = {
-        "sql": _comphet_sql(trio_ctx, gates),
+        "sql": _comphet_sql(trio_ctx, gates, x_guard=guard),
         "columns": ["gene", "origin", "chrom", "pos", "ref", "alt", "af"],
         "rows": rows,
         "row_count": len(rows),
@@ -284,6 +285,51 @@ def _comphet_result(
         notes.append(
             "No gene annotations are loaded, so compound hets cannot be "
             "grouped by gene: run `vcfclick annotations load`."
+        )
+    return result, notes
+
+
+def _xlinked_result(analysis) -> tuple[dict, list[str]]:
+    """The X-linked model in the `_run_sql` envelope: one table row per
+    candidate (mode and pattern included), the SQL that found them, and
+    notes for a model that is blocked or has warnings."""
+    from cli.xlinked import xlinked_sql
+
+    ctx = analysis.x_context()
+    notes = [w["message"] for w in ctx.warnings]
+    result = {
+        "columns": [
+            "chrom", "pos", "ref", "alt", "proband_gt", "father_gt",
+            "mother_gt", "af", "mode", "pattern",
+        ],
+        "rows": [],
+        "row_count": 0,
+        "proband_sex": ctx.proband_sex,
+    }  # fmt: skip
+    if ctx.blocked_reason is not None:
+        from cli.trio_xlinked_output import _blocked_text
+
+        result["sql"] = None
+        reason = (
+            "No chrX genotype data for this trio."
+            if ctx.blocked_reason == "no_x_data"
+            else f"X-linked model blocked: {_blocked_text(ctx)}."
+        )
+        return result, [reason, *notes]
+    rows = analysis.x_rows()
+    result["sql"] = xlinked_sql(
+        analysis.trio, analysis.gates, ctx.proband_sex, ctx.region_build
+    )
+    result["rows"] = [
+        [r.chrom, r.pos, r.ref, r.alt, r.proband_gt, r.father_gt, r.mother_gt,
+         r.af, r.mode, r.pattern]
+        for r in rows
+    ]  # fmt: skip
+    result["row_count"] = len(rows)
+    if not analysis.has_reference:
+        notes.append(
+            "No stored hom-reference rows: X de novo and female_het need a "
+            "--keep-reference ingest."
         )
     return result, notes
 
@@ -313,6 +359,7 @@ def trio(
             trio_sql,
         )
         from cli.family_checks import trio_af_gate
+        from cli.trio_analysis import TrioAnalysis
         from cli.trio_output import MODELS
 
         name = _db_name()
@@ -333,17 +380,41 @@ def trio(
             af_gate=af_gate
         )
         needs_reference = MODELS[category].needs_reference
-        has_reference = _has_reference_rows(sess) if needs_reference else True
+        has_reference = (
+            _has_reference_rows(sess)
+            if needs_reference or category == "xlinked"
+            else True
+        )
         notes: list[str] = []
         if needs_reference and not has_reference:
             notes.append(_KEEP_REFERENCE_NOTE)
-        if category == "comphet":
+        # The same X context as `db trio`: the X guard on the classic models,
+        # and the X-linked model itself.
+        analysis = TrioAnalysis(
+            session=sess,
+            trio=trio_ctx,
+            gates=gates,
+            has_reference=has_reference,
+            gnomad_max_af=None,
+        )
+        if category == "xlinked":
+            result, extra = _xlinked_result(analysis)
+            notes += extra
+        elif category == "comphet":
             result, extra = _comphet_result(sess, trio_ctx, gates, has_reference)
             notes += extra
         else:
-            result = _run_sql(trio_sql(category, trio_ctx, gates, count_only=False))
+            sql = trio_sql(
+                category,
+                trio_ctx,
+                gates,
+                count_only=False,
+                x_guard=analysis.x_guard_sql(),
+            )
+            result = _run_sql(sql)
         result["father"] = father
         result["mother"] = mother
+        result["proband_sex"] = analysis.x_context().proband_sex
         result["af_gate"] = af_gate
         if af_message:
             notes.append(af_message)

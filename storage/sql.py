@@ -200,7 +200,11 @@ def allele_fraction_sql(alt_col: str, ref_col: str) -> str:
 
 
 def genotype_pivot_sql(
-    ingest_id: str, samples: dict[str, str], fields: tuple[str, ...] = ("gt",)
+    ingest_id: str,
+    samples: dict[str, str],
+    fields: tuple[str, ...] = ("gt",),
+    *,
+    where: str | None = None,
 ) -> str:
     """A subquery with one row per site and, per ROLE in `samples`
     ({"p": "CHILD", "f": "DAD"}), one column per field named `<role>_<field>`
@@ -212,6 +216,8 @@ def genotype_pivot_sql(
     way to see an absent parent; the equivalent LEFT JOIN reads gt = 0 on
     chDB. Only sites where at least one listed sample has a row appear.
     Wrap it as `FROM (<this>) x` and alias the columns you select.
+    `where`, when given, is ANDed to the row filter (a chromosome or region
+    predicate on the unqualified `genotypes` columns).
     """
     if not samples:
         raise ValueError("genotype_pivot_sql needs at least one sample")
@@ -227,8 +233,22 @@ def genotype_pivot_sql(
         + ", ".join(cols)
         + f" FROM genotypes WHERE ingest_id = {sql_quote_str(ingest_id)} "
         f"AND sample_id IN ({str_list(samples.values())}) "
-        "GROUP BY ingest_id, chrom, pos, ref, alt"
+        + (f"AND {where} " if where else "")
+        + "GROUP BY ingest_id, chrom, pos, ref, alt"
     )
+
+
+def chrom_in_sql(col: str, names) -> str:
+    """`col IN ('chrX', 'X', ...)`: a contig alias set (storage.contigs)."""
+    return f"{_ident(col)} IN ({str_list(names)})"
+
+
+def in_intervals_sql(col: str, intervals) -> str:
+    """`(col BETWEEN lo AND hi OR ...)` for closed integer intervals; `1 = 0`
+    for none, so the predicate is always a boolean."""
+    c = _ident(col)
+    parts = [f"{c} BETWEEN {int(lo)} AND {int(hi)}" for lo, hi in intervals]
+    return "(" + " OR ".join(parts) + ")" if parts else "(1 = 0)"
 
 
 # `variants.info_AF` is Float32 on chDB and REAL on DuckDB. A site whose AF

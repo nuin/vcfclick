@@ -166,7 +166,10 @@ correct cohort queries:
 - A haploid call (a male's non-PAR chrX/chrY, chrM) is stored as `gt = 2`
   with `phased = 1`: there is no hemizygous code and `gt` is never
   negative, so `gt` alone cannot tell a haploid ALT from a diploid
-  hom-alt; `an_called` counts one allele for it.
+  hom-alt; `an_called` counts one allele for it. Hemizygosity comes from
+  chromosome, position (PAR or not) and sex; the briefing gives the GRCh38
+  non-PAR interval, the X guard predicate `db trio` adds to the classic
+  models, and the `xlinked` patterns, and points to the CLI for X.
 - Family questions: the `pedigree` table, the inheritance models
   (the same names `db trio --category` takes, including `comphet`), the
   sparse de-novo caveat, and that `db trio` applies its GQ/DP/AB/AF gates

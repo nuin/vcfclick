@@ -25,6 +25,11 @@ allele balance) and population-AF rarity:
                 gene annotations loaded (`vcfclick annotations load`) and
                 --keep-reference (to prove each non-carrier parent is
                 hom-ref). Reported per gene, not per variant.
+  * xlinked     sex- and build-aware patterns on non-PAR chrX (a son read
+                with his mother only, a daughter with a hemizygous father);
+                cli/xlinked.py. The X guard drops a het father and a het
+                male proband there from the four models above
+                (--no-x-guard turns it off).
 """
 
 from __future__ import annotations
@@ -60,6 +65,7 @@ from cli.trio_gate_output import show_parent_reads
 from cli.trio_gate_report import attach_gate_reports, needs_report
 from cli.trio_output import _trio_json, omitted_models, trio_text
 from cli.trio_select import make_pick, select_trios
+from cli.xchrom import BUILD_CHOICES
 
 
 @dataclass(frozen=True)
@@ -80,6 +86,12 @@ class TrioOptions:
     parent_alt_screen: bool
     max_parent_alt_frac: float
     require_bound: bool
+    min_male_x_dp: int | None
+    max_af_x: float
+    min_hemi_ab: float
+    max_parent_alt_reads: int
+    build: str
+    x_guard: bool
     out_format: str
     limit: int
     preset: str | None
@@ -99,6 +111,10 @@ class TrioOptions:
             strict_missing=self.strict_missing,
             pass_only=self.pass_only,
             parent_alt_screen=self.parent_alt_screen,
+            min_male_x_dp=self.min_male_x_dp,
+            max_af_x=self.max_af_x,
+            min_hemi_ab=self.min_hemi_ab,
+            max_parent_alt_reads=self.max_parent_alt_reads,
         )
 
 
@@ -126,6 +142,25 @@ class TrioOptions:
     "children of their own (the rule before probands were defined).",
 )
 @gate_options("trio")
+@click.option(
+    "--build",
+    type=click.Choice(BUILD_CHOICES),
+    default="auto",
+    show_default=True,
+    help="Assembly of chrX, for its non-PAR region (xlinked and the X guard). "
+    "auto: GRCh38 when a chrX position exceeds the GRCh37 chrX length "
+    "(155,270,560), else unknown: the two bands where GRCh37 and GRCh38 "
+    "disagree are left out and counted. CHM13/T2T is not supported.",
+)
+@click.option(
+    "--x-guard/--no-x-guard",
+    "x_guard",
+    default=True,
+    show_default=True,
+    help="On sure non-PAR chrX, drop a het father, and a het male proband, "
+    "from denovo, recessive, dominant and comphet: a male has one X, so "
+    "those calls are artefacts. --no-x-guard restores the unguarded models.",
+)
 @click.option(
     "--format",
     "out_format",
@@ -205,6 +240,8 @@ def db_trio(options: TrioOptions) -> None:
             has_reference=has_ref,
             gnomad_max_af=options.gnomad_max_af,
             siblings=p.siblings,
+            build=options.build,
+            x_guard=options.x_guard,
         )
         for p in picks
     ]

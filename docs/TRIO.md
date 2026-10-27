@@ -73,9 +73,11 @@ parent genotypes fit the pattern. Genotype encoding: `gt` 0 = hom-ref,
 | `recessive` | proband hom-alt; both parents heterozygous carriers | no |
 | `dominant` | proband het; exactly one parent carries, other hom-ref | yes |
 | `comphet` | two rare proband hets in the same gene, one from each parent | yes |
+| `xlinked` | sex-aware patterns on non-PAR chrX (see [Chromosome X](#chromosome-x)) | for its de novo and het-daughter patterns |
 
 `--category all` (default) prints per-model counts; a specific
-`--category` prints the variants.
+`--category` prints the variants. The `xlinked` line of `all` is printed only
+when the trio has chrX genotype rows.
 
 ### Compound heterozygous
 
@@ -100,6 +102,170 @@ Parent-of-origin here is genotype-based (no read-backed phasing), so it
 is honest candidate filtering: it cannot distinguish true *trans* from
 two variants that happen to be on the same parental copy. The annotation
 store path can be overridden with `VCFCLICK_ANNOTATIONS_DB`.
+
+## Chromosome X
+
+A male has one X. On the non-PAR part of chrX (NPX) his call is haploid, and
+vcfclick stores it like a diploid one: a lone `1` as `gt = 2`, a lone `0` as
+`gt = 0` (see [SCHEMA.md](SCHEMA.md#identity--genotype-encoding)). So
+hemizygosity is never read from the data. It comes from three things: the
+chromosome (`chrX`, `X`, `chr23`, `23`), the position, and the sex. No schema
+change and no re-ingest are needed.
+
+### Regions and the build
+
+| Build | non-PAR X (hemizygous in a male) |
+|---|---|
+| GRCh38 | 2,781,480-155,701,382 |
+| GRCh37 | 2,699,521-154,931,043 and 155,260,561-155,270,560 |
+| unknown | 2,781,480-154,931,043 and 155,260,561-155,701,382 (non-PAR on both) |
+
+Everything else on chrX is PAR and is treated exactly like an autosome. The
+build is never assumed:
+
+- `--build GRCh37|GRCh38` sets it (`build_source: option`).
+- Otherwise a chrX position above 155,270,560 (the GRCh37 chrX length) proves
+  GRCh38 (`build_source: data`).
+- Otherwise the build is `unknown`. The two bands where the builds disagree
+  (2,699,521-2,781,479 and 154,931,044-155,260,560, about 410 kb) are left
+  out of the X model and of the X guard. The proband's calls there are counted
+  (`context.excluded.ambiguous_band`) and a `build_unknown` warning says so.
+- `--build GRCh37` with a position above 155,270,560 blocks the X model
+  (`build_conflict`).
+
+CHM13/T2T is not supported: its chrX never exceeds the GRCh37 length, so it
+resolves to `unknown`. A site is classified by its POS, so an indel that
+straddles a PAR edge is classified by its start.
+
+### Sex
+
+Each member of the trio is analysed as, in this order:
+
+1. the pedigree's sex (`male`/`female`; `db ped --father/--mother` record the
+   role, `--sex ID=male|female` any listed sample);
+2. a confident chrX inference on non-PAR X: het fraction at most 0.10 is male,
+   at least 0.20 female, from at least 20 non-reference calls (the thresholds
+   of `db qc`). For an undeclared child the inference is checked against X
+   transmission: at sites where the father is hemizygous ALT and the mother a
+   stored 0/0, a daughter must be het and a son 0/0. With at least 5 such sites,
+   a het share of 0.75 or more reads female and 0.25 or less male (provisional
+   values). A disagreement makes the child's sex ambiguous (`sex_ambiguous`), so
+   a daughter with long runs of homozygosity is not called male;
+3. for a parent, the role (father male, mother female);
+4. otherwise unknown.
+
+A declared sex that a confident inference contradicts wins, with a
+`sex_conflict` warning (a possible swap). A parent whose declared or
+confidently inferred sex contradicts the role blocks the X model
+(`parent_sex_conflict`): the father's single X is what the daughter patterns
+rest on. This also blocks a 47,XXY father or a 45,X mother. An unresolved
+proband is `needs_sex`. The classic models run in both cases.
+
+### Patterns
+
+On NPX, with stored genotypes (`*` = any or absent):
+
+| Proband | Pattern | Proband | Father | Mother | Mode |
+|---|---|---|---|---|---|
+| son | `xlr_son` | 2 | * | 1 | recessive |
+| son | `x_denovo_son` | 2 | * | 0 | denovo |
+| daughter | `xlr_hom_daughter` | 2 | 2 | 1 | recessive |
+| daughter | `xhet_paternal` | 1 | 2 | 0 | female_het |
+| daughter | `xhet_maternal` | 1 | 0 | 1 or 2 | female_het |
+| daughter | `x_denovo_daughter` | 1 | 0 | 0 | denovo |
+| daughter | `x_denovo_daughter_mat` | 2 | 2 | 0 | denovo |
+| daughter | `x_denovo_daughter_pat` | 2 | 0 | 1 or 2 | denovo |
+
+A de novo pattern needs exactly one new ALT allele: in a hom-alt daughter
+it is the maternal one (`_mat`) or the paternal one (`_pat`). A daughter who
+needs two new alleles, or who lost one, is `mendel_error_other`.
+
+- A son's X is his mother's, so his patterns read the proband and the mother
+  only. The father is shown (`father_flag`: `hemizygous_alt` or
+  `anomalous_het`) and never filters a row.
+- A daughter's father must be hemizygous (0 or 2). A het father there is an
+  artefact: the site is excluded and counted (`father_het_calls`).
+- A male het on NPX (including a partial `./1`, stored as `gt = 1`) is an
+  artefact: excluded and counted (`male_het_calls`).
+- Every other combination is counted, not reported:
+  `mendel_consistent_unpatterned` (Mendelian, but no pattern claims it, such as
+  a son or daughter of a hom-alt mother, or a het daughter of two carriers) and
+  `mendel_error_other`.
+- Female compound het: genes with a het from a hemizygous-ALT father (mother
+  0/0) and a het from a carrier mother (father 0/0), on NPX, grouped by gene as
+  `comphet` is (`models.xlinked.genes`).
+
+### Gates and rarity
+
+The X model applies the quality gates only to the roles a pattern reads:
+
+- `--min-gq` to every role it reads;
+- `--min-dp` to a diploid call, `--min-male-x-dp` (default half of
+  `--min-dp`, rounded down) to a hemizygous one: a son, and a daughter's father;
+- `--min-ab`/`--max-ab` to a het proband and a het mother;
+- `--min-hemi-ab` (default 0.75): a son's ALT call with allele depths must have
+  at least this alt fraction;
+- `--max-parent-alt-reads` (default 1): a parent's 0/0 in a de novo pattern may
+  carry at most this many alt reads (missing AD passes; the cap is per parent,
+  so a daughter with two 0/0 parents may have 2 in all, where slivar sums);
+- rarity: INFO/AF at most min(`--max-af`, `--max-af-x`), default 0.001. A
+  hemizygous male is affected at the allele frequency q, not q squared. A
+  cohort-derived INFO/AF skips this gate as it skips `--max-af` (see
+  [Cohort-derived `INFO/AF`](#cohort-derived-infoaf)). `--gnomad-max-af` and
+  `--pass-only` apply as for the other models. gnomAD hemizygote counts are not
+  in the annotation store, so this is a stand-in, not a prevalence-derived cap.
+
+The effective-gate report of a preset run judges the X model on the roles
+its gates read: the proband, the father (hemizygous 0 or 2) and the mother,
+whose het calls are held to the allele-balance band. It does not know the
+proband's sex at that point, so a son's father is judged too, which can only
+make the report stricter. A `--strict-missing` run counts what it dropped
+from `xlinked` after the run, as for the other models. The female compound
+het uses the X model's gates (the father at the male DP floor).
+
+### Phenotype
+
+The patterns are genotype statements. A het daughter row is `female_het`: a
+carrier daughter, a manifesting or skewed-XCI heterozygote, or X-linked
+dominant. It is relabelled `dominant` only when the pedigree marks the proband
+**and** the transmitting parent affected, which only a PED file can say
+(`db ped --father/--mother` leave the parents' phenotype unknown). A
+hemizygous son of an affected carrier mother stays `recessive`; the candidate's
+`parent_affected` says the mother is affected.
+
+### The X guard on the classic models
+
+On sure NPX, `denovo`, `recessive`, `dominant` and `comphet` drop a het father
+and, for a male proband, a het proband: both are physically impossible there.
+It is on by default; `--no-x-guard` restores the unguarded models, and each
+classic model reports `x_guard_excluded`, how many candidates (genes for
+comphet) the guard removed. With a proband of unknown sex only the father term
+applies. The guard is not applied in the ambiguous bands or in PAR. This
+changes counts only for data with chrX calls.
+
+### Reported twice
+
+X de novo candidates are in both `denovo` and `xlinked`; a daughter's X het
+candidates are in both `dominant` and `xlinked`; female X compound-het genes
+are in both `comphet` (which also covers PAR) and `xlinked.genes`. Do not sum
+counts across models.
+
+### Text
+
+```
+trio: proband=XSON father=XDAD mother=XMUM
+  denovo          6
+  recessive       3
+  dominant        0
+  comphet         0  genes
+  xlinked        29  (recessive 18, denovo 11)
+```
+
+A sparse ingest prints `xlinked 18  (recessive 18; denovo needs
+--keep-reference)`; an unresolved sex `xlinked - (needs proband sex: ...)`.
+`--category xlinked` lists the candidates with their mode and pattern, the
+sexes and the build with their sources, the X compound-het genes of a
+daughter, and an `excluded:` line. Warnings go to stderr.
 
 ## Quality gates
 
@@ -448,10 +614,59 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
                "truncated": false, "candidates": [ ... ]},
     "recessive": { ... }, "dominant": { ... },
     "comphet": {"count": 0, "blocked": false, "blocked_reason": null,
-                "needs_genes": false, "truncated": false, "genes": []}
-  }
+                "needs_genes": false, "truncated": false, "genes": []},
+    "xlinked": { ... }
+  },
+  "x_guard": true
 }
 ```
+
+`models.xlinked` (always present):
+
+```json
+{"count": 29, "blocked": false, "blocked_reason": null, "truncated": false,
+ "needs_genes": false,
+ "context": {"build": "GRCh38", "build_source": "data",
+             "proband_sex": "male", "proband_sex_source": "pedigree",
+             "father_sex": "male", "father_sex_source": "pedigree",
+             "mother_sex": "female", "mother_sex_source": "pedigree",
+             "warnings": [],
+             "excluded": {"male_het_calls": 5, "father_het_calls": 0,
+                          "ambiguous_band": 0,
+                          "mendel_consistent_unpatterned": 13,
+                          "mendel_error_other": 0}},
+ "modes": {"recessive": {"applicable": true, "count": 18, "blocked": false,
+                         "blocked_reason": null},
+           "dominant": {...}, "female_het": {...}, "denovo": {...},
+           "comphet": {...}},
+ "candidates": [{"chrom": "chrX", "pos": 10300001, "ref": "C", "alt": "T",
+                 "proband_gt": 2, "father_gt": 2, "mother_gt": 1, "af": 0.001,
+                 "genes": [], "gnomad_popmax": null, "clinvar": null,
+                 "mode": "recessive", "pattern": "xlr_son",
+                 "hemizygous": ["proband", "father"],
+                 "father_flag": "hemizygous_alt", "parent_affected": false}],
+ "genes": [{"gene": "XCH1", "paternal": [...], "maternal": [...]}]}
+```
+
+- `build_source` is `option`, `data` or `unknown`; `proband_sex_source` is
+  `pedigree`, `inferred` or `unknown`, and a parent's may also be `role`.
+- `context.warnings` are `{"code", "level", "key", "message"}` objects with the
+  codes `build_unknown`, `sex_conflict`, `sex_ambiguous` and
+  `unsupported_contig` (a sex contig such as `chrXY` or `PAR` that is not
+  interpreted).
+- `modes`: a son has `recessive` and `denovo`; a daughter all five. `count` of
+  `comphet` is genes. `denovo`, `dominant`, `female_het` and `comphet` are
+  blocked by `needs_keep_reference` on a sparse ingest; `comphet` by
+  `needs_genes` without gene annotations. `recessive` is never blocked.
+  The model is `blocked` when its context blocks it or every applicable
+  row mode is blocked.
+- `father_gt` / `mother_gt` are `-1` when that parent has no stored row.
+- With no chrX data: `{"count": 0, "blocked": true, "blocked_reason":
+  "no_x_data", "modes": {}, "candidates": [], "genes": [], ...}`; apps hide
+  the X tab on that reason.
+- `x_guard` (top level, after `models`) says whether the X guard ran; each
+  classic model gains `x_guard_excluded` (an integer; `null` with the guard off
+  or with `--gnomad-max-af`, where it would cost every row).
 
 - `trio.family_id` is the proband's family in the pedigree (`null` if the
   proband has no row of its own), `trio.kind` is `trio` or `duo`, and
@@ -461,7 +676,7 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   original keys, in that order.
 - `models` lists the models of `--category` (a name, `all`, or a comma list
   such as `recessive,comphet`), in the order `denovo`, `recessive`, `dominant`,
-  `comphet`.
+  `comphet`, `xlinked`.
 - `blocked` is true when the model cannot be decided because the database has
   no stored hom-reference calls (see *Why `--keep-reference`*). `blocked_reason`
   says why a model has no result, and is `null` when nothing is wrong. It comes
@@ -471,11 +686,14 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   |---|---|---|
   | `needs_keep_reference` | no stored hom-ref rows to prove a parent is 0/0 (re-ingest with `--keep-reference`) | `denovo`, `dominant`, `comphet` |
   | `needs_genes` | gene annotations are not loaded (`vcfclick annotations load`) | `comphet` |
+  | `no_x_data` | the trio has no chrX genotype rows | `xlinked` |
+  | `needs_sex` | the proband's sex is neither declared nor inferable | `xlinked` |
+  | `parent_sex_conflict` | a parent's declared or inferred sex contradicts the role | `xlinked` |
+  | `build_conflict` | `--build GRCh37`, but chrX has positions beyond its length | `xlinked` |
+  | `needs_parents` | the proband lacks a declared parent | `xlinked` |
 
-  The vocabulary also reserves `needs_phase`, `needs_parents`, `needs_sex`,
-  `needs_ad`, `needs_parent_ad`, `no_autosomes`, `no_x_data`,
-  `parent_sex_conflict` and `build_conflict` for models that are not in this
-  release; a reader should map an unknown value to a generic "blocked" message
+  The vocabulary also reserves `needs_phase`, `needs_ad`, `needs_parent_ad`
+  and `no_autosomes` for models that are not in this release; a reader should map an unknown value to a generic "blocked" message
   rather than fail. When both apply, `needs_keep_reference` wins (fix the first
   requirement first), and `comphet` keeps `blocked: false` for a missing gene
   annotation, which it reports through `needs_genes` and `blocked_reason` alone.
@@ -487,6 +705,9 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   `pass_only`, `parent_alt_screen` and `max_parent_alt_frac` (after `af_gate`),
   but only for a gate that is on; the seven original keys carry the values that
   took effect after a preset and the flags were merged.
+- `gates` always reports the X model's gates after `af_gate`, as the values it
+  applies: `min_male_x_dp` (half of `min_dp` unless given), `max_af_x`
+  (min(`max_af`, `--max-af-x`)), `min_hemi_ab` and `max_parent_alt_reads`.
 - With a preset (`--preset`) the document ends with a `preset` object (what ran:
   name, source, revision, fingerprint, the filters requested and the value each
   filter took with where it came from, what a flag overrode, what was skipped)
@@ -521,8 +742,9 @@ missing or changes type. So:
   GIAB trios, text and JSON, on both backends; after removing the keys the test
   whitelists as new (`blocked_reason`, `gates.af_gate`, `trio.family_id`,
   `trio.kind`, `trio.siblings`, the top-level `families` of a no-`--proband`
-  list, and the `preset` and `effective` objects of a run that uses a preset)
-  it must match byte for byte. A change that needs an old key to move has
+  list, the `preset` and `effective` objects of a run that uses a preset, and
+  from step X `models.xlinked`, `x_guard`, `x_guard_excluded` and the four X
+  gates) it must match byte for byte. A change that needs an old key to move has
   to say so in its commit and regenerate those goldens deliberately. The
   complete document of one proband, new keys included, is pinned separately
   (`tests/goldens/trio_full/`), and the `db families` document too
@@ -534,19 +756,21 @@ missing or changes type. So:
   genotypes; `annotations` is `{string: bool}`. `tests/test_trio_contract.py`
   asserts this on real output and is reusable by later models.
 
-Two reader rules are reserved now, so consumers can be written once, although
-no model emits either today: a parent genotype in a candidate may be `null`
-(that parent was not sequenced), and `-1` as a genotype means *a sequenced
-parent with no stored row at the site*. The stored `genotypes.gt` is never
+Two reader rules hold for every model: a parent genotype in a candidate may be
+`null` (that parent was not sequenced; reserved, no model emits it yet), and
+`-1` as a genotype means *a sequenced parent with no stored row at the site*
+(the `xlinked` model emits it for a son's no-call father). The stored `genotypes.gt` is never
 negative (see [SCHEMA.md](SCHEMA.md#identity--genotype-encoding)), so a `-1`
 here is a display state, not a genotype: **an exporter must not do arithmetic
 on it or write it into a VCF**; render it as `./.`.
 
 ### Web UI and MCP
 
-The Trio tab of `vcfclick web` offers the same four models (its list is
+The Trio tab of `vcfclick web` offers the same five models (its list is
 generated from the CLI's, so the two cannot drift), `/api/trio` returns
-`af_gate` and a `note` for the keep-reference and cohort-AF cases, and the MCP
+`af_gate`, `proband_sex` and a `note` for the keep-reference, cohort-AF and
+blocked-X cases (`category=xlinked` adds `mode` and `pattern` columns, and the
+classic categories carry the X guard), and the MCP
 briefing gives an LLM the same model names, the NULL-tolerant gate wording,
 the cohort-derived-AF warning and how families, `affected = NULL` and
 probands work. `/api/meta` lists the probands by the same rule as `db trio`

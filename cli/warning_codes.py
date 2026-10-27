@@ -54,6 +54,17 @@ CODES: dict[str, str] = {
     "skipped_widening": WARNING,
     # the preset's max_af was not applied because INFO/AF is the cohort's own
     "preset_max_af_not_applied": INFO,
+    # the X-linked model (models.xlinked.context.warnings):
+    # no chrX position proves the build, so the bands where GRCh37 and GRCh38
+    # disagree were left out and counted
+    "build_unknown": WARNING,
+    # a declared sex disagrees with a confident chrX inference (a possible swap)
+    "sex_conflict": WARNING,
+    # the chrX evidence for a sex is unclear (het fraction between the
+    # thresholds, or the het fraction and the X transmission disagree)
+    "sex_ambiguous": WARNING,
+    # the data names a sex contig vcfclick does not interpret (chrXY, PAR, ...)
+    "unsupported_contig": WARNING,
 }
 
 

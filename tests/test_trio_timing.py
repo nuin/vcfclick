@@ -344,6 +344,8 @@ def test_gnomad_filter_on_a_synthetic_wgs_store(
                 line.split()[0]: int(line.split()[1])
                 for line in result.stdout.splitlines()[1:]
             }
+            # no chrX in this store: the text has no xlinked line, the JSON a 0
+            counts.setdefault("xlinked", base_counts.get("xlinked", 0))
         # the filter did what the scenario says: nothing without gnomAD, and
         # with the slice the sites it calls common (one in four) are gone
         if gnomad == "none":

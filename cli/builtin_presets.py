@@ -28,9 +28,17 @@ STARTING_POINT = "starting_point"
 _NO_CONSEQUENCE = (
     "There is no consequence or impact filter, so non-coding variants are included."
 )
-_NO_X = (
-    "chrX gets no special treatment (no hemizygous male logic), and UPD and "
-    "mosaic variants are not looked for."
+_NO_X = "UPD and mosaic variants are not looked for."
+# What the classic models do on chrX now that the X-linked model exists.
+_X_GUARD = (
+    "On non-PAR chrX the classic models keep their two-copy logic, except that "
+    "the X guard drops a het father and a het male proband (artefacts on a "
+    "single X); the sex-aware X patterns are the xlinked model's."
+)
+_X_RARITY = (
+    "On non-PAR chrX the xlinked model uses the lower of max_af and its own "
+    "max_af_x (0.001 by default): a hemizygous male is affected at the allele "
+    "frequency."
 )
 # What the frequency gates do when they cannot judge a variant. Every built-in
 # sets both, so every built-in says both.
@@ -88,16 +96,18 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "first look at a proband. Warn-only: a gate that cannot be "
                 "enforced in this data is reported, not fatal."
             ),
-            revision=1,
+            revision=2,
             covers=(
                 "Every inheritance model vcfclick runs on a trio (de novo, "
-                "recessive, dominant, compound het) at GQ >= 15, DP >= 8, "
+                "recessive, dominant, compound het and the sex-aware X-linked "
+                "model) at GQ >= 15, DP >= 8, "
                 "allele balance 0.20-0.80 for proband hets, and a population "
                 "frequency of at most 1% on INFO/AF and on gnomAD popmax."
             ),
             does_not_cover=(
-                f"{_NO_CONSEQUENCE} {_NO_X} {_ABSENT_FROM_GNOMAD} {_COHORT_AF} "
-                "Alleles just under 1% are kept; common alleles are not."
+                f"{_NO_CONSEQUENCE} {_NO_X} {_X_RARITY} {_ABSENT_FROM_GNOMAD} "
+                f"{_COHORT_AF} Alleles just under 1% are kept; common alleles "
+                "are not."
             ),
             filters={
                 "category": _ALL_MODELS,
@@ -114,6 +124,13 @@ BUILTINS: dict[str, BuiltinPreset] = {
                     "fingerprint": "cd3726cc3853",
                     "note": "first release",
                 },
+                {
+                    "revision": 2,
+                    "fingerprint": "cd3726cc3853",
+                    "note": "'all' now includes the xlinked model; covers and "
+                    "does-not-cover say so. The filters are unchanged, so the "
+                    "fingerprint is too",
+                },
             ),
         ),
         BuiltinPreset(
@@ -127,7 +144,7 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "to run when a gate cannot be enforced in the data "
                 "(--no-require-bound-gates overrides for one run)."
             ),
-            revision=2,
+            revision=3,
             covers=(
                 "De novo single-nucleotide and indel calls in the proband "
                 "where both parents have a stored 0/0 with under 5% alt "
@@ -142,7 +159,10 @@ BUILTINS: dict[str, BuiltinPreset] = {
             ),
             does_not_cover=(
                 "Inherited variants, and de novo + inherited compound-het "
-                f"pairs. {_NO_X} Mapping artefacts beyond the FILTER column "
+                f"pairs. {_NO_X} {_X_GUARD} A son's hemizygous de novo with "
+                "both parents 0/0 stays in this model; one whose father carries "
+                "the allele (the father cannot pass a son his X) is only in the "
+                "xlinked model, which this preset does not run. Mapping artefacts beyond the FILTER column "
                 "are not excluded, and on a VCF whose FILTER column carries no "
                 "label other than PASS the FILTER gate removes nothing (the run "
                 f"says so). {_ABSENT_FROM_GNOMAD} A homozygous-alt "
@@ -169,6 +189,9 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "recessive": "this preset is about new variants in the proband",
                 "dominant": "this preset is about new variants in the proband",
                 "comphet": "this preset is about new variants in the proband",
+                "xlinked": "this preset is about new variants in the proband; the "
+                "xlinked model mixes inherited X patterns with X de novo and is "
+                "not held to strict_missing or the parent-allele screen",
             },
             history=(
                 {
@@ -182,6 +205,13 @@ BUILTINS: dict[str, BuiltinPreset] = {
                     "note": "covers and does-not-cover say that a variant with no "
                     "INFO/AF passes the INFO/AF gate; the filters are unchanged, so "
                     "the fingerprint is too",
+                },
+                {
+                    "revision": 3,
+                    "fingerprint": "30ffc72499a2",
+                    "note": "decides about the xlinked model: excluded, and the "
+                    "X guard and the X de novo it leaves to xlinked are written "
+                    "down. The filters are unchanged, so the fingerprint is too",
                 },
             ),
         ),
@@ -197,22 +227,27 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "genes with a known carrier frequency start from "
                 "broad-first-pass with a higher --gnomad-max-af."
             ),
-            revision=1,
+            revision=2,
             covers=(
-                "A homozygous-alt proband with both parents het (recessive) "
-                "and genes with a rare het inherited from each parent "
-                "(compound het), at GQ >= 20, DP >= 10, allele balance "
-                "0.25-0.75 and a population frequency of at most 1%."
+                "A homozygous-alt proband with both parents het (recessive), "
+                "genes with a rare het inherited from each parent "
+                "(compound het), and on non-PAR chrX the sex-aware X-linked "
+                "model (a hemizygous son of a carrier mother, a hom-alt daughter "
+                "of a hemizygous father and a carrier mother), at GQ >= 20, "
+                "DP >= 10, allele balance 0.25-0.75 and a population frequency "
+                "of at most 1%."
             ),
             does_not_cover=(
-                "chrX in males, de novo + inherited compound-het pairs (the "
+                "De novo + inherited compound-het pairs (the "
                 "compound-het model takes only hets inherited from exactly "
                 "one parent), UPD, mosaic; the allele balance of a "
-                f"hom-alt call is not gated. {_ABSENT_FROM_GNOMAD} "
+                f"hom-alt call is not gated. The xlinked model also lists its "
+                f"X de novo and female_het rows (they carry their mode). "
+                f"{_X_RARITY} {_ABSENT_FROM_GNOMAD} "
                 f"{_COHORT_AF} {_NO_CONSEQUENCE}"
             ),
             filters={
-                "category": ["recessive", "comphet"],
+                "category": ["recessive", "comphet", "xlinked"],
                 "min_gq": 20,
                 "min_dp": 10,
                 "min_ab": 0.25,
@@ -230,6 +265,11 @@ BUILTINS: dict[str, BuiltinPreset] = {
                     "fingerprint": "c19bb0a98ece",
                     "note": "first release",
                 },
+                {
+                    "revision": 2,
+                    "fingerprint": "8bfd197cdbe5",
+                    "note": "adds the xlinked model to the category list",
+                },
             ),
         ),
         BuiltinPreset(
@@ -240,7 +280,7 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "inherited from exactly one parent, at a rarity of 0.1% "
                 "(INFO/AF) and 0.01% (gnomAD)."
             ),
-            revision=1,
+            revision=2,
             covers=(
                 "A heterozygous proband call that is de novo, or that exactly "
                 "one parent carries while the other has a stored 0/0, at GQ "
@@ -253,7 +293,8 @@ BUILTINS: dict[str, BuiltinPreset] = {
                 "considered, so it also lists inherited variants a healthy "
                 "parent carries. Its de novo model also keeps a homozygous-alt "
                 "proband call, which is not allele-balance gated. "
-                f"{_ABSENT_FROM_GNOMAD} {_COHORT_AF} {_NO_X} {_NO_CONSEQUENCE}"
+                f"{_ABSENT_FROM_GNOMAD} {_COHORT_AF} {_NO_X} {_X_GUARD} "
+                f"{_NO_CONSEQUENCE}"
             ),
             filters={
                 "category": ["dominant", "denovo"],
@@ -267,12 +308,23 @@ BUILTINS: dict[str, BuiltinPreset] = {
             excludes={
                 "recessive": "a dominant search; use rare-recessive for recessive",
                 "comphet": "a dominant search; use rare-recessive for compound het",
+                "xlinked": "a dominant search on two-copy logic; a daughter's X "
+                "het stays in the dominant model and a son's hemizygous de novo "
+                "with 0/0 parents in de novo; run --category xlinked for the "
+                "sex-aware X patterns",
             },
             history=(
                 {
                     "revision": 1,
                     "fingerprint": "466b94313b5c",
                     "note": "first release",
+                },
+                {
+                    "revision": 2,
+                    "fingerprint": "466b94313b5c",
+                    "note": "decides about the xlinked model: excluded, and the "
+                    "X guard is written down. The filters are unchanged, so the "
+                    "fingerprint is too",
                 },
             ),
         ),
