@@ -490,11 +490,11 @@ def _row_model(name: str, *, needs_reference: bool) -> ModelSpec:
                 + (extra[i] if extra else "")
             )
 
-    def scope_builder(trio, gates, scope) -> list[str]:
+    def scope_builder(trio, gates, scope) -> list[tuple[str, str, str]]:
         from cli.trio_analysis import trio_sql
 
         return [
-            trio_sql(name, trio, gates, count_only=count, scope=scope)
+            (trio_sql(name, trio, gates, count_only=count, scope=scope), "all", "g")
             for count in (False, True)
         ]
 
@@ -581,10 +581,10 @@ def _detail_comphet(analysis: TrioAnalysis) -> None:
                 )
 
 
-def _comphet_scope_sql(trio, gates, scope) -> list[str]:
+def _comphet_scope_sql(trio, gates, scope) -> list[tuple[str, str, str]]:
     from cli.trio_analysis import _comphet_sql
 
-    return [_comphet_sql(trio, gates, scope=scope)]
+    return [(_comphet_sql(trio, gates, scope=scope), "exclude", "g")]
 
 
 register_model(_row_model("denovo", needs_reference=True))

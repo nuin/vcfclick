@@ -224,16 +224,10 @@ class IntervalSet:
     def _bucket_count(self, size: int) -> int:
         return sum(hi // size - lo // size + 1 for _, lo, hi in self.items())
 
-    def buckets_sql(self, alias: str, *, whole: bool = False) -> str:
-        """The bucket form: `a.pos`'s bucket (`intDiv(pos, B)`) in the buckets
-        the intervals touch, a superset of the exact predicate; `whole`: only
-        the buckets they cover entirely, a subset (what an exclusion needs, so
-        that NOT of it never removes a row outside the exclusion)."""
-        from storage.sql import int_div_sql
-
-        size = self.bucket_size()
-        bucket = int_div_sql(f"{alias}.pos", size)
-        by: dict[str, str] = {}
+    def buckets(self, size: int, *, whole: bool = False) -> dict[str, set[int]]:
+        """{contig: bucket ids} the intervals touch (`whole`: cover entirely),
+        for buckets of `size` bp (bucket b is b*size .. b*size + size - 1)."""
+        out: dict[str, set[int]] = {}
         for chrom, ivs in self._by.items():
             ids: set[int] = set()
             for lo, hi in ivs:
@@ -243,9 +237,20 @@ class IntervalSet:
                     last -= (hi + 1) % size != 0
                 ids.update(range(first, last + 1))
             if ids:
-                listed = ", ".join(str(i) for i in sorted(ids))
-                by[chrom] = f"{bucket} IN ({listed})"
-        return self._per_contig(alias, by)
+                out[chrom] = ids
+        return out
+
+    def buckets_sql(
+        self, alias: str, *, whole: bool = False, size: int | None = None
+    ) -> str:
+        """The bucket form: `a.pos`'s bucket (`intDiv(pos, B)`) in the buckets
+        the intervals touch, a superset of the exact predicate; `whole`: only
+        the buckets they cover entirely, a subset (what an exclusion needs, so
+        that NOT of it never removes a row outside the exclusion)."""
+        return bucket_set_sql(
+            alias, self.buckets(size or self.bucket_size(), whole=whole),
+            size or self.bucket_size(),
+        )  # fmt: skip
 
     @staticmethod
     def _per_contig(alias: str, by: Mapping[str, str]) -> str:
@@ -338,7 +343,10 @@ def scope_sql(alias: str, scope: Scope | None, *, part: str = "all") -> str | No
     Python backstop then trims."""
     if scope is None or not scope.pushdown:
         return None
-    exact = scope.exact_sql
+    return _predicate(alias, scope, part, exact=scope.exact_sql)
+
+
+def _predicate(alias: str, scope: Scope, part: str, *, exact: bool) -> str | None:
     parts = []
     if part == "all" and scope.include is not None:
         inc = scope.include
@@ -348,6 +356,72 @@ def scope_sql(alias: str, scope: Scope | None, *, part: str = "all") -> str | No
         shown = exc.sql(alias) if exact else exc.buckets_sql(alias, whole=True)
         parts.append(f"NOT {shown}")
     return " AND ".join(parts) if parts else None
+
+
+def bucket_set_sql(alias: str, buckets: Mapping[str, set[int]], size: int) -> str:
+    """`((a.chrom IN (...) AND intDiv(a.pos, size) IN (...)) OR ...)`."""
+    from storage.sql import int_div_sql
+
+    bucket = int_div_sql(f"{alias}.pos", size)
+    return IntervalSet._per_contig(
+        alias,
+        {
+            c: f"{bucket} IN ({', '.join(str(i) for i in sorted(ids))})"
+            for c, ids in buckets.items()
+        },
+    )
+
+
+def stats_predicate(alias: str, scope: Scope | None) -> tuple[str | None, str | None]:
+    """(SQL boolean, site columns) for a statement that COUNTS rows under the
+    scope (the effective-gate pool, a sample's stored rows), which must be
+    exact in every SQL mode.
+
+    Exact SQL: the scope's own predicate, no site columns. Otherwise the bucket
+    superset (whatever the number of intervals) and two expressions to SELECT
+    and GROUP BY: a row in a bucket the scope decides whole (inside every
+    inclusion, touching no exclusion) collapses to ('', 0); a row in an edge
+    bucket keeps its (chrom, pos), and `site_in_scope` trims it. Edge buckets
+    are at most two per interval, so the statement still returns few rows."""
+    if scope is None:
+        return None, None
+    if scope.exact_sql:
+        return scope_sql(alias, scope), None
+    intervals = [
+        *(scope.include.items() if scope.include else ()),
+        *scope.exclude.items(),
+    ]
+    size = IntervalSet(intervals).bucket_size()
+    parts = []
+    edge: dict[str, set[int]] = {}
+    if scope.include is not None:
+        touched = scope.include.buckets(size)
+        parts.append(bucket_set_sql(alias, touched, size))
+        whole = scope.include.buckets(size, whole=True)
+        for c, ids in touched.items():
+            edge.setdefault(c, set()).update(ids - whole.get(c, set()))
+    if scope.exclude:
+        excluded = scope.exclude.buckets(size, whole=True)
+        if excluded:
+            parts.append(f"NOT {bucket_set_sql(alias, excluded, size)}")
+        for c, ids in scope.exclude.buckets(size).items():
+            edge.setdefault(c, set()).update(ids - excluded.get(c, set()))
+    edge = {c: ids for c, ids in edge.items() if ids}
+    pred = " AND ".join(parts) if parts else None
+    if not edge:
+        return pred, None  # every bucket the superset keeps is decided
+    at_edge = bucket_set_sql(alias, edge, size)
+    site = (
+        f"CASE WHEN {at_edge} THEN {alias}.chrom ELSE '' END, "
+        f"CASE WHEN {at_edge} THEN {alias}.pos ELSE 0 END"
+    )
+    return pred, site
+
+
+def site_in_scope(scope: Scope, chrom: str, pos) -> bool:
+    """For a row of a `stats_predicate` statement: ('', 0) is a decided bucket,
+    in scope; anything else is judged by the scope."""
+    return chrom == "" or scope.contains(chrom, int(pos))
 
 
 def filter_rows(rows: Sequence[Sequence], scope: Scope | None) -> list:
@@ -678,10 +752,14 @@ def text_lines(scope: Scope) -> list[str]:
 
 # ───────────────────────────── builders ─────────────────────────────
 
-# A builder returns the SQL statements a model runs under a scope, for a trio
-# and its gates. The drift test calls each one with a planted scope and
-# requires the scope predicate in every statement it returns.
-ScopeBuilder = Callable[[Any, Any, Scope], list[str]]
+# A builder returns the SQL statements a model (or a report) runs under a
+# scope, for a trio and its gates, each as (sql, part, alias): the scope part
+# the statement must carry (`all`; `exclude` for a compound-het candidate
+# query, whose inclusions act after the grouping; `stats` for a statement that
+# counts rows, which carries `stats_predicate`) and the table alias it is
+# written on. The drift test calls each one with a planted scope and requires
+# that predicate in every statement.
+ScopeBuilder = Callable[[Any, Any, Scope], list[tuple[str, str, str]]]
 SCOPE_AWARE_BUILDERS: dict[str, ScopeBuilder] = {}
 
 

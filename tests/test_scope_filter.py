@@ -115,6 +115,23 @@ def test_the_bucket_superset_and_its_whole_bucket_subset(backend, monkeypatch):
     assert "(1 = 0)" in sc.scope_sql("g", partial)
 
 
+def test_a_count_statement_keeps_only_edge_buckets_per_site(monkeypatch):
+    """stats_predicate outside exact SQL: rows in a bucket the scope decides
+    whole collapse to ('', 0); only edge buckets keep (chrom, pos)."""
+    monkeypatch.setenv("VCFCLICK_BACKEND", "duckdb")
+    monkeypatch.setattr(sc, "SCOPE_SQL_EXACT_MAX", 0)
+    whole = _scope(regions=["chr7:256-1023"])
+    assert sc.stats_predicate("g", whole)[1] is None  # buckets 1-3, all whole
+    edged = _scope(regions=["chr7:256-1023"], exclude_regions=["chr7:300-310"])
+    pred, site = sc.stats_predicate("g", edged)
+    assert "(g.pos // 256) IN (1, 2, 3)" in pred
+    assert "(g.pos // 256) IN (1))" in site  # the excluded stretch's bucket
+    assert sc.site_in_scope(edged, "", 0)
+    assert not sc.site_in_scope(edged, "chr7", 305)
+    assert sc.site_in_scope(edged, "7", 311)
+    assert sc.stats_predicate("g", None) == (None, None)
+
+
 def test_bucket_size_grows_to_keep_the_set_small(monkeypatch):
     monkeypatch.setattr(sc, "MAX_BUCKETS", 10)
     ivs = sc.IntervalSet([("chr1", 1, 100_000)])

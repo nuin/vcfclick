@@ -869,7 +869,12 @@ class TrioAnalysis:
         if category not in MODEL_PREDICATES:
             return 0
         guard = self.x_guard_sql()
-        if self._count_in_sql():
+        grouped = (
+            category == "comphet"
+            and self.scope is not None
+            and self.scope.include is not None
+        )
+        if self._count_in_sql() and not grouped:
             sql = strict_dropped_sql(
                 category, self.trio, gates, count_only=True, x_guard=guard,
                 scope=self.scope,
@@ -888,9 +893,33 @@ class TrioAnalysis:
                 if category == "comphet"
                 else self._scoped(rows)
             )
+        if grouped:
+            return self._comphet_dropped_by_strict(rows)
         if self.gnomad_max_af is None:
             return len(rows)
         return len(_gnomad_filter(rows, self.gnomad_max_af))
+
+    def _comphet_dropped_by_strict(self, rows: list) -> int:
+        """With an include scope: of the compound-het variants strict_missing
+        dropped (`rows`, exclusions applied), those in a gene the compound-het
+        rule keeps in the same run without strict_missing, so the count is
+        about the genes the report can show."""
+        from cli.scope import genes_in_scope
+
+        tolerant = self.gates._replace(strict_exempt=STRICT_GATE_KEYS)
+        sql = _comphet_sql(
+            self.trio, tolerant, x_guard=self.x_guard_sql(), scope=self.scope
+        )
+        kept, _ = genes_in_scope(self._comphet_rows(sql), self.scope)
+        shown = {
+            (c, int(p), r, a)
+            for e in kept.values()
+            for side in ("paternal", "maternal")
+            for c, p, r, a, _af in e[side]
+        }
+        if self.gnomad_max_af is not None:
+            rows = _gnomad_filter(rows, self.gnomad_max_af)
+        return sum(1 for row in rows if (row[0], int(row[1]), row[2], row[3]) in shown)
 
     def _x_dropped_by_strict(self) -> int:
         from cli.xlinked import decode_rows, xlinked_sql
@@ -912,3 +941,26 @@ class TrioAnalysis:
             self.trio, self.gates, x_guard=self.x_guard_sql(), scope=self.scope
         )
         return self._genes_in_scope(self._comphet_rows(sql), "comphet")
+
+
+def _strict_dropped_scope_sql(trio: Trio, gates: Gates, scope) -> list:
+    """The strict_missing check's statements under a scope (cli/scope.py
+    SCOPE_AWARE_BUILDERS): compound het carries the exclusions only."""
+    return [
+        (
+            strict_dropped_sql(category, trio, gates, count_only=count, scope=scope),
+            "exclude" if category == "comphet" else "all",
+            "g",
+        )
+        for category in MODEL_PREDICATES
+        for count in (False, True)
+    ]
+
+
+def _register_scope_builders() -> None:
+    from cli.scope import register_scope_builder
+
+    register_scope_builder("strict_dropped", _strict_dropped_scope_sql)
+
+
+_register_scope_builders()

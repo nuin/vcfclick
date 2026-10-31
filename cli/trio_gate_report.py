@@ -54,7 +54,6 @@ from cli.effective_gates import (
 )
 from cli.preset_echo import header_lines, preset_block, skipped_items
 from cli.preset_options import PresetState, is_explicit
-from cli.scope import scope_sql
 from cli.trio_analysis import TrioAnalysis
 from cli.trio_gate_output import run_footer
 from cli.trio_output import (
@@ -184,7 +183,9 @@ def attach_gate_reports(
     )
     counted = {
         c.sample: c
-        for c in collect_sample_stats(sess, ingest_id, [(s, "") for s in unique])
+        for c in collect_sample_stats(
+            sess, ingest_id, [(s, "") for s in unique], scope=first.scope
+        )
     }
 
     def blocked_models(analysis: TrioAnalysis) -> list[tuple[str, str]]:
@@ -217,7 +218,7 @@ def attach_gate_reports(
             analysis.gates,
             filter_present=filter_present,
             x_guard=analysis.x_guard_sql(),
-            scope_sql=scope_sql("g", analysis.scope),
+            scope=analysis.scope,
         )
 
     def strict_check(analysis: TrioAnalysis) -> tuple[str, ...]:

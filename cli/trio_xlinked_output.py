@@ -260,16 +260,16 @@ def _detail_xlinked(analysis) -> None:
         click.echo("  excluded: " + ", ".join(f"{k}={v}" for k, v in excluded.items()))
 
 
-def _xlinked_scope_sql(trio, gates, scope) -> list[str]:
+def _xlinked_scope_sql(trio, gates, scope) -> list[tuple[str, str, str]]:
     """Every statement the X model can run under a scope: both sexes' rows and
     the daughter's compound-het candidates."""
     from cli.xchrom import GRCH38
     from cli.xlinked import comphet_x_sql, xlinked_sql
 
     return [
-        xlinked_sql(trio, gates, "male", GRCH38, scope=scope),
-        xlinked_sql(trio, gates, "female", GRCH38, scope=scope),
-        comphet_x_sql(trio, gates, GRCH38, scope=scope),
+        (xlinked_sql(trio, gates, "male", GRCH38, scope=scope), "all", "t"),
+        (xlinked_sql(trio, gates, "female", GRCH38, scope=scope), "all", "t"),
+        (comphet_x_sql(trio, gates, GRCH38, scope=scope), "exclude", "t"),
     ]
 
 

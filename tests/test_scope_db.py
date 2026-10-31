@@ -66,6 +66,38 @@ def _load_annotations(path: Path, *, hgnc: bool) -> None:
             hgnc_aliases.load(FIXTURES / "hgnc_aliases.tsv")
 
 
+def _edited_vcf(dest: Path, edit) -> Path:
+    """scope.vcf.gz as plain text with `edit(chrom, pos, sample_index, call)`
+    applied to every sample call (GT:AD:GQ:DP)."""
+    import gzip
+
+    lines = []
+    with gzip.open(FIXTURES / "scope.vcf.gz", "rt") as fh:
+        for line in fh:
+            if line.startswith("#"):
+                lines.append(line)
+                continue
+            f = line.rstrip("\n").split("\t")
+            f[9:] = [edit(f[0], int(f[1]), i, call) for i, call in enumerate(f[9:])]
+            lines.append("\t".join(f) + "\n")
+    dest.write_text("".join(lines))
+    return dest
+
+
+def _no_gq_from_70kb(chrom, pos, i, call):
+    """GQ removed from every call on chr7 at 70 kb and beyond (outside the
+    region chr7:1-60000)."""
+    gt, ad, gq, dp = call.split(":")
+    return f"{gt}:{ad}:.:{dp}" if chrom == "chr7" and pos >= 70_000 else call
+
+
+def _no_father_dp_at(chrom, pos, i, call):
+    """The father's DP removed at 59 kb (C12orf57's maternal partner, outside
+    chr7:50000-56000) and at 72 kb (OTHER1's paternal het)."""
+    gt, ad, gq, dp = call.split(":")
+    return f"{gt}:{ad}:{gq}:." if i == 1 and pos in (59_000, 72_000) else call
+
+
 @pytest.fixture(scope="module")
 def world(backend, tmp_path_factory):
     base = tmp_path_factory.mktemp(f"scope-{backend}")
@@ -78,10 +110,18 @@ def world(backend, tmp_path_factory):
 
     with mock.patch.dict(os.environ, {"VCFCLICK_ANNOTATIONS_DB": str(ann["empty"])}):
         get_connection().close()
-    for db, vcf in (("c", "scope.vcf.gz"), ("b", "scope_bare.vcf.gz")):
+    edited = {
+        "q": _edited_vcf(base / "nogq.vcf", _no_gq_from_70kb),
+        "s": _edited_vcf(base / "nodp.vcf", _no_father_dp_at),
+    }
+    for db, vcf in (
+        ("c", FIXTURES / "scope.vcf.gz"),
+        ("b", FIXTURES / "scope_bare.vcf.gz"),
+        *edited.items(),
+    ):
         run_cli(home, backend, "db", "create", db)
         run_cli(
-            home, backend, "db", "ingest", db, str(FIXTURES / vcf),
+            home, backend, "db", "ingest", db, str(vcf),
             "--ingest-id", "g1", "--serial", "--keep-reference",
         )  # fmt: skip
         run_cli(home, backend, "db", "ped", db, str(FIXTURES / "scope.ped"))
@@ -359,3 +399,49 @@ def test_unresolved_genes_are_an_effective_warning_with_a_preset(world):
     )  # fmt: skip
     codes = [w["code"] for w in doc["effective"]["warnings"]]
     assert "genes_unresolved" in codes
+
+
+# ───────────────── the effective-gate report under a scope ─────────────────
+
+_GATED = (
+    "--preset", "broad-first-pass", "--preset-ignore", "gnomad_max_af",
+    "--min-gq", "30", "--require-bound-gates",
+    "--category", "denovo,recessive,dominant",
+)  # fmt: skip
+
+
+def test_the_gate_pool_is_the_scope_in_every_mode(world):
+    """GQ is missing on every call at chr7 >= 70 kb, outside chr7:1-60000. With
+    that region the GQ gate binds on the rows the run reads, in every SQL
+    mode, and the `effective` objects agree; the per-sample rows are the 13
+    proband rows inside the region, not all 20."""
+    region = ("--region", "chr7:1-60000")
+    r = trio(world, "q", *_GATED, ok=False)  # not vacuous: genome-wide it refuses
+    assert "min_gq" in r.stderr
+    docs = {mode: forced(world, "q", mode, *_GATED, *region) for mode in ("python", "sql_buckets", "sql")}  # fmt: skip
+    want = jtrio(world, "q", *_GATED, *region)
+    for mode, doc in docs.items():
+        assert doc["scope"]["applied"] == mode
+        assert doc["effective"] == want["effective"], mode
+        assert doc["models"] == want["models"], mode
+    assert want["effective"]["rows"]["proband"] == 13
+    assert want["effective"]["gq"]["bound"] is True
+
+
+def test_comphet_strict_count_is_about_the_genes_the_scope_keeps(world):
+    """The father's DP is missing at 59 kb (C12orf57's partner outside
+    chr7:50000-56000) and at 72 kb (OTHER1, which the region does not keep).
+    strict_missing drops both variants; only the first is in a gene the report
+    could show, so it alone is counted."""
+    args = ("--region", "chr7:50000-56000", "--category", "comphet",
+            "--strict-missing", "--min-dp", "10")  # fmt: skip
+    doc = jtrio(world, "s", *args)
+    assert doc["models"]["comphet"]["genes"] == []  # C12orf57 lost its partner
+    [w] = [
+        w for w in doc["effective"]["warnings"] if w["code"] == "strict_missing_dropped"
+    ]
+    assert w["message"].startswith(
+        "strict_missing dropped 1 comphet candidate variants"
+    )
+    python = forced(world, "s", "python", *args)
+    assert python["effective"] == doc["effective"]

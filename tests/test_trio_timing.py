@@ -431,7 +431,16 @@ def test_a_scope_of_500_intervals_on_a_synthetic_wgs_store(
     500 intervals as BETWEENs (the first form) cost 2.7-2.9 s on chDB at
     200,000 sites, 1.7 s over plain: chDB evaluates every BETWEEN on every row
     of each of the three joined sides. That is why 65-500 intervals go as a
-    bucket set, an IN over integers that costs nothing measurable."""
+    bucket set, an IN over integers that costs nothing measurable.
+
+    With `--preset broad-first-pass` the effective-gate report counts the rows
+    in scope exactly in every mode (outside exact SQL: the bucket superset,
+    and per-site rows only in edge buckets, trimmed in Python). 200,000 sites:
+
+                       plain preset  64 (sql)  500 (sql_buckets)  501 (python)
+              DuckDB      1.10 s      1.09 s       1.58 s            1.73 s
+              chDB        1.21 s      1.46 s       1.52 s            1.62 s
+    """
     from cli.scope import SCOPE_SQL_EXACT_MAX, SCOPE_SQL_MAX_INTERVALS
 
     n, _ = _wgs_store("cohort", backend, vcfclick_home, tmp_path, monkeypatch)
@@ -439,6 +448,10 @@ def test_a_scope_of_500_intervals_on_a_synthetic_wgs_store(
     trio = ("db", "trio", "t", "--proband", "CHILD", "--format", "json")
     plain_s, plain = _best_of_two(vcfclick_home, backend, *trio)
     base = json.loads(plain.stdout)["models"]
+    preset_s, _ = _best_of_two(
+        vcfclick_home, backend, *trio,
+        "--preset", "broad-first-pass", "--preset-ignore", "gnomad_max_af",
+    )  # fmt: skip
     for n_intervals, applied in (
         (SCOPE_SQL_EXACT_MAX, "sql"),
         (SCOPE_SQL_MAX_INTERVALS, "sql_buckets"),
@@ -463,3 +476,17 @@ def test_a_scope_of_500_intervals_on_a_synthetic_wgs_store(
             f"({backend}) took {took:.1f}s, budget {budget:.1f}s"
         )
         assert took < 1.5 * plain_s + 0.5, (applied, took, plain_s)
+        # with a preset, the effective-gate report counts the rows in scope
+        # exactly in every mode: outside exact SQL its statements carry the
+        # bucket superset and group by site, and Python trims them
+        preset = ("--preset", "broad-first-pass", "--preset-ignore", "gnomad_max_af")
+        p_took, p_result = _best_of_two(
+            vcfclick_home, backend, *trio, *preset, "--region-file", str(bed)
+        )
+        print(
+            f"[timing] {n} sites, {n_intervals} intervals ({applied}) with a "
+            f"preset, {backend}: {p_took:.2f}s (plain preset {preset_s:.2f}s)"
+        )
+        assert json.loads(p_result.stdout)["scope"]["applied"] == applied
+        assert p_took < budget
+        assert p_took < 1.5 * preset_s + 0.5, (applied, p_took, preset_s)

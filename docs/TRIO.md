@@ -155,7 +155,8 @@ listed one only.
 
 The scope goes into every model's SQL (exact up to 64 merged intervals, as a
 coarse bucket filter up to 500) and is re-applied in Python to every row, so
-no model can ignore it. The text output gains a
+no model can ignore it. With a preset, the effective-gate report judges the
+gates on the rows inside the scope only, exactly in every mode. The text output gains a
 `  scope: 3 genes; gene spans only ...` line under `trio:`; the JSON a
 `scope` object (see [Machine-readable output](#machine-readable-output)). A
 preset can carry `genes`, `genes_label`, `exclude_genes`, `gene_flank`,
