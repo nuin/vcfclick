@@ -134,33 +134,50 @@ def position_for_gene(symbol: str) -> GeneRange | None:
     """Translate a gene symbol to GRCh38 coordinates.
 
     Used by the LLM to convert questions like "calls in BRCA1" into a
-    range filter on the ClickHouse genotypes table.
+    range filter on the ClickHouse genotypes table. The match ignores case
+    (the GENCODE loader stores a symbol as HGNC spells it, so `C9orf72` is
+    stored with its lower-case letters); a symbol stored in exactly the
+    spelling asked for wins over one that differs only in case.
     """
     conn = get_connection()
-    row = conn.execute(
-        """
-        SELECT gene_symbol, chrom, start_pos, end_pos, strand
-        FROM refseq_genes
-        WHERE gene_symbol = ?
-        """,
-        [symbol.upper()],
-    ).fetchone()
+    try:
+        row = conn.execute(
+            """
+            SELECT gene_symbol, chrom, start_pos, end_pos, strand
+            FROM refseq_genes
+            WHERE upper(gene_symbol) = upper(?)
+            ORDER BY (gene_symbol = ?) DESC, gene_symbol
+            LIMIT 1
+            """,
+            [symbol, symbol],
+        ).fetchone()
+    finally:
+        conn.close()
     return GeneRange(*row) if row else None
 
 
 def gene_at(chrom: str, pos: int) -> list[GeneRange]:
     """All genes overlapping a single position. Multiple results possible
-    (overlapping transcripts, antisense genes)."""
+    (overlapping transcripts, antisense genes). `chrom` may be spelt as the
+    VCF spells it (`17`, `chr17`, `X`, `chr23`): every alias is matched
+    (storage.contigs.chrom_aliases)."""
+    from storage.contigs import chrom_aliases
+
+    names = list(chrom_aliases(chrom))
+    marks = ", ".join("?" for _ in names)
     conn = get_connection()
-    rows = conn.execute(
-        """
-        SELECT gene_symbol, chrom, start_pos, end_pos, strand
-        FROM refseq_genes
-        WHERE chrom = ? AND ? BETWEEN start_pos AND end_pos
-        ORDER BY start_pos
-        """,
-        [chrom, pos],
-    ).fetchall()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT gene_symbol, chrom, start_pos, end_pos, strand
+            FROM refseq_genes
+            WHERE chrom IN ({marks}) AND ? BETWEEN start_pos AND end_pos
+            ORDER BY start_pos
+            """,
+            [*names, pos],
+        ).fetchall()
+    finally:
+        conn.close()
     return [GeneRange(*r) for r in rows]
 
 
@@ -184,9 +201,16 @@ class GeneIndex:
         finally:
             if own:
                 conn.close()
+        # keyed by the canonical contig name (storage.contigs.canonical_chrom),
+        # so a VCF that says `17` or `X` finds the store's `chr17` and `chrX`
+        from storage.contigs import canonical_chrom
+
+        self._canonical = canonical_chrom
         self._genes: dict[str, list[GeneRange]] = {}
         for row in rows:
-            self._genes.setdefault(row[1], []).append(GeneRange(*row))
+            self._genes.setdefault(canonical_chrom(row[1]), []).append(GeneRange(*row))
+        for genes in self._genes.values():  # two spellings in one store: re-sort
+            genes.sort(key=lambda g: g.start_pos)
         # per chromosome: start of each gene, and the furthest end reached
         # by it or any gene before it (so a backwards scan can stop)
         self._starts = {c: [g.start_pos for g in gs] for c, gs in self._genes.items()}
@@ -199,7 +223,9 @@ class GeneIndex:
             self._reach[chrom] = reach
 
     def at(self, chrom: str, pos: int) -> list[GeneRange]:
-        """Same genes as `gene_at(chrom, pos)`, ordered by start."""
+        """Same genes as `gene_at(chrom, pos)`, ordered by start. `chrom` in
+        any spelling of the contig (`7`, `chr7`, `X`, `23`)."""
+        chrom = self._canonical(chrom)
         genes = self._genes.get(chrom)
         if not genes:
             return []

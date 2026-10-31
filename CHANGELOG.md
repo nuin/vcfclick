@@ -284,6 +284,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
+  `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
+  `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
+  the symbol it was asked for and matched the stored one exactly, but the
+  GENCODE loader stores a symbol as HGNC spells it. The match now ignores case
+  (an exact spelling wins), and the lookup closes the store connection it opens.
+- Gene lookups match a contig however the VCF spells it. `GeneIndex.at` and
+  `gene_at` needed the store's `chr17` spelling, so a VCF with bare contigs
+  (`1` to `22`, `X`, `MT`) got no genes: `db trio` showed an empty `genes`
+  list on every candidate and found no compound het. Every alias in
+  `storage.contigs` (`7`/`chr7`, `X`/`chrX`/`23`/`chr23`, `MT`/`chrM`) now
+  matches. This changes `db trio` output for such VCFs: candidates gain their
+  genes, and compound hets are found.
 - A database without a `pedigree` table, or one with no pedigree loaded, now
   says `no pedigree loaded` from `db trio` and `db families` (and gives no
   probands in the web UI) instead of failing in SQL. A pedigree row that
