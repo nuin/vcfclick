@@ -1,0 +1,10 @@
+##gff-version 3
+chr7	HAVANA	gene	10000	20000	.	-	.	ID=ENSG00000147894.16;gene_id=ENSG00000147894.16;gene_type=protein_coding;gene_name=C9orf72
+chr7	HAVANA	gene	30000	40000	.	-	.	ID=ENSG00000131943.19;gene_id=ENSG00000131943.19;gene_type=protein_coding;gene_name=C19orf12
+chr7	HAVANA	gene	35000	36000	.	+	.	ID=ENSG00000000101.1;gene_id=ENSG00000000101.1;gene_type=protein_coding;gene_name=OVL1
+chr7	HAVANA	gene	50000	60000	.	+	.	ID=ENSG00000111678.11;gene_id=ENSG00000111678.11;gene_type=protein_coding;gene_name=C12orf57
+chr7	HAVANA	gene	70000	80000	.	+	.	ID=ENSG00000000102.1;gene_id=ENSG00000000102.1;gene_type=protein_coding;gene_name=OTHER1
+chrX	HAVANA	gene	50000000	50100000	.	+	.	ID=ENSG00000000103.1;gene_id=ENSG00000000103.1;gene_type=protein_coding;gene_name=XGENE1
+chrX	HAVANA	gene	59950000	60050000	.	+	.	ID=ENSG00000000104.1;gene_id=ENSG00000000104.1;gene_type=protein_coding;gene_name=XOTHER1
+chrX	HAVANA	gene	2700000	2760000	.	+	.	ID=ENSG00000124343.14;gene_id=ENSG00000124343.14;gene_type=protein_coding;gene_name=XG
+chrY	HAVANA	gene	2700000	2760000	.	+	.	ID=ENSG00000124343.14_PAR_Y;gene_id=ENSG00000124343.14_PAR_Y;gene_type=protein_coding;gene_name=XG

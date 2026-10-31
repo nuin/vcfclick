@@ -1,0 +1,5 @@
+hgnc_id	symbol	name	status	prev_symbol	alias_symbol	entrez_id	ensembl_gene_id
+HGNC:28337	C9orf72	C9orf72-SMCR8 complex subunit	Approved	FTDALS1	DENNL72|ALSFTD	203228	ENSG00000147894
+HGNC:25443	C19orf12	chromosome 19 open reading frame 12	Approved	"NBIA4|SPG43"	SHARED1	83636	ENSG00000131943
+HGNC:29150	C12orf57	chromosome 12 open reading frame 57	Approved		C10|SHARED1	113246	ENSG00000111678
+HGNC:99999	WITHDRAWN1	a withdrawn entry	Entry Withdrawn	C9orf72			

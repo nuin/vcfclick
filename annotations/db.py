@@ -80,6 +80,15 @@ CREATE TABLE IF NOT EXISTS gnomad_af (
     af_grpmax DOUBLE,                -- highest genetic-ancestry-group AF (popmax)
     PRIMARY KEY (chrom, pos, ref, alt)
 );
+
+-- Optional (`vcfclick annotations load-hgnc`): what else a gene is called.
+-- Each row maps one token to the current approved HGNC symbol, which is the
+-- gene_symbol of refseq_genes. Empty unless loaded.
+CREATE TABLE IF NOT EXISTS gene_aliases (
+    alias   VARCHAR NOT NULL,        -- the token, as HGNC lists it
+    kind    VARCHAR NOT NULL,        -- previous | alias | hgnc_id | entrez
+    symbol  VARCHAR NOT NULL         -- the current approved symbol
+);
 """
 
 
@@ -381,4 +390,99 @@ def gnomad_af_many(
     found: dict[tuple[str, int, str, str], GnomadAF] = {}
     for row in rows:
         found.setdefault((row[0], int(row[1]), row[2], row[3]), GnomadAF(*row))
+    return found
+
+
+# ───────────────────────────── gene resolution ─────────────────────────────
+
+# How a token found its gene, best first: a token that is a current symbol is
+# that gene even when it is also another gene's previous symbol.
+RESOLVED_BY: tuple[str, ...] = (
+    "symbol",
+    "ensembl",
+    "previous",
+    "alias",
+    "hgnc_id",
+    "entrez",
+)
+ALIAS_KINDS: tuple[str, ...] = ("previous", "alias", "hgnc_id", "entrez")
+
+
+def gene_token_key(token: str) -> str:
+    """A gene token as it is compared: upper case, an Ensembl gene id without
+    its version (`ENSG00000147894.16` is `ENSG00000147894`)."""
+    key = token.strip().upper()
+    if key.startswith("ENSG") and "." in key:
+        key = key.split(".", 1)[0]
+    return key
+
+
+def has_gene_aliases(conn: duckdb.DuckDBPyConnection) -> bool:
+    """Is the optional alias table (`annotations load-hgnc`) filled?"""
+    try:
+        row = conn.execute("SELECT 1 FROM gene_aliases LIMIT 1").fetchone()
+    except duckdb.Error:  # an older store without the table
+        return False
+    return row is not None
+
+
+def gene_count(conn: duckdb.DuckDBPyConnection) -> int:
+    try:
+        return int(conn.execute("SELECT count(*) FROM refseq_genes").fetchone()[0])
+    except duckdb.Error:
+        return 0
+
+
+def resolve_gene_tokens(
+    tokens: Iterable[str],
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> dict[str, list[tuple[str, GeneRange]]]:
+    """Every gene each token can mean, in one query on one connection:
+    {gene_token_key(token): [(resolved_by, GeneRange), ...]}, best match first
+    (RESOLVED_BY order), no entry for a token that matches nothing.
+
+    A token matches a current symbol without regard to case, or an Ensembl
+    gene id (the refseq_id column, version ignored), and, when `annotations
+    load-hgnc` has filled `gene_aliases`, a previous symbol, an alias, an HGNC
+    id (`HGNC:1234`) or an Entrez id. The caller decides what an ambiguous
+    token means (one previous symbol of two genes)."""
+    keys = list(dict.fromkeys(gene_token_key(t) for t in tokens if t.strip()))
+    if not keys:
+        return {}
+    own = conn is None
+    if conn is None:
+        conn = get_connection()
+    try:
+        import pyarrow as pa
+
+        name = "_vcfclick_gene_tokens"
+        cols = "g.gene_symbol, g.chrom, g.start_pos, g.end_pos, g.strand"
+        parts = [
+            f"SELECT t.tok, 'symbol' AS kind, {cols} FROM {name} t "
+            "JOIN refseq_genes g ON upper(g.gene_symbol) = t.tok",
+            f"SELECT t.tok, 'ensembl' AS kind, {cols} FROM {name} t "
+            "JOIN refseq_genes g ON upper(split_part(g.refseq_id, '.', 1)) = t.tok",
+        ]
+        if has_gene_aliases(conn):
+            parts.append(
+                f"SELECT t.tok, a.kind, {cols} FROM {name} t "
+                "JOIN gene_aliases a ON upper(a.alias) = t.tok "
+                "JOIN refseq_genes g ON upper(g.gene_symbol) = upper(a.symbol)"
+            )
+        conn.register(name, pa.table({"tok": pa.array(keys, pa.string())}))
+        try:
+            rows = conn.execute(" UNION ALL ".join(parts)).fetchall()
+        finally:
+            conn.unregister(name)
+    finally:
+        if own:
+            conn.close()
+    rank = {k: i for i, k in enumerate(RESOLVED_BY)}
+    found: dict[str, list[tuple[str, GeneRange]]] = {}
+    for tok, kind, *gene in rows:
+        matches = found.setdefault(tok, [])
+        if all(g.gene_symbol != gene[0] or k != kind for k, g in matches):
+            matches.append((kind, GeneRange(*gene)))
+    for matches in found.values():
+        matches.sort(key=lambda m: (rank.get(m[0], len(rank)), m[1].gene_symbol))
     return found

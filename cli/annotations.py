@@ -88,6 +88,35 @@ def annotations_load_gnomad(vcf: str, replace: bool) -> None:
     click.echo(f"\nloaded   {n:,} gnomAD allele frequencies into the annotation store")
 
 
+@annotations.command(name="load-hgnc")
+@click.argument("tsv", type=click.Path(exists=True, dir_okay=False))
+@click.option(
+    "--keep-existing",
+    is_flag=True,
+    help="Don't truncate gene_aliases before loading (default: replace).",
+)
+def annotations_load_hgnc(tsv: str, keep_existing: bool) -> None:
+    """Load HGNC previous symbols, aliases, HGNC ids and Entrez ids.
+
+    Optional. Pass the HGNC complete-set TSV (hgnc_complete_set.txt from
+    genenames.org; nothing is downloaded). Without it, a `db trio --genes`
+    list resolves current symbols (any case) and Ensembl gene ids only; with
+    it, a retired symbol, an alias, `HGNC:1234` or an Entrez id resolves to the
+    current symbol. Needs `vcfclick annotations load` for the coordinates.
+    """
+    from annotations.loaders.hgnc_aliases import load
+
+    try:
+        counts = load(Path(tsv), replace=not keep_existing)
+    except ValueError as e:
+        raise click.ClickException(str(e)) from None
+    total = sum(counts.values())
+    detail = ", ".join(f"{n:,} {kind}" for kind, n in sorted(counts.items()))
+    click.echo(
+        f"\nloaded   {total:,} gene aliases ({detail}) into the annotation store"
+    )
+
+
 @annotations.command(name="load-transcripts")
 @click.option(
     "--gff",
