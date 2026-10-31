@@ -904,13 +904,18 @@ class TrioAnalysis:
         dropped (`rows`, exclusions applied), those in a gene the compound-het
         rule keeps in the same run without strict_missing, so the count is
         about the genes the report can show."""
-        from cli.scope import genes_in_scope
+        from cli.scope import drop_excluded, genes_in_scope
 
         tolerant = self.gates._replace(strict_exempt=STRICT_GATE_KEYS)
         sql = _comphet_sql(
             self.trio, tolerant, x_guard=self.x_guard_sql(), scope=self.scope
         )
-        kept, _ = genes_in_scope(self._comphet_rows(sql), self.scope)
+        # Not self._comphet_rows: its gnomAD pass records into self.stats,
+        # which would count variants only the tolerant gates let through.
+        candidates = drop_excluded(self._query(sql), self.scope)
+        if self.gnomad_max_af is not None:
+            candidates = _gnomad_filter(candidates, self.gnomad_max_af)
+        kept, _ = genes_in_scope(_comphet_genes(candidates), self.scope)
         shown = {
             (c, int(p), r, a)
             for e in kept.values()
