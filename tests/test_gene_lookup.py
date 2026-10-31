@@ -189,3 +189,13 @@ def test_db_trio_finds_genes_on_a_bare_contig_vcf(
     assert [g["gene"] for g in doc["models"]["comphet"]["genes"]] == ["G7"]
     dominant = doc["models"]["dominant"]["candidates"]
     assert {c["pos"]: c["genes"] for c in dominant} == {1_200: ["G7"], 1_800: ["G7"]}
+
+
+def test_db_gene_uses_the_same_alias_groups():
+    """storage.gene_query (db gene, the MCP variants_in_gene tool) takes its
+    spellings from storage.contigs: a chrX gene also matches chr23 and 23."""
+    from storage.gene_query import chrom_aliases as gene_query_aliases
+
+    assert gene_query_aliases("chrX") == ["chrX", "X", "chr23", "23"]
+    assert gene_query_aliases("chr17") == ["17", "chr17"]
+    assert set(gene_query_aliases("chrM")) >= {"chrM", "M", "MT"}

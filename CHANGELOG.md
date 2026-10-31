@@ -314,7 +314,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   list on every candidate and found no compound het. Every alias in
   `storage.contigs` (`7`/`chr7`, `X`/`chrX`/`23`/`chr23`, `MT`/`chrM`) now
   matches. This changes `db trio` output for such VCFs: candidates gain their
-  genes, and compound hets are found.
+  genes, and compound hets are found. `db gene` (and the MCP
+  `variants_in_gene` tool) takes the same alias groups, so a chrX gene also
+  matches a VCF that names the contig `chr23` or `23`; its `sql` text lists
+  them.
 - A database without a `pedigree` table, or one with no pedigree loaded, now
   says `no pedigree loaded` from `db trio` and `db families` (and gives no
   probands in the web UI) instead of failing in SQL. A pedigree row that
