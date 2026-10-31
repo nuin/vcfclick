@@ -316,8 +316,8 @@ part of a preset, nor is any file path. The gene symbols are resolved when the
 preset is used, against the annotation store of that machine: a list of 20 or
 fewer that loses a symbol is an error, so a panel written with retired symbols
 needs `vcfclick annotations load-hgnc` there. The fingerprint does not depend
-on the order or the case of the symbols, nor on `genes_label` or
-`regions_build` (relabelling a panel keeps its pins). Gene and region lists are not
+on the order or the case of the symbols, nor on `genes_label` (relabelling a
+panel keeps its pins); a change to `regions_build` changes it. Gene and region lists are not
 patient-specific: `preset export` keeps them. In a result, a list of more than
 500 entries is echoed as its count and hash.
 
@@ -407,7 +407,7 @@ The **fingerprint** is the first 12 hex digits of a SHA-256 over the
 `schema_version` and the `filters` in canonical form (keys sorted, model names
 sorted, gene and region lists sorted with symbols upper-cased, numbers as
 written by Python's `repr`); `meta`, the title, the description and the
-descriptive keys `genes_label` and `regions_build` are left out. The same filters always give the same fingerprint,
+purely descriptive `genes_label` are left out (`regions_build` is in). The same filters always give the same fingerprint,
 however the file was written, and a changed value always changes it. Every result
 produced with a preset carries its name, source, revision (built-ins), fingerprint
 and the resolved values, which is what makes a result reproducible. A built-in's

@@ -97,6 +97,11 @@ class FilterKey:
     # two are unioned. The parameter is in NEVER_PRESET (a preset stores the
     # list itself, never a path).
     file_option: tuple[str, str] | None = None
+    # Left out of a preset's fingerprint: a purely descriptive key (a gene
+    # list's label) that changes neither which rows a run keeps nor how its
+    # values are read. `regions_build` is NOT exempt: it decides how regions
+    # are checked, so a pin must notice a change to it.
+    fingerprint_exempt: bool = False
 
     @property
     def is_bool(self) -> bool:
@@ -480,6 +485,7 @@ register(
         _ALL,
         kind=META,
         widening=False,
+        fingerprint_exempt=True,
         help="A label for the gene list, such as the panel and its version "
         "(`PanelApp ID v4.2`). Descriptive only.",
     )
