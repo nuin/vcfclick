@@ -37,6 +37,7 @@ from cli.filter_options import (
     CategoryList,
     gate_options,
     is_explicit,
+    typed_list_values,
 )
 from cli.preset_schema import PresetError
 from cli.presets import ApplyPlan, Located, locate, plan_apply
@@ -199,8 +200,10 @@ def resolve_filters(
     explicit = {
         key.file_key: ctx.params[key.param]
         for key in fr.keys_for(command)
-        if is_explicit(ctx, key.param)
+        if is_explicit(ctx, key.param) and not key.is_list
     }
+    # a list typed as a flag, read from its file companion, or both (unioned)
+    explicit.update(typed_list_values(ctx, command))
     filters = state.plan.applicable if state else {}
     ignore = state.plan.ignored if state else ()
     resolved, overridden = fr.resolve_filters_from_values(

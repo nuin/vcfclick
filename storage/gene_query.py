@@ -37,12 +37,12 @@ class GeneNotFound(LookupError):
 
 
 def chrom_aliases(chrom: str) -> list[str]:
-    """chr17 <-> 17 (and chrM <-> MT) so either naming matches."""
-    bare = chrom[3:] if chrom.lower().startswith("chr") else chrom
-    names = {chrom, bare, f"chr{bare}"}
-    if bare in ("M", "MT"):
-        names |= {"chrM", "MT", "M"}
-    return sorted(names)
+    """Every spelling of the contig, so either naming matches: chr17 <-> 17,
+    and the whole X, Y and mitochondrial alias groups (chrX, X, chr23, 23; chrM,
+    M, MT, ...). The one definition is storage.contigs.chrom_aliases."""
+    from storage.contigs import chrom_aliases as aliases
+
+    return list(aliases(chrom))
 
 
 def gene_variants_sql(chroms: list[str], start: int, end: int, limit: int) -> str:

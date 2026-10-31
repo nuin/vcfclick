@@ -24,6 +24,29 @@ from cli.presets import ApplyPlan, Located
 _ALWAYS = ("min_gq", "min_dp", "min_ab", "max_ab", "max_af")
 
 
+def compact(key: str, value: Any) -> Any:
+    """A value as the echo shows it: a gene or region list above
+    cli.scope.ECHO_LIST_MAX entries as {count, sha256_12}, so a 20,000-gene
+    panel is not repeated in every result document."""
+    spec = fr.REGISTRY.get(key)
+    if spec is None or not spec.is_list or not isinstance(value, (list, tuple)):
+        return value
+    from cli.scope import compact_list
+
+    return compact_list(list(value), upper=spec.type == "genes")
+
+
+def _compact_overridden(overridden: Sequence[dict]) -> list[dict]:
+    return [
+        {
+            **o,
+            "preset": compact(o["key"], o["preset"]),
+            "flag": compact(o["key"], o["flag"]),
+        }
+        for o in overridden
+    ]
+
+
 def skipped_items(
     plan: ApplyPlan, command: str, *, skip_unavailable: bool
 ) -> list[dict]:
@@ -62,7 +85,7 @@ def resolved_block(
     only for a gate the effective-gate report judged."""
     out = {}
     for key, r in resolved.items():
-        entry: dict[str, Any] = {"value": r.value, "from": r.source}
+        entry: dict[str, Any] = {"value": compact(key, r.value), "from": r.source}
         if bound is not None and key in bound:
             entry["bound"] = bound[key]
         out[key] = entry
@@ -103,10 +126,12 @@ def preset_block(
         },
         "path": p.path.name if p.path is not None and p.source != "builtin" else None,
         "requested": {
-            k: v for k, v in p.filters.items() if not k.startswith(EXTENSION_PREFIX)
+            k: compact(k, v)
+            for k, v in p.filters.items()
+            if not k.startswith(EXTENSION_PREFIX)
         },
         "resolved": resolved_block(resolved, bound),
-        "overridden": list(overridden),
+        "overridden": _compact_overridden(overridden),
         "skipped": skipped_items(plan, command, skip_unavailable=skip_unavailable),
         "models_not_run": [{"model": m, "count": None} for m in models_not_run],
         "covers": p.builtin.covers if p.builtin else None,
@@ -152,6 +177,8 @@ def gates_line(
     screen = resolved.get("parent_alt_screen")  # trio only
     parts = []
     for key, r in resolved.items():
+        if fr.REGISTRY[key].is_list:
+            continue  # genes and regions have their own `scope:` line
         # a derived default (min_male_x_dp: half of min_dp) is a default too
         default = r.source in (fr.FROM_DEFAULT, fr.FROM_DERIVED)
         listed = key in _ALWAYS or not default or key in over

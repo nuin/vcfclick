@@ -80,6 +80,15 @@ CREATE TABLE IF NOT EXISTS gnomad_af (
     af_grpmax DOUBLE,                -- highest genetic-ancestry-group AF (popmax)
     PRIMARY KEY (chrom, pos, ref, alt)
 );
+
+-- Optional (`vcfclick annotations load-hgnc`): what else a gene is called.
+-- Each row maps one token to the current approved HGNC symbol, which is the
+-- gene_symbol of refseq_genes. Empty unless loaded.
+CREATE TABLE IF NOT EXISTS gene_aliases (
+    alias   VARCHAR NOT NULL,        -- the token, as HGNC lists it
+    kind    VARCHAR NOT NULL,        -- approved | previous | alias | hgnc_id | entrez
+    symbol  VARCHAR NOT NULL         -- the current approved symbol
+);
 """
 
 
@@ -134,33 +143,50 @@ def position_for_gene(symbol: str) -> GeneRange | None:
     """Translate a gene symbol to GRCh38 coordinates.
 
     Used by the LLM to convert questions like "calls in BRCA1" into a
-    range filter on the ClickHouse genotypes table.
+    range filter on the ClickHouse genotypes table. The match ignores case
+    (the GENCODE loader stores a symbol as HGNC spells it, so `C9orf72` is
+    stored with its lower-case letters); a symbol stored in exactly the
+    spelling asked for wins over one that differs only in case.
     """
     conn = get_connection()
-    row = conn.execute(
-        """
-        SELECT gene_symbol, chrom, start_pos, end_pos, strand
-        FROM refseq_genes
-        WHERE gene_symbol = ?
-        """,
-        [symbol.upper()],
-    ).fetchone()
+    try:
+        row = conn.execute(
+            """
+            SELECT gene_symbol, chrom, start_pos, end_pos, strand
+            FROM refseq_genes
+            WHERE upper(gene_symbol) = upper(?)
+            ORDER BY (gene_symbol = ?) DESC, gene_symbol
+            LIMIT 1
+            """,
+            [symbol, symbol],
+        ).fetchone()
+    finally:
+        conn.close()
     return GeneRange(*row) if row else None
 
 
 def gene_at(chrom: str, pos: int) -> list[GeneRange]:
     """All genes overlapping a single position. Multiple results possible
-    (overlapping transcripts, antisense genes)."""
+    (overlapping transcripts, antisense genes). `chrom` may be spelt as the
+    VCF spells it (`17`, `chr17`, `X`, `chr23`): every alias is matched
+    (storage.contigs.chrom_aliases)."""
+    from storage.contigs import chrom_aliases
+
+    names = list(chrom_aliases(chrom))
+    marks = ", ".join("?" for _ in names)
     conn = get_connection()
-    rows = conn.execute(
-        """
-        SELECT gene_symbol, chrom, start_pos, end_pos, strand
-        FROM refseq_genes
-        WHERE chrom = ? AND ? BETWEEN start_pos AND end_pos
-        ORDER BY start_pos
-        """,
-        [chrom, pos],
-    ).fetchall()
+    try:
+        rows = conn.execute(
+            f"""
+            SELECT gene_symbol, chrom, start_pos, end_pos, strand
+            FROM refseq_genes
+            WHERE chrom IN ({marks}) AND ? BETWEEN start_pos AND end_pos
+            ORDER BY start_pos
+            """,
+            [*names, pos],
+        ).fetchall()
+    finally:
+        conn.close()
     return [GeneRange(*r) for r in rows]
 
 
@@ -184,9 +210,16 @@ class GeneIndex:
         finally:
             if own:
                 conn.close()
+        # keyed by the canonical contig name (storage.contigs.canonical_chrom),
+        # so a VCF that says `17` or `X` finds the store's `chr17` and `chrX`
+        from storage.contigs import canonical_chrom
+
+        self._canonical = canonical_chrom
         self._genes: dict[str, list[GeneRange]] = {}
         for row in rows:
-            self._genes.setdefault(row[1], []).append(GeneRange(*row))
+            self._genes.setdefault(canonical_chrom(row[1]), []).append(GeneRange(*row))
+        for genes in self._genes.values():  # two spellings in one store: re-sort
+            genes.sort(key=lambda g: g.start_pos)
         # per chromosome: start of each gene, and the furthest end reached
         # by it or any gene before it (so a backwards scan can stop)
         self._starts = {c: [g.start_pos for g in gs] for c, gs in self._genes.items()}
@@ -199,7 +232,9 @@ class GeneIndex:
             self._reach[chrom] = reach
 
     def at(self, chrom: str, pos: int) -> list[GeneRange]:
-        """Same genes as `gene_at(chrom, pos)`, ordered by start."""
+        """Same genes as `gene_at(chrom, pos)`, ordered by start. `chrom` in
+        any spelling of the contig (`7`, `chr7`, `X`, `23`)."""
+        chrom = self._canonical(chrom)
         genes = self._genes.get(chrom)
         if not genes:
             return []
@@ -355,4 +390,105 @@ def gnomad_af_many(
     found: dict[tuple[str, int, str, str], GnomadAF] = {}
     for row in rows:
         found.setdefault((row[0], int(row[1]), row[2], row[3]), GnomadAF(*row))
+    return found
+
+
+# ───────────────────────────── gene resolution ─────────────────────────────
+
+# How a token found its gene, best first: a token that is a current symbol is
+# that gene even when it is also another gene's previous symbol.
+RESOLVED_BY: tuple[str, ...] = (
+    "symbol",
+    "ensembl",
+    "previous",
+    "alias",
+    "hgnc_id",
+    "entrez",
+)
+ALIAS_KINDS: tuple[str, ...] = ("previous", "alias", "hgnc_id", "entrez")
+
+
+def gene_token_key(token: str) -> str:
+    """A gene token as it is compared: upper case, an Ensembl gene id without
+    its version (`ENSG00000147894.16` is `ENSG00000147894`)."""
+    key = token.strip().upper()
+    if key.startswith("ENSG") and "." in key:
+        key = key.split(".", 1)[0]
+    return key
+
+
+def has_gene_aliases(conn: duckdb.DuckDBPyConnection) -> bool:
+    """Is the optional alias table (`annotations load-hgnc`) filled?"""
+    try:
+        row = conn.execute("SELECT 1 FROM gene_aliases LIMIT 1").fetchone()
+    except duckdb.Error:  # an older store without the table
+        return False
+    return row is not None
+
+
+def gene_count(conn: duckdb.DuckDBPyConnection) -> int:
+    try:
+        return int(conn.execute("SELECT count(*) FROM refseq_genes").fetchone()[0])
+    except duckdb.Error:
+        return 0
+
+
+def resolve_gene_tokens(
+    tokens: Iterable[str],
+    conn: duckdb.DuckDBPyConnection | None = None,
+) -> dict[str, list[tuple[str, GeneRange]]]:
+    """Every gene each token can mean, in one query on one connection:
+    {gene_token_key(token): [(resolved_by, GeneRange), ...]}, best match first
+    (RESOLVED_BY order), no entry for a token that matches nothing.
+
+    A token matches a current symbol without regard to case, or an Ensembl
+    gene id (the refseq_id column, version ignored), and, when `annotations
+    load-hgnc` has filled `gene_aliases`, a previous symbol, an alias, an HGNC
+    id (`HGNC:1234`) or an Entrez id. The caller decides what an ambiguous
+    token means (one previous symbol of two genes)."""
+    keys = list(dict.fromkeys(gene_token_key(t) for t in tokens if t.strip()))
+    if not keys:
+        return {}
+    own = conn is None
+    if conn is None:
+        conn = get_connection()
+    try:
+        import pyarrow as pa
+
+        name = "_vcfclick_gene_tokens"
+        cols = "g.gene_symbol, g.chrom, g.start_pos, g.end_pos, g.strand"
+        parts = [
+            f"SELECT t.tok, 'symbol' AS kind, {cols} FROM {name} t "
+            "JOIN refseq_genes g ON upper(g.gene_symbol) = t.tok",
+            f"SELECT t.tok, 'ensembl' AS kind, {cols} FROM {name} t "
+            "JOIN refseq_genes g ON upper(split_part(g.refseq_id, '.', 1)) = t.tok",
+        ]
+        if has_gene_aliases(conn):
+            # an approved HGNC symbol is that gene or nothing: when the gene
+            # store lacks it, it does not fall through to a previous symbol or
+            # an alias of another gene
+            parts.append(
+                f"SELECT t.tok, a.kind, {cols} FROM {name} t "
+                "JOIN gene_aliases a ON upper(a.alias) = t.tok "
+                "AND a.kind <> 'approved' "
+                "JOIN refseq_genes g ON upper(g.gene_symbol) = upper(a.symbol) "
+                "WHERE t.tok NOT IN (SELECT upper(alias) FROM gene_aliases "
+                "WHERE kind = 'approved')"
+            )
+        conn.register(name, pa.table({"tok": pa.array(keys, pa.string())}))
+        try:
+            rows = conn.execute(" UNION ALL ".join(parts)).fetchall()
+        finally:
+            conn.unregister(name)
+    finally:
+        if own:
+            conn.close()
+    rank = {k: i for i, k in enumerate(RESOLVED_BY)}
+    found: dict[str, list[tuple[str, GeneRange]]] = {}
+    for tok, kind, *gene in rows:
+        matches = found.setdefault(tok, [])
+        if all(g.gene_symbol != gene[0] or k != kind for k, g in matches):
+            matches.append((kind, GeneRange(*gene)))
+    for matches in found.values():
+        matches.sort(key=lambda m: (rank.get(m[0], len(rank)), m[1].gene_symbol))
     return found

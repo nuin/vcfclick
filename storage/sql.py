@@ -251,6 +251,19 @@ def in_intervals_sql(col: str, intervals) -> str:
     return "(" + " OR ".join(parts) + ")" if parts else "(1 = 0)"
 
 
+def int_div_sql(expr: str, divisor: int) -> str:
+    """Integer division of a non-negative integer expression by a constant:
+    `intDiv` on chDB, `//` on DuckDB."""
+    from storage.db import backend
+
+    d = int(divisor)
+    if d <= 0:
+        raise ValueError(f"divisor must be positive, got {divisor!r}")
+    if backend() == "duckdb":
+        return f"({_ident(expr)} // {d})"
+    return f"intDiv({_ident(expr)}, {d})"
+
+
 # `variants.info_AF` is Float32 on chDB and REAL on DuckDB. A site whose AF
 # is exactly the threshold (0.001) is stored as 0.0010000000474..., which is
 # greater than the double 0.001, so `info_AF <= 0.001` kept it on DuckDB and

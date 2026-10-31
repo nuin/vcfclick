@@ -183,7 +183,9 @@ def attach_gate_reports(
     )
     counted = {
         c.sample: c
-        for c in collect_sample_stats(sess, ingest_id, [(s, "") for s in unique])
+        for c in collect_sample_stats(
+            sess, ingest_id, [(s, "") for s in unique], scope=first.scope
+        )
     }
 
     def blocked_models(analysis: TrioAnalysis) -> list[tuple[str, str]]:
@@ -216,6 +218,7 @@ def attach_gate_reports(
             analysis.gates,
             filter_present=filter_present,
             x_guard=analysis.x_guard_sql(),
+            scope=analysis.scope,
         )
 
     def strict_check(analysis: TrioAnalysis) -> tuple[str, ...]:

@@ -499,6 +499,14 @@ def _canonical_value(key: str, value: Any) -> Any:
     if spec is not None and spec.type == "category":
         tokens = fr.category_tokens(value)
         return sorted(tokens) if tokens is not None else value
+    if spec is not None and spec.is_list:
+        # a gene list is the same list whatever the order or the case
+        tokens = fr.list_tokens(spec, value)
+        if tokens is None:
+            return value
+        if spec.type == "genes":
+            tokens = [t.upper() for t in tokens]
+        return sorted(tokens)
     if spec is not None and spec.type == "float" and isinstance(value, int):
         return float(value)
     if isinstance(value, float) and not math.isfinite(value):
@@ -506,15 +514,25 @@ def _canonical_value(key: str, value: Any) -> Any:
     return value
 
 
+def _fingerprint_exempt(key: str) -> bool:
+    """A purely descriptive key (FilterKey.fingerprint_exempt: `genes_label`)
+    filters nothing, so relabelling a panel keeps its fingerprint and every
+    NAME@FINGERPRINT pin on it. `regions_build` is fingerprinted."""
+    spec = fr.REGISTRY.get(key)
+    return spec is not None and spec.fingerprint_exempt
+
+
 def fingerprint(doc: dict) -> str:
     """First 12 hex of the sha256 of the canonical JSON of {schema_version,
-    filters}: keys sorted, category tokens sorted, floats by repr, extension
+    filters}: keys sorted, category tokens and lists sorted (gene symbols
+    upper-cased, so a panel's order and case do not matter), floats by repr; the
+    purely descriptive keys (FilterKey.fingerprint_exempt: `genes_label`), extension
     (x_) keys and `meta` left out. The same filters give the same fingerprint
     whatever the key order or the descriptive text."""
     filters = {
         k: _canonical_value(k, v)
         for k, v in doc.get("filters", {}).items()
-        if not k.startswith(EXTENSION_PREFIX)
+        if not k.startswith(EXTENSION_PREFIX) and not _fingerprint_exempt(k)
     }
     payload = {
         "schema_version": doc.get("schema_version", SCHEMA_VERSION),

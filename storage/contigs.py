@@ -64,3 +64,35 @@ def autosome_names() -> tuple[str, ...]:
     `1`..`22` then `chr1`..`chr22`."""
     bare = tuple(str(n) for n in range(1, 23))
     return bare + tuple(f"chr{n}" for n in bare)
+
+
+def canonical_chrom(chrom: str) -> str:
+    """The `chr`-prefixed GRCh38 name the annotation store uses for a contig,
+    whatever the VCF calls it: `17` and `chr17` are `chr17`; every X, Y and
+    mitochondrial alias above is `chrX`, `chrY` and `chrM`. A name that is none
+    of these (an alt or unplaced contig, a PAR label) is returned unchanged."""
+    if chrom in X_NAMES:
+        return "chrX"
+    if chrom in Y_NAMES:
+        return "chrY"
+    if chrom in MITO_NAMES:
+        return "chrM"
+    m = _AUTOSOME_RE.match(chrom)
+    return f"chr{m.group(1)}" if m else chrom
+
+
+def chrom_aliases(chrom: str) -> tuple[str, ...]:
+    """Every spelling of the contig `chrom` names, for `chrom IN (...)`: the
+    whole alias group for X, Y and the mitochondrion, `17` and `chr17` for an
+    autosome, the name alone otherwise. Ordered, so SQL built from it is
+    stable text."""
+    canonical = canonical_chrom(chrom)
+    if canonical == "chrX":
+        return X_NAMES
+    if canonical == "chrY":
+        return Y_NAMES
+    if canonical == "chrM":
+        return MITO_NAMES
+    if _AUTOSOME_RE.match(canonical):
+        return (canonical[3:], canonical)
+    return (chrom,)

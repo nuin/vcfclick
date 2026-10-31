@@ -188,6 +188,24 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   build rule, the X guard predicate and the X patterns.
 - `tests/fixtures/make_xlinked_vcf.py`: a 162-site GRCh38 chrX fixture (three
   families, haploid- and diploid-coded males) and five PEDs.
+- Gene and region scope for `db trio` (`docs/TRIO.md#genes-and-regions`):
+  `--genes SYMBOL[,...]` (repeatable) and `--gene-file FILE`, `--exclude-genes`
+  and `--exclude-gene-file`, `--gene-flank BP`, `--region chrN:FROM-TO`
+  (repeatable, 1-based inclusive), `--region-file BED` and `--exclude-region`.
+  Every model takes it, the X-linked one included. A gene list resolves in one
+  lookup: current symbols in any case and Ensembl ids, and with the new optional
+  `vcfclick annotations load-hgnc FILE` (the HGNC complete-set TSV, loaded into
+  a `gene_aliases` table of the annotation store) previous symbols, aliases,
+  HGNC ids and Entrez ids. A list of 20 tokens or fewer that loses one, or a
+  longer one that loses more than 5%, is an error unless
+  `--allow-unresolved-genes`. Compound het applies exclusions before its gene
+  grouping and inclusions after it, and flags a partner outside the scope
+  (`in_scope: false`) instead of dropping it. The JSON gains a `scope` object
+  and, with an include scope, `in_scope` on compound-het variants; the text a
+  `scope:` line. A run without a scope is unchanged, output and SQL. Presets
+  carry the same keys (`genes`, `genes_label`, `exclude_genes`, `gene_flank`,
+  `regions`, `exclude_regions`, `regions_build`); `preset save --gene-file`
+  embeds the symbols. No built-in preset changes.
 
 ### Changed
 
@@ -284,6 +302,22 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
+  `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
+  `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
+  the symbol it was asked for and matched the stored one exactly, but the
+  GENCODE loader stores a symbol as HGNC spells it. The match now ignores case
+  (an exact spelling wins), and the lookup closes the store connection it opens.
+- Gene lookups match a contig however the VCF spells it. `GeneIndex.at` and
+  `gene_at` needed the store's `chr17` spelling, so a VCF with bare contigs
+  (`1` to `22`, `X`, `MT`) got no genes: `db trio` showed an empty `genes`
+  list on every candidate and found no compound het. Every alias in
+  `storage.contigs` (`7`/`chr7`, `X`/`chrX`/`23`/`chr23`, `MT`/`chrM`) now
+  matches. This changes `db trio` output for such VCFs: candidates gain their
+  genes, and compound hets are found. `db gene` (and the MCP
+  `variants_in_gene` tool) takes the same alias groups, so a chrX gene also
+  matches a VCF that names the contig `chr23` or `23`; its `sql` text lists
+  them.
 - A database without a `pedigree` table, or one with no pedigree loaded, now
   says `no pedigree loaded` from `db trio` and `db families` (and gives no
   probands in the web UI) instead of failing in SQL. A pedigree row that

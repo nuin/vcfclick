@@ -103,6 +103,65 @@ is honest candidate filtering: it cannot distinguish true *trans* from
 two variants that happen to be on the same parental copy. The annotation
 store path can be overridden with `VCFCLICK_ANNOTATIONS_DB`.
 
+## Genes and regions
+
+`--genes`, `--region` and their exclusions limit every model of a run (the
+four classic models, compound het and X-linked) to a gene panel or a set of
+regions:
+
+```bash
+vcfclick annotations load                       # GENCODE gene coordinates, once
+vcfclick db trio fam1 --proband CHILD --genes C9orf72,C19orf12,ENSG00000111678
+vcfclick db trio fam1 --proband CHILD --gene-file id_panel.txt --gene-flank 500
+vcfclick db trio fam1 --proband CHILD --region chr7:117100000-117400000
+vcfclick db trio fam1 --proband CHILD --region-file capture.bed
+vcfclick db trio fam1 --proband CHILD --exclude-genes HLA-A --exclude-region chr6:28510120-33480577
+```
+
+**Gene tokens.** A current HGNC symbol in any case (`c9orf72` is `C9orf72`)
+or an Ensembl gene id (`ENSG00000147894`, version ignored). After the optional
+`vcfclick annotations load-hgnc hgnc_complete_set.txt` (the HGNC complete-set
+TSV you download from genenames.org), also a previous symbol, an alias, an
+HGNC id (`HGNC:28337`) or an Entrez id; a token that names two genes is not
+resolved. `--genes` takes a comma list and repeats; `--gene-file` reads one
+token per line (`#` starts a comment); typed together, the two are joined.
+
+**Unresolved genes are an error** for a list of 20 tokens or fewer with any
+miss, and for a longer list with more than 5% missing: a panel that quietly
+lost a gene is a narrower search than the one asked for. Below that, or with
+`--allow-unresolved-genes`, the run goes ahead with a `WARNING:` line on
+stdout and the tokens in `scope.genes.unresolved`. Without
+`vcfclick annotations load` a gene list is an error.
+
+**A gene is its GENCODE span**, start to end, introns and UTRs included, so a
+splice-region variant is inside it; a promoter is not, which is what
+`--gene-flank BP` is for. The annotation store is GRCh38 with one locus per
+symbol: a pseudo-autosomal gene is matched on chrX only (the run says so), and
+a database known to be GRCh37 (`--build GRCh37`) refuses a gene list. When the
+build cannot be told from the data, the run notes that it is not verified.
+
+**Regions** are `chrN:FROM-TO`, 1-based and inclusive, in either contig
+spelling (`chr7:` matches a VCF that says `7`); `--region-file` reads a BED
+(0-based half-open, converted). Genes and regions together: a variant inside
+either is in scope. `--exclude-genes` and `--exclude-region` take out what
+they name.
+
+**Compound het** applies exclusions before grouping by gene and inclusions
+after: a gene is kept when it is a listed gene or has at least one variant in
+a listed region, and each of its variants then carries `in_scope`, so a
+partner just outside a capture edge is shown (text: `(outside the scope)`),
+not lost. A variant inside a listed and an unlisted gene is reported under the
+listed one only.
+
+The scope goes into every model's SQL (exact up to 64 merged intervals, as a
+coarse bucket filter up to 500) and is re-applied in Python to every row, so
+no model can ignore it. With a preset, the effective-gate report judges the
+gates on the rows inside the scope only, exactly in every mode. The text output gains a
+`  scope: 3 genes; gene spans only ...` line under `trio:`; the JSON a
+`scope` object (see [Machine-readable output](#machine-readable-output)). A
+preset can carry `genes`, `genes_label`, `exclude_genes`, `gene_flank`,
+`regions`, `exclude_regions` and `regions_build` ([Presets](PRESETS.md#genes-and-regions)).
+
 ## Chromosome X
 
 A male has one X. On the non-PAR part of chrX (NPX) his call is haploid, and
@@ -719,6 +778,16 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   `population_filter` are `null`: not examined, which is not the same as
   bound). With none
   of them neither key is present. See [Presets](PRESETS.md#what-the-output-carries).
+- With genes or regions in effect (flags or a preset) the document has a
+  `scope` object: `genes` (`requested`, `resolved`, `genes`, `resolved_by`,
+  `unresolved`, `ambiguous`, `sha256_12`, `build`, `build_verified`,
+  `aliases_loaded`, `flank`, `label`, `excluded`), `exclude_genes` (the same
+  without the last three), `regions`, `exclude_regions`, `regions_build`,
+  `intervals`, `applied` (`sql`, `sql_buckets` or `python`), `note`,
+  `notes`, `comphet_genes_dropped_out_of_scope` and `n_outside` (compound-het
+  variants reported with `in_scope: false`). A list longer than 500 entries is
+  `{"count", "sha256_12"}`. With an include scope, every compound-het variant
+  (classic and X) carries `in_scope`. Without a scope neither is present.
 - With a preset or `--parent-alt-screen`, each `denovo` candidate also carries
   `parent_alt_reads`: `{"father": {"ref", "alt"}, "mother": {...}}`, the allele
   depths of the parents' stored 0/0 rows (`null` counts where the call has no AD).
@@ -742,7 +811,8 @@ missing or changes type. So:
   GIAB trios, text and JSON, on both backends; after removing the keys the test
   whitelists as new (`blocked_reason`, `gates.af_gate`, `trio.family_id`,
   `trio.kind`, `trio.siblings`, the top-level `families` of a no-`--proband`
-  list, the `preset` and `effective` objects of a run that uses a preset, and
+  list, the `preset` and `effective` objects of a run that uses a preset, the
+  `scope` object and `in_scope` of a run with genes or regions, and
   from step X `models.xlinked`, `x_guard`, `x_guard_excluded` and the four X
   gates) it must match byte for byte. A change that needs an old key to move has
   to say so in its commit and regenerate those goldens deliberately. The

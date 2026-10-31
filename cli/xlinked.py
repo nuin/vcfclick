@@ -266,13 +266,17 @@ def _pivot(trio, build: str) -> str:
     )
 
 
-def xlinked_sql(trio, gates, sex: str, build: str) -> str:
+def xlinked_sql(trio, gates, sex: str, build: str, *, scope=None) -> str:
     """The candidate rows of the X model for a proband of `sex`: one row per
     NPX site, (chrom, pos, ref, alt, p_gt, f_gt, m_gt, af, pattern).
+    `scope` (cli/scope.Scope) adds the run's gene / region predicate on the
+    pivot `t`; None leaves the text as it was.
 
     A pivot, not joins: on chDB a LEFT JOIN against the non-Nullable `gt`
     reads an absent parent as 0, a proven reference; `max(CASE ...)` is
     NULL on both backends (storage.sql.genotype_pivot_sql)."""
+    from cli.scope import scope_sql
+
     cap = gates.max_parent_alt_reads
     pats = patterns_for(sex)
     case = " ".join(f"WHEN {pattern_sql(p, cap)} THEN '{p.name}'" for p in pats)
@@ -281,6 +285,7 @@ def xlinked_sql(trio, gates, sex: str, build: str) -> str:
             "t.p_gt IS NOT NULL",
             "(" + " OR ".join(pattern_sql(p, cap) for p in pats) + ")",
             *gate_sql(sex, gates),
+            *([scoped] if (scoped := scope_sql("t", scope)) else []),
         ]
     )
     return (
@@ -318,18 +323,26 @@ def x_guard_sql(build: str, *, father: bool, proband_male: bool) -> str | None:
     return f"NOT ({where} AND ({' OR '.join(impossible)}))"
 
 
-def comphet_x_sql(trio, gates, build: str) -> str:
+def comphet_x_sql(trio, gates, build: str, *, scope=None) -> str:
     """The female compound-het candidates on NPX, (chrom, pos, ref, alt, af,
     origin): a proband het from a hemizygous-ALT father with a 0/0 mother, or
     from a carrier mother with a 0/0 father (a het father cannot be tagged
     paternal), under the X model's own gates (`gate_sql("female", ...)`): the
     hemizygous father at the male DP floor, the het-AB band on the proband and
     on a het mother, the X rarity cap. Grouped by gene in Python
-    (cli/trio_analysis._comphet_genes)."""
+    (cli/trio_analysis._comphet_genes). Only the exclusions of `scope` are in
+    the SQL: its inclusions act after the grouping."""
+    from cli.scope import scope_sql
+
     paternal = "t.f_gt = 2 AND t.m_gt = 0"
     maternal = "t.f_gt = 0 AND t.m_gt > 0"
+    scoped = scope_sql("t", scope, part="exclude")
     where = " AND ".join(
-        [f"t.p_gt = 1 AND (({paternal}) OR ({maternal}))", *gate_sql("female", gates)]
+        [
+            f"t.p_gt = 1 AND (({paternal}) OR ({maternal}))",
+            *gate_sql("female", gates),
+            *([scoped] if scoped else []),
+        ]
     )
     return (
         "SELECT t.chrom, t.pos, t.ref, t.alt, v.info_AF AS af, "

@@ -239,24 +239,47 @@ def _num(v: float | None) -> float | int | None:
     return int(v) if float(v).is_integer() else v
 
 
+def sample_stats_sql(
+    ingest_id: str, samples: Sequence[str], scope=None
+) -> tuple[str, bool]:
+    """(the statement of `collect_sample_stats`, trim): with a scope, only the
+    rows inside it count (cli/scope.stats_predicate); when the predicate is the
+    bucket superset the statement also groups by its edge-bucket site columns
+    (cli/scope.stats_predicate) and `trim` is True,
+    so the caller keeps the rows the scope contains."""
+    from cli.scope import stats_predicate
+    from storage import sql_quote_str
+
+    listed = ", ".join(sql_quote_str(s) for s in samples)
+    pred, site_cols = stats_predicate("genotypes", scope)
+    trim = site_cols is not None
+    site = f", {site_cols}" if trim else ""
+    sql = (
+        "SELECT sample_id, gt, dp, count(*), "
+        "sum(CASE WHEN gq IS NOT NULL THEN 1 ELSE 0 END), "
+        "sum(CASE WHEN ad_ref IS NOT NULL AND ad_alt IS NOT NULL THEN 1 ELSE 0 END)"
+        f"{site} FROM genotypes WHERE ingest_id = {sql_quote_str(ingest_id)} "
+        f"AND sample_id IN ({listed})"
+        + (f" AND {pred}" if pred else "")
+        + f" GROUP BY sample_id, gt, dp{site}"
+    )
+    return sql, trim
+
+
 def collect_sample_stats(
-    sess, ingest_id: str, samples: Sequence[tuple[str, str]]
+    sess, ingest_id: str, samples: Sequence[tuple[str, str]], scope=None
 ) -> list[SampleGateStats]:
     """For each (sample, role): row count, rows carrying GQ / DP / AD (in all and
     by genotype class), and the DP histogram (of all the rows, and of the
     non-reference ones). One statement over the samples' stored rows, however many
-    samples there are."""
-    from storage import sql_quote_str
-
-    listed = ", ".join(sql_quote_str(s) for s, _ in samples)
-    sql = (
-        "SELECT sample_id, gt, dp, count(*), "
-        "sum(CASE WHEN gq IS NOT NULL THEN 1 ELSE 0 END), "
-        "sum(CASE WHEN ad_ref IS NOT NULL AND ad_alt IS NOT NULL THEN 1 ELSE 0 END) "
-        f"FROM genotypes WHERE ingest_id = {sql_quote_str(ingest_id)} "
-        f"AND sample_id IN ({listed}) GROUP BY sample_id, gt, dp"
-    )
+    samples there are. With a scope (cli/scope.Scope), only the rows inside it,
+    exactly in every mode: these shares are what a gate falls back to."""
+    sql, trim = sample_stats_sql(ingest_id, [s for s, _ in samples], scope)
     data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    if trim:
+        from cli.scope import site_in_scope
+
+        data = [r[:6] for r in data if site_in_scope(scope, r[6], r[7])]
     acc = {s: [0, 0, 0, 0, {}, {}] for s, _ in samples}  # rows gq dp ad, hists
     by_class: dict[str, dict[str, list[int]]] = {s: {} for s, _ in samples}
     for sample, gt, dp, n, n_gq, n_ad in data:
@@ -330,6 +353,7 @@ def candidate_presence_sql(
     *,
     filter_present: bool = True,
     x_guard: str | None = None,
+    scope=None,
 ) -> str:
     """One grouped count over the join `trio_sql` runs for `model` (proband `g`,
     parents `f` and `m`, the model's genotype predicate and no quality gate): per
@@ -343,8 +367,17 @@ def candidate_presence_sql(
     clinician is shown. The gnomAD filter cannot be applied here: it runs in
     Python on the rows the model returns, so a field missing only on the sites
     gnomAD removes still counts in this pool (`strict_missing_dropped` is the
-    check after the run for that case)."""
+    check after the run for that case). `scope` (cli/scope.Scope) keeps the
+    pool to the run's genes and regions, exactly in every mode: a site outside
+    them is no candidate either. When the SQL predicate is the bucket superset
+    (cli/scope.stats_predicate) the count is also grouped by its edge-bucket site
+    columns (chrom, pos; or ("", 0) for a decided bucket), as its
+    last two columns, for `_candidate_stats` to trim."""
+    from cli.scope import stats_predicate
     from storage import count_expr, sql_quote_str
+
+    scope_sql, site_cols = stats_predicate("g", scope)
+    site = f", {site_cols}" if site_cols else ""
 
     cols = []
     for alias in ("g", "f", "m"):
@@ -370,19 +403,31 @@ def candidate_presence_sql(
     # the X guard (TrioAnalysis.x_guard_sql) removes the same rows here as in
     # the run, so the pool is the join trio_sql runs
     where = " AND ".join(
-        [MODEL_PREDICATES[model], *([x_guard] if x_guard else []), *site_gates]
+        [
+            MODEL_PREDICATES[model],
+            *([x_guard] if x_guard else []),
+            *site_gates,
+            *([scope_sql] if scope_sql else []),
+        ]
     )
     return (
-        f"SELECT g.gt, f.gt, m.gt, {count_expr()}, {', '.join(cols)} "
+        f"SELECT g.gt, f.gt, m.gt, {count_expr()}, {', '.join(cols)}{site} "
         f"FROM genotypes g {joins} "
         f"WHERE g.ingest_id = {sql_quote_str(trio.ingest_id)} "
         f"AND g.sample_id = {sql_quote_str(trio.proband)} "
-        f"AND {where} GROUP BY g.gt, f.gt, m.gt"
+        f"AND {where} GROUP BY g.gt, f.gt, m.gt{site}"
     )
 
 
-def _candidate_stats(model: str, data: Sequence[Sequence]) -> CandidateStats:
-    """A `CandidateStats` from the rows of `candidate_presence_sql`."""
+def _candidate_stats(
+    model: str, data: Sequence[Sequence], scope=None
+) -> CandidateStats:
+    """A `CandidateStats` from the rows of `candidate_presence_sql`; with
+    `scope`, rows grouped by site are first trimmed to the ones it contains."""
+    if scope is not None:
+        from cli.scope import site_in_scope
+
+        data = [r for r in data if len(r) < 15 or site_in_scope(scope, r[13], r[14])]
     tallies: dict[str, dict[str, list[int]]] = {role: {} for role in _ROLES}
     sites = 0
     for row in data:
@@ -415,6 +460,7 @@ def collect_candidate_stats(
     *,
     filter_present: bool = True,
     x_guard: str | None = None,
+    scope=None,
 ) -> dict[str, CandidateStats]:
     """For each of `models` that has a genotype predicate, what the rows at its
     candidate sites carry (`candidate_presence_sql`: the sites `gates` keep, when
@@ -432,11 +478,16 @@ def collect_candidate_stats(
             continue
         if predicate not in by_predicate:
             sql = candidate_presence_sql(
-                model, trio, gates, filter_present=filter_present, x_guard=x_guard
+                model,
+                trio,
+                gates,
+                filter_present=filter_present,
+                x_guard=x_guard,
+                scope=scope,
             )
             raw = sess.query(sql, "JSONCompact")
             data = json.loads(raw.bytes().decode())["data"]
-            by_predicate[predicate] = _candidate_stats(model, data)
+            by_predicate[predicate] = _candidate_stats(model, data, scope)
         out[model] = replace(by_predicate[predicate], model=model)
     return out
 
@@ -1434,3 +1485,28 @@ def refusal_message(errors: Sequence[dict], *, subject: str) -> str:
         "failing it."
     )
     return "\n".join(lines)
+
+
+def _effective_scope_sql(trio: Trio, gates: Gates, scope) -> list:
+    """The effective-gate report's statements under a scope (cli/scope.py
+    SCOPE_AWARE_BUILDERS): the candidate pool of each model and a sample's
+    stored rows. Both count rows, so they carry `stats_predicate` (part
+    `stats`): exact in every mode."""
+    out = [
+        (candidate_presence_sql(m, trio, gates, scope=scope), "stats", "g")
+        for m in dict.fromkeys(MODEL_PREDICATES)
+    ]
+    samples = [s for s in (trio.proband, trio.father, trio.mother) if s]
+    out.append(
+        (sample_stats_sql(trio.ingest_id, samples, scope)[0], "stats", "genotypes")
+    )
+    return out
+
+
+def _register_scope_builders() -> None:
+    from cli.scope import register_scope_builder
+
+    register_scope_builder("effective_gates", _effective_scope_sql)
+
+
+_register_scope_builders()

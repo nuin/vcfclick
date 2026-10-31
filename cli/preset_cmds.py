@@ -25,7 +25,7 @@ from click.core import ParameterSource
 
 from cli import filter_registry as fr
 from cli.builtin_presets import BUILTINS
-from cli.filter_options import gate_options
+from cli.filter_options import gate_options, typed_list_values
 from cli.main import cli
 from cli.preset_exchange import (
     EXPORT_SUFFIX,
@@ -286,11 +286,15 @@ def _typed_filters(ctx: click.Context, params: dict) -> dict:
     """The filters the user typed on `preset save`, by file key."""
     out = {}
     for key in fr.REGISTRY.values():
+        if key.is_list:
+            continue  # below: the flag and its file companion together
         if key.param and ctx.get_parameter_source(key.param) == (
             ParameterSource.COMMANDLINE
         ):
             out[key.file_key] = fr.normalise_value(key, params[key.param])
-    return out
+    # a gene list is embedded in the preset (reproducible, shareable): the
+    # symbols of --gene-file are copied in, never the path
+    return {**out, **typed_list_values(ctx, None)}
 
 
 def _read_text(source: str) -> str:

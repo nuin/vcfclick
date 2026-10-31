@@ -1,0 +1,135 @@
+{
+  "sites": {
+    "dn_c9": {
+      "chrom": "chr7",
+      "pos": 15000,
+      "model": "denovo"
+    },
+    "dn_before_edge": {
+      "chrom": "chr7",
+      "pos": 29999,
+      "model": "denovo"
+    },
+    "dn_at_start": {
+      "chrom": "chr7",
+      "pos": 30000,
+      "model": "denovo"
+    },
+    "dn_at_end": {
+      "chrom": "chr7",
+      "pos": 40000,
+      "model": "denovo"
+    },
+    "dn_after_edge": {
+      "chrom": "chr7",
+      "pos": 40001,
+      "model": "denovo"
+    },
+    "dn_other": {
+      "chrom": "chr7",
+      "pos": 75000,
+      "model": "denovo"
+    },
+    "dom_c9": {
+      "chrom": "chr7",
+      "pos": 18000,
+      "model": "dominant"
+    },
+    "ch_c19_pat": {
+      "chrom": "chr7",
+      "pos": 32000,
+      "model": "comphet"
+    },
+    "ch_ovl_pat": {
+      "chrom": "chr7",
+      "pos": 35500,
+      "model": "comphet"
+    },
+    "ch_ovl_mat": {
+      "chrom": "chr7",
+      "pos": 35800,
+      "model": "comphet"
+    },
+    "ch_c19_mat": {
+      "chrom": "chr7",
+      "pos": 38000,
+      "model": "comphet"
+    },
+    "rec_c12": {
+      "chrom": "chr7",
+      "pos": 52000,
+      "model": "recessive"
+    },
+    "ch_c12_pat": {
+      "chrom": "chr7",
+      "pos": 55000,
+      "model": "comphet"
+    },
+    "ch_c12_mat": {
+      "chrom": "chr7",
+      "pos": 59000,
+      "model": "comphet"
+    },
+    "ch_other_pat": {
+      "chrom": "chr7",
+      "pos": 72000,
+      "model": "comphet"
+    },
+    "ch_other_mat": {
+      "chrom": "chr7",
+      "pos": 78000,
+      "model": "comphet"
+    },
+    "dom_out": {
+      "chrom": "chr7",
+      "pos": 85000,
+      "model": "dominant"
+    },
+    "rec_out": {
+      "chrom": "chr7",
+      "pos": 90000,
+      "model": "recessive"
+    },
+    "x_in": {
+      "chrom": "chrX",
+      "pos": 50050000,
+      "model": "xlinked"
+    },
+    "x_out": {
+      "chrom": "chrX",
+      "pos": 60000000,
+      "model": "xlinked"
+    }
+  },
+  "panel": [
+    "C9orf72",
+    "C19orf12",
+    "C12orf57"
+  ],
+  "edge_region": "chr7:30000-40000",
+  "in_panel": {
+    "denovo": [
+      "dn_c9",
+      "dn_at_start",
+      "dn_at_end"
+    ],
+    "recessive": [
+      "rec_c12"
+    ],
+    "dominant": [
+      "dom_c9",
+      "ch_c19_pat",
+      "ch_ovl_pat",
+      "ch_ovl_mat",
+      "ch_c19_mat",
+      "ch_c12_pat",
+      "ch_c12_mat"
+    ],
+    "comphet": [
+      "C12orf57",
+      "C19orf12"
+    ],
+    "xlinked": []
+  },
+  "note": "hand-written; see make_scope_vcf.py for the reason of each site"
+}
