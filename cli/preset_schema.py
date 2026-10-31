@@ -514,16 +514,25 @@ def _canonical_value(key: str, value: Any) -> Any:
     return value
 
 
+def _is_meta(key: str) -> bool:
+    """A descriptive filter key (kind=meta: `genes_label`, `regions_build`)
+    filters nothing, so relabelling a panel keeps its fingerprint and every
+    NAME@FINGERPRINT pin on it."""
+    spec = fr.REGISTRY.get(key)
+    return spec is not None and spec.kind == fr.META
+
+
 def fingerprint(doc: dict) -> str:
     """First 12 hex of the sha256 of the canonical JSON of {schema_version,
     filters}: keys sorted, category tokens and lists sorted (gene symbols
-    upper-cased, so a panel's order and case do not matter), floats by repr, extension
+    upper-cased, so a panel's order and case do not matter), floats by repr; the
+    descriptive keys (`genes_label`, `regions_build`), extension
     (x_) keys and `meta` left out. The same filters give the same fingerprint
     whatever the key order or the descriptive text."""
     filters = {
         k: _canonical_value(k, v)
         for k, v in doc.get("filters", {}).items()
-        if not k.startswith(EXTENSION_PREFIX)
+        if not k.startswith(EXTENSION_PREFIX) and not _is_meta(k)
     }
     payload = {
         "schema_version": doc.get("schema_version", SCHEMA_VERSION),

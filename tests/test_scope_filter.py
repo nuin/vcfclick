@@ -439,6 +439,24 @@ def test_the_fingerprint_ignores_gene_order_and_case():
     )
 
 
+def test_relabelling_keeps_the_fingerprint_and_the_builtins_are_unchanged():
+    """genes_label and regions_build filter nothing: a relabelled panel keeps
+    its fingerprint (and every NAME@FINGERPRINT pin on it). Dropping them from
+    the fingerprint moves no built-in's."""
+    from cli.presets import builtin_preset
+    from tests.test_builtin_presets import PINNED
+
+    def fp(filters):
+        return fingerprint({"schema_version": 1, "filters": filters})
+
+    panel = {"genes": ["C9orf72"], "regions": ["chr7:1-2"]}
+    assert fp(panel) == fp({**panel, "genes_label": "v1"})
+    assert fp({**panel, "genes_label": "v1"}) == fp({**panel, "genes_label": "v2"})
+    assert fp(panel) == fp({**panel, "regions_build": "GRCh38"})
+    for name, (_, pinned) in PINNED.items():
+        assert builtin_preset(name).fingerprint == pinned, name
+
+
 def test_a_long_list_is_echoed_as_count_and_hash():
     from cli.preset_echo import compact
 
