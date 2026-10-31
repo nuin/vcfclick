@@ -287,6 +287,39 @@ the parents' read counts (`parent_alt_reads` in the JSON; `parents' alt reads:
 father 4/40, mother 0/38` in the text), so you see at a glance that a "de novo"
 has 4 alt reads of 40 in the father.
 
+## Genes and regions
+
+A preset can carry a gene panel and regions, the same keys as the `db trio`
+flags ([TRIO.md](TRIO.md#genes-and-regions)):
+
+| Key | Flag | Value |
+|---|---|---|
+| `genes` | `--genes`, `--gene-file` | gene symbols or ids, embedded in the file (never the path of a gene file) |
+| `genes_label` | `preset save --genes-label` | a label for the list, such as `PanelApp ID v4.2`; descriptive |
+| `exclude_genes` | `--exclude-genes`, `--exclude-gene-file` | genes to leave out |
+| `gene_flank` | `--gene-flank` | base pairs added to each side of every gene (default 0) |
+| `regions` | `--region`, `--region-file` | `chrN:FROM-TO`, 1-based inclusive |
+| `exclude_regions` | `--exclude-region` | regions to leave out |
+| `regions_build` | `preset save --regions-build` | `GRCh37` or `GRCh38`: the regions' assembly, checked against the database's when known |
+
+```bash
+vcfclick preset save id-panel --from-preset rare-recessive \
+    --gene-file ID_panel_v4.txt --genes-label "PanelApp ID v4.2" --gnomad-max-af 0.002
+vcfclick db trio fam1 --proband C1 --preset id-panel
+vcfclick db trio fam1 --proband C1 --preset id-panel --preset-ignore genes   # look outside the panel
+vcfclick db trio fam1 --proband C1 --preset id-panel --genes MECP2            # this gene instead
+```
+
+A typed `--genes` or `--gene-file` **replaces** the preset's list (and its
+label); typed together, the two are joined. `--allow-unresolved-genes` is never
+part of a preset, nor is any file path. The gene symbols are resolved when the
+preset is used, against the annotation store of that machine: a list of 20 or
+fewer that loses a symbol is an error, so a panel written with retired symbols
+needs `vcfclick annotations load-hgnc` there. The fingerprint does not depend
+on the order or the case of the symbols. Gene and region lists are not
+patient-specific: `preset export` keeps them. In a result, a list of more than
+500 entries is echoed as its count and hash.
+
 ## Making your own
 
 ```bash
@@ -447,9 +480,9 @@ a `--no-require-bound-gates` run did not apply it to), `pass_only`,
 
 ## Not in this release
 
-Gene lists and regions as a preset scope, the `--funnel` / `--near-miss`
-diagnostics and `preset diff`, the web and MCP preset endpoints, and the desktop
-picker come in later steps; none of them is needed to use or share a preset
+The `--funnel` / `--near-miss` diagnostics and `preset diff`, the web and MCP
+preset endpoints (and the web's gene and region scope), and the desktop picker
+come in later steps; none of them is needed to use or share a preset
 today. A duo (a proband with one parent declared) is not analysed by `db trio`
 yet, so there is no duo warning either; it comes with duo analysis. gnomAD
 homozygote counts are not stored, so there is no `gnomad_max_hom`.

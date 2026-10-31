@@ -12,7 +12,7 @@ Run `vcfclick --help` or `vcfclick <command> --help` any time for the same infor
 - **Family / trio analysis** — [`db ped`](#db-ped) · [`db families`](#db-families) · [`db trio`](#db-trio) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
 - **Filter presets** — [`preset list`](#preset-list) · [`preset show`](#preset-show) · [`preset save`](#preset-save) · [`preset set` / `unset` / `edit` / `rename` / `rm`](#preset-set-unset-edit-rename-rm) · [`preset export` / `import`](#preset-export-import) · [`preset validate`](#preset-validate) · [`preset path`](#preset-path)
 - **Benchmarking** — [`benchmark`](#benchmark) · [`benchmark-cohort`](#benchmark-cohort)
-- **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad)
+- **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad) · [`annotations load-hgnc`](#annotations-load-hgnc)
 - **Export & sharing** — [`db export`](#db-export) · [`db dump`](#db-dump) · [`db ingest-parquet`](#db-ingest-parquet) · [`db push`](#db-push) · [`db pull`](#db-pull)
 - **Interactive UIs** — [`tui`](#tui) · [`web`](#web)
 
@@ -787,6 +787,21 @@ older rule, every child with both parents declared. `--format json` adds
 
 `--preset NAME` applies a [filter preset](PRESETS.md): the built-in starting points `broad-first-pass`, `strict-denovo`, `rare-recessive` and `rare-dominant`, or your own. A flag typed next to it wins. A run with a preset says, on stdout, which of its gates cannot bind in this data (a `strict-denovo` run refuses instead). `--category` takes a comma list (`recessive,comphet`). `--strict-missing`, `--pass-only`, `--parent-alt-screen` and `--require-bound-gates` are opt-in gates; with none of them and no preset the output is what it always was. See [PRESETS.md](PRESETS.md).
 
+`--genes`, `--gene-file`, `--region`, `--region-file` and their `--exclude-*`
+twins limit a run to a gene panel or regions, for every model: gene symbols in
+any case (`C9orf72`), Ensembl ids and, after
+[`annotations load-hgnc`](#annotations-load-hgnc), previous symbols, HGNC and
+Entrez ids. A short list that loses a gene is an error
+(`--allow-unresolved-genes` runs anyway). See
+[TRIO.md](TRIO.md#genes-and-regions).
+
+```bash
+vcfclick db trio fam1 --proband C1 --genes C9orf72,C19orf12,ENSG00000111678
+vcfclick db trio fam1 --proband C1 --gene-file id_panel.txt --gene-flank 500
+vcfclick db trio fam1 --proband C1 --region chr7:117100000-117400000
+vcfclick db trio fam1 --proband C1 --exclude-region chr6:28510120-33480577
+```
+
 `--format json` reports, for every model, `blocked` and `blocked_reason`
 (`null`, or `needs_keep_reference` / `needs_genes`), and under `gates` the
 `af_gate` outcome (`applied`, `cohort_derived_suspected`,
@@ -895,6 +910,42 @@ Options:
   --max-parent-alt-reads INTEGER  xlinked de novo: most alt reads a parent's
                                   stored 0/0 may carry (a missing allele depth
                                   passes).  [default: 1]
+  --genes SYMBOL[,SYMBOL...]      Only variants inside these genes: symbols
+                                  (any case), Ensembl gene ids (ENSG...) and,
+                                  after `vcfclick annotations load-hgnc`,
+                                  previous symbols, HGNC ids (HGNC:1234) and
+                                  Entrez ids. Comma list, repeatable. A gene
+                                  is its whole span (introns and UTRs);
+                                  promoters need --gene-flank. Needs `vcfclick
+                                  annotations load`. --gene-file FILE reads
+                                  one per line (# comments); typed with
+                                  --genes, the two are joined.
+  --gene-file FILE                Read --genes values from a file (see
+                                  --genes).
+  --exclude-genes SYMBOL[,SYMBOL...]
+                                  Leave out variants inside these genes (same
+                                  tokens as --genes). --exclude-gene-file FILE
+                                  reads one per line.
+  --exclude-gene-file FILE        Read --exclude-genes values from a file (see
+                                  --exclude-genes).
+  --gene-flank INTEGER            Widen every gene of --genes and --exclude-
+                                  genes by this many base pairs on each side
+                                  (promoters, upstream elements).  [default:
+                                  0]
+  --region REGION                 Only variants inside this region, chrN:FROM-
+                                  TO, 1-based and inclusive (repeatable). With
+                                  --genes, a variant in either is kept.
+                                  --region-file BED reads 0-based half-open
+                                  BED intervals.
+  --region-file BED               Read --region values from a file (see
+                                  --region).
+  --exclude-region REGION         Leave out variants inside this region,
+                                  chrN:FROM-TO (repeatable).
+  --allow-unresolved-genes        Run even when tokens of --genes / --exclude-
+                                  genes resolve to no gene (by default a list
+                                  of 20 or fewer may miss none, a longer one
+                                  at most 5%); they are left out of the scope
+                                  and reported.
   --build [auto|GRCh37|GRCh38]    Assembly of chrX, for its non-PAR region
                                   (xlinked and the X guard). auto: GRCh38 when
                                   a chrX position exceeds the GRCh37 chrX
@@ -1100,7 +1151,7 @@ Options:
   --title TEXT                    A short title.
   --description TEXT              What the preset is for.
   --force                         Replace a preset of that name.
-  --category [denovo|recessive|dominant|comphet|all]
+  --category [denovo|recessive|dominant|comphet|xlinked|all]
                                   Inheritance model: a name, a comma list
                                   (recessive,comphet) or 'all'. 'all' prints
                                   per-model candidate counts.
@@ -1156,6 +1207,60 @@ Options:
                                   effect. --strict-missing implies it for the
                                   GQ, DP and AD gates; --no-require-bound-
                                   gates overrides both for this run.
+  --min-male-x-dp INTEGER         xlinked: minimum DP of a hemizygous call (a
+                                  male proband, and the father of a daughter)
+                                  on non-PAR chrX. Default: half of --min-dp,
+                                  rounded down (one X copy gives half the
+                                  reads).
+  --max-af-x FLOAT                xlinked: rarity cap on non-PAR chrX; the
+                                  model uses the lower of this and --max-af. A
+                                  hemizygous male is affected at the allele
+                                  frequency q, not q squared, so X needs a
+                                  stricter ceiling.
+  --min-hemi-ab FLOAT             xlinked: lowest alt fraction (alt reads /
+                                  all reads) of a male proband's hemizygous
+                                  ALT call. A call without allele depths
+                                  passes.
+  --max-parent-alt-reads INTEGER  xlinked de novo: most alt reads a parent's
+                                  stored 0/0 may carry (a missing allele depth
+                                  passes).
+  --genes SYMBOL[,SYMBOL...]      Only variants inside these genes: symbols
+                                  (any case), Ensembl gene ids (ENSG...) and,
+                                  after `vcfclick annotations load-hgnc`,
+                                  previous symbols, HGNC ids (HGNC:1234) and
+                                  Entrez ids. Comma list, repeatable. A gene
+                                  is its whole span (introns and UTRs);
+                                  promoters need --gene-flank. Needs `vcfclick
+                                  annotations load`. --gene-file FILE reads
+                                  one per line (# comments); typed with
+                                  --genes, the two are joined.
+  --gene-file FILE                Read --genes values from a file (see
+                                  --genes).
+  --genes-label TEXT              A label for the gene list, such as the panel
+                                  and its version (`PanelApp ID v4.2`).
+                                  Descriptive only.
+  --exclude-genes SYMBOL[,SYMBOL...]
+                                  Leave out variants inside these genes (same
+                                  tokens as --genes). --exclude-gene-file FILE
+                                  reads one per line.
+  --exclude-gene-file FILE        Read --exclude-genes values from a file (see
+                                  --exclude-genes).
+  --gene-flank INTEGER            Widen every gene of --genes and --exclude-
+                                  genes by this many base pairs on each side
+                                  (promoters, upstream elements).
+  --region REGION                 Only variants inside this region, chrN:FROM-
+                                  TO, 1-based and inclusive (repeatable). With
+                                  --genes, a variant in either is kept.
+                                  --region-file BED reads 0-based half-open
+                                  BED intervals.
+  --region-file BED               Read --region values from a file (see
+                                  --region).
+  --exclude-region REGION         Leave out variants inside this region,
+                                  chrN:FROM-TO (repeatable).
+  --regions-build [GRCh37|GRCh38]
+                                  The assembly the regions are written in
+                                  (GRCh37 or GRCh38), checked against the
+                                  database's build when it is known.
   --help                          Show this message and exit.
 ```
 
@@ -1537,6 +1642,38 @@ Options:
   --replace  Truncate gnomad_af before loading (default: append, so several
              per-chromosome slices can be loaded incrementally).
   --help     Show this message and exit.
+```
+
+</details>
+
+### annotations load-hgnc
+
+Optional: previous symbols, aliases, HGNC ids and Entrez ids, so a gene list
+written with retired symbols resolves (`db trio --genes`). Pass the HGNC
+complete-set TSV you downloaded from genenames.org; nothing is fetched. Without
+it, current symbols (any case) and Ensembl ids resolve.
+
+```bash
+vcfclick annotations load-hgnc hgnc_complete_set.txt
+```
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick annotations load-hgnc [OPTIONS] TSV
+
+  Load HGNC previous symbols, aliases, HGNC ids and Entrez ids.
+
+  Optional. Pass the HGNC complete-set TSV (hgnc_complete_set.txt from
+  genenames.org; nothing is downloaded). Without it, a `db trio --genes` list
+  resolves current symbols (any case) and Ensembl gene ids only; with it, a
+  retired symbol, an alias, `HGNC:1234` or an Entrez id resolves to the
+  current symbol. Needs `vcfclick annotations load` for the coordinates.
+
+Options:
+  --keep-existing  Don't truncate gene_aliases before loading (default:
+                   replace).
+  --help           Show this message and exit.
 ```
 
 </details>

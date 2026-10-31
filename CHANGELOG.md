@@ -188,6 +188,24 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   build rule, the X guard predicate and the X patterns.
 - `tests/fixtures/make_xlinked_vcf.py`: a 162-site GRCh38 chrX fixture (three
   families, haploid- and diploid-coded males) and five PEDs.
+- Gene and region scope for `db trio` (`docs/TRIO.md#genes-and-regions`):
+  `--genes SYMBOL[,...]` (repeatable) and `--gene-file FILE`, `--exclude-genes`
+  and `--exclude-gene-file`, `--gene-flank BP`, `--region chrN:FROM-TO`
+  (repeatable, 1-based inclusive), `--region-file BED` and `--exclude-region`.
+  Every model takes it, the X-linked one included. A gene list resolves in one
+  lookup: current symbols in any case and Ensembl ids, and with the new optional
+  `vcfclick annotations load-hgnc FILE` (the HGNC complete-set TSV, loaded into
+  a `gene_aliases` table of the annotation store) previous symbols, aliases,
+  HGNC ids and Entrez ids. A list of 20 tokens or fewer that loses one, or a
+  longer one that loses more than 5%, is an error unless
+  `--allow-unresolved-genes`. Compound het applies exclusions before its gene
+  grouping and inclusions after it, and flags a partner outside the scope
+  (`in_scope: false`) instead of dropping it. The JSON gains a `scope` object
+  and, with an include scope, `in_scope` on compound-het variants; the text a
+  `scope:` line. A run without a scope is unchanged, output and SQL. Presets
+  carry the same keys (`genes`, `genes_label`, `exclude_genes`, `gene_flank`,
+  `regions`, `exclude_regions`, `regions_build`); `preset save --gene-file`
+  embeds the symbols. No built-in preset changes.
 
 ### Changed
 
