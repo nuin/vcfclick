@@ -97,6 +97,10 @@ HGNC_ROWS = [
      "", "C10|SHARED1", "113246", "ENSG00000111678"),
     ("HGNC:99999", "WITHDRAWN1", "a withdrawn entry", "Entry Withdrawn",
      "C9orf72", "", "", ""),
+    # approved in HGNC, absent from the gene store, and also listed as a
+    # previous symbol of C19orf12 above: it must not resolve to C19orf12
+    ("HGNC:90001", "SPG43", "an approved gene the store lacks", "Approved",
+     "", "", "", ""),
 ]  # fmt: skip
 
 PANEL = ["C9orf72", "C19orf12", "C12orf57"]

@@ -43,7 +43,8 @@ def _values(cell: str | None) -> list[str]:
 
 
 def iter_aliases(path: Path):
-    """Yield (alias, kind, symbol) for every approved gene in the TSV."""
+    """Yield (alias, kind, symbol) for every approved gene in the TSV, the
+    approved symbol itself first (kind `approved`)."""
     opener = gzip.open if path.suffix == ".gz" else open
     with opener(path, "rt", encoding="utf-8", newline="") as fh:
         reader = csv.DictReader(fh, delimiter="\t")
@@ -56,6 +57,9 @@ def iter_aliases(path: Path):
             status = row.get("status")
             if status is not None and status.strip() != "Approved":
                 continue
+            # the approved symbol itself: a token that is one never resolves
+            # through another gene's previous symbol or alias
+            yield symbol, "approved", symbol
             for column, kind in _ID_COLUMNS.items():
                 value = (row.get(column) or "").strip()
                 if value:

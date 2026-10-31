@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS gnomad_af (
 -- gene_symbol of refseq_genes. Empty unless loaded.
 CREATE TABLE IF NOT EXISTS gene_aliases (
     alias   VARCHAR NOT NULL,        -- the token, as HGNC lists it
-    kind    VARCHAR NOT NULL,        -- previous | alias | hgnc_id | entrez
+    kind    VARCHAR NOT NULL,        -- approved | previous | alias | hgnc_id | entrez
     symbol  VARCHAR NOT NULL         -- the current approved symbol
 );
 """
@@ -464,10 +464,16 @@ def resolve_gene_tokens(
             "JOIN refseq_genes g ON upper(split_part(g.refseq_id, '.', 1)) = t.tok",
         ]
         if has_gene_aliases(conn):
+            # an approved HGNC symbol is that gene or nothing: when the gene
+            # store lacks it, it does not fall through to a previous symbol or
+            # an alias of another gene
             parts.append(
                 f"SELECT t.tok, a.kind, {cols} FROM {name} t "
                 "JOIN gene_aliases a ON upper(a.alias) = t.tok "
-                "JOIN refseq_genes g ON upper(g.gene_symbol) = upper(a.symbol)"
+                "AND a.kind <> 'approved' "
+                "JOIN refseq_genes g ON upper(g.gene_symbol) = upper(a.symbol) "
+                "WHERE t.tok NOT IN (SELECT upper(alias) FROM gene_aliases "
+                "WHERE kind = 'approved')"
             )
         conn.register(name, pa.table({"tok": pa.array(keys, pa.string())}))
         try:

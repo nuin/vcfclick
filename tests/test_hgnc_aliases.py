@@ -41,7 +41,9 @@ def test_loader_reads_approved_rows_only(genes_loaded):
     from annotations.loaders.hgnc_aliases import load
 
     counts = load(HGNC)
-    assert counts == {"hgnc_id": 3, "entrez": 3, "previous": 3, "alias": 5}
+    assert counts == {
+        "approved": 4, "hgnc_id": 4, "entrez": 3, "previous": 3, "alias": 5
+    }  # fmt: skip
     conn = get_connection()
     symbols = {
         r[0]
@@ -143,10 +145,20 @@ def test_load_hgnc_cli(genes_loaded):
 
     r = CliRunner().invoke(cli, ["annotations", "load-hgnc", str(HGNC)])
     assert r.exit_code == 0, r.output
-    assert "loaded   14 gene aliases" in r.output
+    assert "loaded   19 gene aliases" in r.output
 
 
 def test_par_gene_keeps_the_first_copy(genes_loaded):
     found = _resolve(["XG"])
     [(kind, gene)] = found["XG"]
     assert (kind, gene.chrom) == ("symbol", "chrX")
+
+
+def test_an_approved_symbol_the_store_lacks_does_not_resolve_as_previous(genes_loaded):
+    """SPG43 is approved in the HGNC extract and absent from the gene store; it
+    is also listed as a previous symbol of C19orf12. It stays unresolved."""
+    from annotations.loaders.hgnc_aliases import load
+
+    load(HGNC)
+    assert _resolve(["SPG43"]) == {}
+    assert _symbols(_resolve(["NBIA4"]), "NBIA4") == [("previous", "C19orf12")]
