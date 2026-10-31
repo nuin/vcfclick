@@ -90,6 +90,15 @@ class TrioOptions:
     max_af_x: float
     min_hemi_ab: float
     max_parent_alt_reads: int
+    genes: tuple[str, ...]
+    gene_file: str | None
+    exclude_genes: tuple[str, ...]
+    exclude_gene_file: str | None
+    gene_flank: int
+    region: tuple[str, ...]
+    region_file: str | None
+    exclude_region: tuple[str, ...]
+    allow_unresolved_genes: bool
     build: str
     x_guard: bool
     out_format: str
@@ -142,6 +151,13 @@ class TrioOptions:
     "children of their own (the rule before probands were defined).",
 )
 @gate_options("trio")
+@click.option(
+    "--allow-unresolved-genes",
+    is_flag=True,
+    help="Run even when tokens of --genes / --exclude-genes resolve to no gene "
+    "(by default a list of 20 or fewer may miss none, a longer one at most 5%); "
+    "they are left out of the scope and reported.",
+)
 @click.option(
     "--build",
     type=click.Choice(BUILD_CHOICES),
@@ -232,6 +248,7 @@ def db_trio(options: TrioOptions) -> None:
     if af_message:
         click.echo(f"note: {af_message}", err=True)
     gates = options.gates._replace(af_gate=af_gate)
+    scope = _build_scope(ctx, options, sess, ingest_id)
     analyses = [
         TrioAnalysis(
             session=sess,
@@ -242,6 +259,7 @@ def db_trio(options: TrioOptions) -> None:
             siblings=p.siblings,
             build=options.build,
             x_guard=options.x_guard,
+            scope=scope,
         )
         for p in picks
     ]
@@ -274,6 +292,9 @@ def db_trio(options: TrioOptions) -> None:
             resolved=resolved,
             overridden=overridden,
         )
+    if scope is not None:
+        for analysis in analyses:
+            _attach_scope(analysis, scope)
     if options.out_format == "json":
         docs = [_trio_json(a, options.category, options.limit) for a in analyses]
         if options.proband is not None:
@@ -292,3 +313,64 @@ def db_trio(options: TrioOptions) -> None:
         if several:
             click.echo(f"family: {pick.family_id}")
         trio_text(analysis, options.category)
+
+
+def _build_scope(ctx: click.Context, options: TrioOptions, sess, ingest_id: str):
+    """The run's cli.scope.Scope from the resolved scope values (flag > preset >
+    default), or None. Gene lists are resolved here, once for every trio; a
+    refusal (unresolved genes, no gene table, a GRCh37 database) is a
+    ClickException."""
+    from cli import filter_registry as fr
+    from cli.scope import SCOPE_KEYS, ScopeError, ScopeRequest, build_scope
+
+    state = preset_state(ctx)
+    resolved, _ = resolve_filters(ctx, "trio", state)
+    values = {k: resolved[k].value for k in SCOPE_KEYS if k in resolved}
+    if state is not None:
+        # the descriptive companions follow the list they describe: a typed
+        # --genes replaces the preset's list, and its label with it
+        filters = state.located.preset.filters
+        for meta, of in (("genes_label", "genes"), ("regions_build", "regions")):
+            if meta in filters and resolved[of].source == fr.FROM_PRESET:
+                values[meta] = filters[meta]
+    try:
+        request = ScopeRequest.from_values(
+            values, allow_unresolved=options.allow_unresolved_genes
+        )
+        if not request.any:
+            return None
+        needs_build = request.genes or request.exclude_genes or request.regions_build
+        build = _database_build(options, sess, ingest_id) if needs_build else None
+        scope = build_scope(request, build=build)
+    except ScopeError as e:
+        raise click.ClickException(str(e)) from None
+    for note in scope.notes:
+        click.echo(f"note: {note}", err=True)
+    return scope
+
+
+def _database_build(options: TrioOptions, sess, ingest_id: str) -> str:
+    """GRCh37 / GRCh38 when --build says so or the chrX data proves it, else
+    `unknown` (cli/xchrom.resolve_build)."""
+    from cli.xchrom import BUILDS, resolve_build
+    from cli.xlinked import _max_x_pos
+
+    if options.build in BUILDS:
+        return options.build
+    build, _, _ = resolve_build(options.build, _max_x_pos(sess, ingest_id))
+    return build
+
+
+def _attach_scope(analysis: TrioAnalysis, scope) -> None:
+    """The scope's text lines under the run's header, and its warnings in the
+    `effective` object when the run has one."""
+    from cli.scope import text_lines
+
+    stats = analysis.stats
+    stats["text_header"] = [*stats.get("text_header", ()), *text_lines(scope)]
+    effective = stats.get("effective_block")
+    if effective is not None:
+        have = {w["message"] for w in effective["warnings"]}
+        effective["warnings"].extend(
+            w for w in scope.warnings if w["message"] not in have
+        )

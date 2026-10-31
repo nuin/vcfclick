@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import difflib
 import math
+import re
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -38,6 +39,16 @@ DEFAULT_MAX_AF = 0.01
 
 VALUE = "value"  # a filter the command applies, one Click parameter
 META = "meta"  # a descriptive companion (a gene-list label): no parameter
+
+# Value types whose value is a list of tokens (gene symbols or ids, regions).
+LIST_TYPES: tuple[str, ...] = ("genes", "regions")
+# Caps on a list in a preset (and on what a command line or a file may give).
+MAX_GENES = 20_000
+MAX_REGIONS = 5_000
+GENE_TOKEN_RE = re.compile(r"^[A-Za-z0-9._@:-]{1,40}$")
+# 1-based inclusive `chr7:117100000-117400000` (or `7:...`).
+REGION_RE = re.compile(r"^(?:chr)?([0-9]+|X|Y|M|MT):([0-9]+)-([0-9]+)$")
+MAX_TEXT = 200  # a META text value (a gene-list label)
 
 
 class _Derived:
@@ -76,11 +87,24 @@ class FilterKey:
     # apply it says so loudly.
     widening: bool = True
     help: str = ""
-    choices: Callable[[], tuple[str, ...]] | None = None  # category tokens
+    choices: Callable[[], tuple[str, ...]] | None = None  # category / text tokens
+    # A list key (`genes`, `regions`): the flag repeats, and a list typed on
+    # the command line REPLACES the preset's list.
+    multiple: bool = False
+    # A command-line-only companion that reads the list from a file
+    # (`--gene-file` for `genes`), as (flag, Click parameter). Its tokens are
+    # merged into the key before resolution: typed together with the flag, the
+    # two are unioned. The parameter is in NEVER_PRESET (a preset stores the
+    # list itself, never a path).
+    file_option: tuple[str, str] | None = None
 
     @property
     def is_bool(self) -> bool:
         return self.type == "bool"
+
+    @property
+    def is_list(self) -> bool:
+        return self.type in LIST_TYPES
 
 
 REGISTRY: dict[str, FilterKey] = {}
@@ -150,7 +174,12 @@ NEVER_PRESET: dict[str, str] = {
         _OUTPUT,
     ),
     **dict.fromkeys(("build", "fasta", "hpo_file", "curated_genes"), _ENVIRONMENT),
-    **dict.fromkeys(("parentage", "x_guard"), _SAFETY),
+    **dict.fromkeys(("parentage", "x_guard", "allow_unresolved_genes"), _SAFETY),
+    **dict.fromkeys(
+        ("gene_file", "exclude_gene_file", "region_file"),
+        "a file read on the command line; a preset stores the list itself "
+        "(genes, exclude_genes, regions), never a path",
+    ),
     **dict.fromkeys(
         (
             "preset",
@@ -416,6 +445,122 @@ register(
     )
 )
 
+# ───────────────────────────── the keys of Pr-b ─────────────────────────────
+# The scope: which genes and regions a run looks at (cli/scope.py).
+
+_BUILDS = ("GRCh37", "GRCh38")
+
+register(
+    FilterKey(
+        "genes",
+        "genes",
+        "--genes",
+        "genes",
+        (),
+        "Pr-b",
+        _ALL,
+        multiple=True,
+        file_option=("--gene-file", "gene_file"),
+        help="Only variants inside these genes: symbols (any case), Ensembl gene "
+        "ids (ENSG...) and, after `vcfclick annotations load-hgnc`, previous "
+        "symbols, HGNC ids (HGNC:1234) and Entrez ids. Comma list, repeatable. "
+        "A gene is its whole span (introns and UTRs); promoters need "
+        "--gene-flank. Needs `vcfclick annotations load`. --gene-file FILE reads "
+        "one per line (# comments); typed with --genes, the two are joined.",
+    )
+)
+register(
+    FilterKey(
+        "genes_label",
+        "genes_label",
+        "--genes-label",
+        "text",
+        None,
+        "Pr-b",
+        _ALL,
+        kind=META,
+        widening=False,
+        help="A label for the gene list, such as the panel and its version "
+        "(`PanelApp ID v4.2`). Descriptive only.",
+    )
+)
+register(
+    FilterKey(
+        "exclude_genes",
+        "exclude_genes",
+        "--exclude-genes",
+        "genes",
+        (),
+        "Pr-b",
+        _ALL,
+        multiple=True,
+        file_option=("--exclude-gene-file", "exclude_gene_file"),
+        help="Leave out variants inside these genes (same tokens as --genes). "
+        "--exclude-gene-file FILE reads one per line.",
+    )
+)
+register(
+    FilterKey(
+        "gene_flank",
+        "gene_flank",
+        "--gene-flank",
+        "int",
+        0,
+        "Pr-b",
+        _ALL,
+        lo=0,
+        hi=1_000_000,
+        widening=False,
+        help="Widen every gene of --genes and --exclude-genes by this many base "
+        "pairs on each side (promoters, upstream elements).",
+    )
+)
+register(
+    FilterKey(
+        "regions",
+        "region",
+        "--region",
+        "regions",
+        (),
+        "Pr-b",
+        _ALL,
+        multiple=True,
+        file_option=("--region-file", "region_file"),
+        help="Only variants inside this region, chrN:FROM-TO, 1-based and "
+        "inclusive (repeatable). With --genes, a variant in either is kept. "
+        "--region-file BED reads 0-based half-open BED intervals.",
+    )
+)
+register(
+    FilterKey(
+        "exclude_regions",
+        "exclude_region",
+        "--exclude-region",
+        "regions",
+        (),
+        "Pr-b",
+        _ALL,
+        multiple=True,
+        help="Leave out variants inside this region, chrN:FROM-TO (repeatable).",
+    )
+)
+register(
+    FilterKey(
+        "regions_build",
+        "regions_build",
+        "--regions-build",
+        "text",
+        None,
+        "Pr-b",
+        _ALL,
+        kind=META,
+        widening=False,
+        choices=lambda: _BUILDS,
+        help="The assembly the regions are written in (GRCh37 or GRCh38), "
+        "checked against the database's build when it is known.",
+    )
+)
+
 DEFAULTS: dict[str, Any] = {
     k.file_key: k.default for k in REGISTRY.values() if k.default is not DERIVED
 }
@@ -489,6 +634,17 @@ def check_value(key: FilterKey, value: Any) -> tuple[Any, str | None]:
                 + _near(bad[0], allowed)
             )
         return tokens, None
+    if key.type in LIST_TYPES:
+        return check_list(key, value)
+    if key.type == "text":
+        if not isinstance(value, str) or not value.strip():
+            return None, "must be text"
+        if len(value) > MAX_TEXT:
+            return None, f"must be at most {MAX_TEXT} characters"
+        allowed = key.choices() if key.choices else None
+        if allowed and value not in allowed:
+            return None, f"must be one of {', '.join(allowed)}"
+        return value, None
     if key.type == "int":
         if isinstance(value, bool) or not isinstance(value, int):
             return None, "must be an integer"
@@ -512,6 +668,60 @@ def check_value(key: FilterKey, value: Any) -> tuple[Any, str | None]:
     return value, None
 
 
+def list_tokens(key: FilterKey, value: Any) -> list[str] | None:
+    """A list key's value as its tokens: a string or a list of strings, each
+    split on commas (genes only: a region never holds one), stripped, empty
+    ones dropped, duplicates removed in order (a gene without regard to case,
+    the first spelling kept). None for a value that is no list of text."""
+    if isinstance(value, str):
+        items: list[Any] = [value]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
+        return None
+    if not all(isinstance(t, str) for t in items):
+        return None
+    tokens: list[str] = []
+    for item in items:
+        parts = item.split(",") if key.type == "genes" else [item]
+        tokens += [p.strip() for p in parts if p.strip()]
+    seen: dict[str, str] = {}
+    for t in tokens:
+        seen.setdefault(t.upper() if key.type == "genes" else t, t)
+    return list(seen.values())
+
+
+def parse_region(text: str) -> tuple[str, int, int] | None:
+    """`chr7:100-200` as (contig as written, 100, 200), or None when it is not
+    a region (bad shape, FROM above TO, a zero start)."""
+    m = REGION_RE.match(text)
+    if m is None:
+        return None
+    lo, hi = int(m.group(2)), int(m.group(3))
+    if lo < 1 or lo > hi:
+        return None
+    return text.split(":", 1)[0], lo, hi
+
+
+def check_list(key: FilterKey, value: Any) -> tuple[Any, str | None]:
+    tokens = list_tokens(key, value)
+    if tokens is None:
+        return None, "must be a list of text values"
+    if key.type == "genes":
+        cap, what = MAX_GENES, "gene"
+        bad = [t for t in tokens if not GENE_TOKEN_RE.match(t)]
+        why = "is not a gene symbol or id"
+    else:
+        cap, what = MAX_REGIONS, "region"
+        bad = [t for t in tokens if parse_region(t) is None]
+        why = "is not a region chrN:FROM-TO with FROM <= TO"
+    if len(tokens) > cap:
+        return None, f"at most {cap:,} {what}s"
+    if bad:
+        return None, f"{bad[0][:40]!r} {why}"
+    return tokens, None
+
+
 def _near(token: str, allowed: Iterable[str]) -> str:
     close = difflib.get_close_matches(token, list(allowed), n=1)
     return f" (did you mean {close[0]!r}?)" if close else ""
@@ -522,6 +732,9 @@ def normalise_value(key: FilterKey, value: Any) -> Any:
     numbers as they are. (Not a validator.)"""
     if key.type == "category":
         tokens = category_tokens(value)
+        return tokens if tokens is not None else value
+    if key.type in LIST_TYPES:
+        tokens = list_tokens(key, value)
         return tokens if tokens is not None else value
     return value
 

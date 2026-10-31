@@ -499,6 +499,14 @@ def _canonical_value(key: str, value: Any) -> Any:
     if spec is not None and spec.type == "category":
         tokens = fr.category_tokens(value)
         return sorted(tokens) if tokens is not None else value
+    if spec is not None and spec.is_list:
+        # a gene list is the same list whatever the order or the case
+        tokens = fr.list_tokens(spec, value)
+        if tokens is None:
+            return value
+        if spec.type == "genes":
+            tokens = [t.upper() for t in tokens]
+        return sorted(tokens)
     if spec is not None and spec.type == "float" and isinstance(value, int):
         return float(value)
     if isinstance(value, float) and not math.isfinite(value):
@@ -508,7 +516,8 @@ def _canonical_value(key: str, value: Any) -> Any:
 
 def fingerprint(doc: dict) -> str:
     """First 12 hex of the sha256 of the canonical JSON of {schema_version,
-    filters}: keys sorted, category tokens sorted, floats by repr, extension
+    filters}: keys sorted, category tokens and lists sorted (gene symbols
+    upper-cased, so a panel's order and case do not matter), floats by repr, extension
     (x_) keys and `meta` left out. The same filters give the same fingerprint
     whatever the key order or the descriptive text."""
     filters = {

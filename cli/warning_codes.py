@@ -54,6 +54,13 @@ CODES: dict[str, str] = {
     "skipped_widening": WARNING,
     # the preset's max_af was not applied because INFO/AF is the cohort's own
     "preset_max_af_not_applied": INFO,
+    # the scope (cli/scope.py): some tokens of a gene list resolved to no gene,
+    # or to two, and the run went ahead without them (under the error threshold,
+    # or with --allow-unresolved-genes): the panel is narrower than written
+    "genes_unresolved": WARNING,
+    # the regions declare an assembly (regions_build) that is not the
+    # database's: they name other loci
+    "scope_build_mismatch": WARNING,
     # the X-linked model (models.xlinked.context.warnings):
     # no chrX position proves the build, so the bands where GRCh37 and GRCh38
     # disagree were left out and counted

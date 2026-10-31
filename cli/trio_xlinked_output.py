@@ -21,6 +21,7 @@ from cli.trio_output import (
     _comphet_entry,
     _num,
     decorate_rows,
+    outside_note,
 )
 from cli.xlinked import (
     APPLICABLE,
@@ -144,7 +145,10 @@ def _build_xlinked(render: Render) -> dict:
         "context": context,
         "modes": modes,
         "candidates": candidates,
-        "genes": [_comphet_entry(sym, genes[sym]) for sym in sorted(genes)[:limit]],
+        "genes": [
+            _comphet_entry(sym, genes[sym], analysis.scope)
+            for sym in sorted(genes)[:limit]
+        ],
     }
 
 
@@ -247,10 +251,26 @@ def _detail_xlinked(analysis) -> None:
             for origin in ("paternal", "maternal"):
                 for chrom, pos, ref, alt, af in genes[sym][origin]:
                     af_s = "NA" if af is None else f"{af}"
-                    click.echo(f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}")
+                    click.echo(
+                        f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}"
+                        + outside_note(analysis, chrom, pos)
+                    )
     excluded = {k: v for k, v in analysis.x_excluded().items() if v}
     if excluded:
         click.echo("  excluded: " + ", ".join(f"{k}={v}" for k, v in excluded.items()))
+
+
+def _xlinked_scope_sql(trio, gates, scope) -> list[str]:
+    """Every statement the X model can run under a scope: both sexes' rows and
+    the daughter's compound-het candidates."""
+    from cli.xchrom import GRCH38
+    from cli.xlinked import comphet_x_sql, xlinked_sql
+
+    return [
+        xlinked_sql(trio, gates, "male", GRCH38, scope=scope),
+        xlinked_sql(trio, gates, "female", GRCH38, scope=scope),
+        comphet_x_sql(trio, gates, GRCH38, scope=scope),
+    ]
 
 
 XLINKED_MODEL = ModelSpec(
@@ -259,4 +279,5 @@ XLINKED_MODEL = ModelSpec(
     _build_xlinked,
     _summary_xlinked,
     _detail_xlinked,
+    scope_builder=_xlinked_scope_sql,
 )

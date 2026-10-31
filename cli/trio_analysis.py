@@ -289,15 +289,17 @@ def _where_parts(
     *,
     parent_alt_screen: bool = False,
     x_guard: str | None = None,
+    scope_part: str | None = None,
 ) -> list[tuple[str, str]]:
     """The predicates of the shared WHERE clause, in application order, each
     with its name: model, x_guard, quality_proband, quality_father,
     quality_mother, allele_balance, population_af, pass_only,
-    parent_alt_screen. `x_guard` (cli/xlinked.x_guard_sql) drops the
-    genotypes that cannot exist on non-PAR X. `_where`
+    parent_alt_screen, scope. `x_guard` (cli/xlinked.x_guard_sql) drops the
+    genotypes that cannot exist on non-PAR X; `scope_part` is the run's
+    gene / region predicate on `g` (cli/scope.scope_sql). `_where`
     joins them; a diagnostic that wants to count what each removes (the
     funnel) walks them. A part is absent when its gate is off. (`trio` is
-    unused today; the scope predicate of a later step needs it.)"""
+    unused today.)"""
     from storage.sql import af_gate_sql
 
     def quality(alias: str) -> str:
@@ -338,6 +340,8 @@ def _where_parts(
             )
             screen = f"{present} AND {screen}"
         parts.append(("parent_alt_screen", screen))
+    if scope_part:
+        parts.append(("scope", scope_part))
     return parts
 
 
@@ -373,13 +377,19 @@ def _where(
     *,
     parent_alt_screen: bool = False,
     x_guard: str | None = None,
+    scope_part: str | None = None,
 ) -> str:
     """Shared WHERE clause: the genotype model plus the quality / rarity
     gates, scoped to this proband and ingest."""
     from storage import sql_quote_str
 
     parts = _where_parts(
-        trio, gates, model, parent_alt_screen=parent_alt_screen, x_guard=x_guard
+        trio,
+        gates,
+        model,
+        parent_alt_screen=parent_alt_screen,
+        x_guard=x_guard,
+        scope_part=scope_part,
     )
     predicate = " AND ".join(sql for _, sql in parts)
     return (
@@ -395,10 +405,13 @@ def trio_sql(
     *,
     count_only: bool,
     x_guard: str | None = None,
+    scope=None,
 ) -> str:
     """Build the SQL for one inheritance model. The proband row is `g`;
     parents are joined as `f`/`m`; `v` brings population AF. `x_guard` is
-    the X guard predicate (None: the text it always was)."""
+    the X guard predicate and `scope` the run's cli.scope.Scope (None: the
+    text it always was)."""
+    from cli.scope import scope_sql
     from storage import count_expr
 
     if category not in ROW_CATEGORIES:
@@ -414,6 +427,7 @@ def trio_sql(
         model,
         parent_alt_screen=gates.parent_alt_screen and category == "denovo",
         x_guard=x_guard,
+        scope_part=scope_sql("g", scope),
     )
     if count_only:
         return f"SELECT {count_expr()} FROM genotypes g {joins} WHERE {where}"
@@ -431,6 +445,7 @@ def strict_dropped_sql(
     *,
     count_only: bool,
     x_guard: str | None = None,
+    scope=None,
 ) -> str:
     """The candidates of `category` that pass every gate of a run WITHOUT
     strict_missing and fail only because strict_missing counts a missing GQ, DP or
@@ -439,10 +454,14 @@ def strict_dropped_sql(
     instead of passing, a value is judged the same, and each strict predicate is a
     plain boolean, never NULL, so the NOT below loses no row.) A candidate here is
     a variant, for compound het too."""
+    from cli.scope import scope_sql
     from storage import count_expr
 
     model = MODEL_PREDICATES[category]
     screen = gates.parent_alt_screen and category == "denovo"
+    # compound het is judged per variant before its gene grouping, so only the
+    # exclusions of the scope apply to its candidates
+    scoped = scope_sql("g", scope, part="exclude" if category == "comphet" else "all")
     tolerant = gates._replace(strict_exempt=STRICT_GATE_KEYS)
     changed = [
         sql
@@ -455,7 +474,7 @@ def strict_dropped_sql(
     return (
         f"SELECT {select} FROM genotypes g "
         f"{parent_joins(trio.father, trio.mother)} "
-        f"WHERE {_where(trio, tolerant, model, parent_alt_screen=screen, x_guard=x_guard)} "
+        f"WHERE {_where(trio, tolerant, model, parent_alt_screen=screen, x_guard=x_guard, scope_part=scoped)} "
         f"AND NOT ({' AND '.join(changed)})"
     )
 
@@ -465,14 +484,25 @@ def _comphet_sql(
     gates: Gates,
     *,
     x_guard: str | None = None,
+    scope=None,
 ) -> str:
     """Candidate variants for compound-het: each is a rare proband het
     inherited from exactly one parent (the dominant pattern), tagged with
     parent-of-origin. The gene grouping happens in Python — genes live in
     the annotation store, which can't be SQL-joined to the cohort. (The X
-    model's female compound het is cli/xlinked.comphet_x_sql.)"""
+    model's female compound het is cli/xlinked.comphet_x_sql.) Only the
+    exclusions of `scope` are in the SQL: its inclusions act after the
+    grouping (cli/scope.genes_in_scope)."""
+    from cli.scope import scope_sql
+
     model = MODEL_PREDICATES["comphet"]
-    where = _where(trio, gates, model, x_guard=x_guard)
+    where = _where(
+        trio,
+        gates,
+        model,
+        x_guard=x_guard,
+        scope_part=scope_sql("g", scope, part="exclude"),
+    )
     origin = (
         "CASE WHEN f.gt > 0 AND m.gt = 0 THEN 'paternal' "
         "WHEN m.gt > 0 AND f.gt = 0 THEN 'maternal' END AS origin"
@@ -627,6 +657,9 @@ class TrioAnalysis:
     # (auto | GRCh37 | GRCh38) and whether the X guard is on.
     build: str = "auto"
     x_guard: bool = True
+    # The genes and regions the run looks at (cli/scope.Scope), None for all.
+    # Pushed into every model's SQL and re-applied to every row returned.
+    scope: Any = None
     # Answers computed once per analysis (the X context, its rows), private.
     _cache: dict = field(default_factory=dict, compare=False, repr=False)
 
@@ -634,6 +667,47 @@ class TrioAnalysis:
         if self.gnomad_max_af is None:
             return rows
         return _gnomad_filter(rows, self.gnomad_max_af, self.stats)
+
+    def _scoped(self, rows: list) -> list:
+        """The Python backstop of the scope: whatever a builder pushed down,
+        a row outside the scope never comes back."""
+        from cli.scope import filter_rows
+
+        return rows if self.scope is None else filter_rows(rows, self.scope)
+
+    def _count_in_sql(self) -> bool:
+        """Can a count be one SQL count? Not with the gnomAD filter (Python)
+        nor with a scope the SQL does not apply exactly."""
+        return self.gnomad_max_af is None and (
+            self.scope is None or self.scope.exact_sql
+        )
+
+    def _genes_in_scope(self, genes: dict, model: str) -> dict:
+        """The compound-het rule after grouping (cli/scope.genes_in_scope),
+        recording how many genes it dropped and how many reported variants it
+        flags outside the scope."""
+        if self.scope is None:
+            return genes
+        from cli.scope import genes_in_scope
+
+        kept, dropped = genes_in_scope(genes, self.scope)
+        self.stats.setdefault("scope_genes_dropped", {})[model] = dropped
+        if self.scope.flags_variants:
+            self.stats.setdefault("scope_outside", {})[model] = sum(
+                1
+                for e in kept.values()
+                for side in ("paternal", "maternal")
+                for v in e[side]
+                if not self.scope.contains(v[0], int(v[1]))
+            )
+        return kept
+
+    def _comphet_rows(self, sql: str) -> dict:
+        """Group compound-het candidates by gene under the scope: exclusions
+        before the grouping, inclusions after."""
+        from cli.scope import drop_excluded
+
+        return _comphet_genes(self._gnomad(drop_excluded(self._query(sql), self.scope)))
 
     def _query(self, sql: str) -> list:
         return json.loads(self.session.query(sql, "JSONCompact").bytes().decode())[
@@ -683,9 +757,14 @@ class TrioAnalysis:
             rows: list = []
             if ctx.has_x and ctx.blocked_reason is None:
                 sql = xlinked_sql(
-                    self.trio, self.gates, ctx.proband_sex, ctx.region_build
+                    self.trio,
+                    self.gates,
+                    ctx.proband_sex,
+                    ctx.region_build,
+                    scope=self.scope,
                 )
-                rows = self._gnomad(decode_rows(self._query(sql), ctx.affected))
+                rows = decode_rows(self._query(sql), ctx.affected)
+                rows = self._gnomad(self._scoped(rows))
             self._cache["x_rows"] = rows
         return self._cache["x_rows"]
 
@@ -712,8 +791,10 @@ class TrioAnalysis:
                 and ctx.proband_sex == "female"
                 and self.has_reference
             ):
-                sql = comphet_x_sql(self.trio, self.gates, ctx.region_build)
-                genes = _comphet_genes(self._gnomad(self._query(sql)))
+                sql = comphet_x_sql(
+                    self.trio, self.gates, ctx.region_build, scope=self.scope
+                )
+                genes = self._genes_in_scope(self._comphet_rows(sql), "xlinked")
             self._cache["x_genes"] = genes
         return self._cache["x_genes"]
 
@@ -729,10 +810,22 @@ class TrioAnalysis:
         if self.gnomad_max_af is not None:
             return None
         if category == "comphet":
-            plain = _comphet_genes(self._query(_comphet_sql(self.trio, self.gates)))
+            sql = _comphet_sql(self.trio, self.gates, scope=self.scope)
+            plain = self._genes_in_scope(self._comphet_rows(sql), "_unguarded")
+            self.stats.get("scope_genes_dropped", {}).pop("_unguarded", None)
+            self.stats.get("scope_outside", {}).pop("_unguarded", None)
             return len(plain) - len(self.comphet_genes())
-        sql = trio_sql(category, self.trio, self.gates, count_only=True)
-        return int(self._query(sql)[0][0]) - int(self.count(category))
+        if self._count_in_sql():
+            sql = trio_sql(
+                category, self.trio, self.gates, count_only=True, scope=self.scope
+            )
+            unguarded = int(self._query(sql)[0][0])
+        else:
+            sql = trio_sql(
+                category, self.trio, self.gates, count_only=False, scope=self.scope
+            )
+            unguarded = len(self._scoped(self._query(sql)))
+        return unguarded - int(self.count(category))
 
     # ─────────────────────── classic models ───────────────────────
 
@@ -743,14 +836,20 @@ class TrioAnalysis:
             self.gates,
             count_only=False,
             x_guard=self.x_guard_sql(),
+            scope=self.scope,
         )
-        return self._gnomad(self._query(sql))
+        return self._gnomad(self._scoped(self._query(sql)))
 
     def count(self, category: str) -> int:
-        if self.gnomad_max_af is not None:
+        if not self._count_in_sql():
             return len(self.detail_rows(category))
         sql = trio_sql(
-            category, self.trio, self.gates, count_only=True, x_guard=self.x_guard_sql()
+            category,
+            self.trio,
+            self.gates,
+            count_only=True,
+            x_guard=self.x_guard_sql(),
+            scope=self.scope,
         )
         return self._query(sql)[0][0]
 
@@ -770,15 +869,28 @@ class TrioAnalysis:
         if category not in MODEL_PREDICATES:
             return 0
         guard = self.x_guard_sql()
-        if self.gnomad_max_af is None:
+        if self._count_in_sql():
             sql = strict_dropped_sql(
-                category, self.trio, gates, count_only=True, x_guard=guard
-            )
+                category, self.trio, gates, count_only=True, x_guard=guard,
+                scope=self.scope,
+            )  # fmt: skip
             return int(self._query(sql)[0][0])
         sql = strict_dropped_sql(
-            category, self.trio, gates, count_only=False, x_guard=guard
-        )
-        return len(_gnomad_filter(self._query(sql), self.gnomad_max_af))
+            category, self.trio, gates, count_only=False, x_guard=guard,
+            scope=self.scope,
+        )  # fmt: skip
+        rows = self._query(sql)
+        if self.scope is not None:
+            from cli.scope import drop_excluded
+
+            rows = (
+                drop_excluded(rows, self.scope)
+                if category == "comphet"
+                else self._scoped(rows)
+            )
+        if self.gnomad_max_af is None:
+            return len(rows)
+        return len(_gnomad_filter(rows, self.gnomad_max_af))
 
     def _x_dropped_by_strict(self) -> int:
         from cli.xlinked import decode_rows, xlinked_sql
@@ -787,12 +899,16 @@ class TrioAnalysis:
         if not ctx.has_x or ctx.blocked_reason is not None:
             return 0
         tolerant = self.gates._replace(strict_exempt=STRICT_GATE_KEYS)
-        sql = xlinked_sql(self.trio, tolerant, ctx.proband_sex, ctx.region_build)
-        rows = decode_rows(self._query(sql), ctx.affected)
+        sql = xlinked_sql(
+            self.trio, tolerant, ctx.proband_sex, ctx.region_build, scope=self.scope
+        )
+        rows = self._scoped(decode_rows(self._query(sql), ctx.affected))
         if self.gnomad_max_af is not None:
             rows = _gnomad_filter(rows, self.gnomad_max_af)
         return len(rows) - len(self.x_rows())
 
     def comphet_genes(self) -> dict:
-        sql = _comphet_sql(self.trio, self.gates, x_guard=self.x_guard_sql())
-        return _comphet_genes(self._gnomad(self._query(sql)))
+        sql = _comphet_sql(
+            self.trio, self.gates, x_guard=self.x_guard_sql(), scope=self.scope
+        )
+        return self._genes_in_scope(self._comphet_rows(sql), "comphet")

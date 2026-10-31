@@ -238,9 +238,51 @@ def filters_from_result(text: str | bytes) -> tuple[dict, dict]:
         for key, entry in block["resolved"].items()
         if isinstance(entry, dict) and entry.get("from") in ("preset", "flag")
     }
+    # the descriptive companions of a list that came from the preset
+    requested = (
+        block.get("requested") if isinstance(block.get("requested"), dict) else {}
+    )
+    for meta, of in (("genes_label", "genes"), ("regions_build", "regions")):
+        entry = block["resolved"].get(of)
+        if (
+            meta in requested
+            and isinstance(entry, dict)
+            and entry.get("from") == "preset"
+        ):
+            filters[meta] = requested[meta]
+    _restore_long_lists(filters, block)
     return filters, {
         k: block.get(k) for k in ("name", "source", "revision", "fingerprint")
     }
+
+
+def _restore_long_lists(filters: dict, block: dict) -> None:
+    """A gene or region list above 500 entries is echoed as {count, sha256_12};
+    it is copied back from the preset the result used, only if that preset
+    still has the fingerprint the result names."""
+    long = [k for k, v in filters.items() if isinstance(v, dict) and "count" in v]
+    if not long:
+        return
+    from cli.presets import find_preset
+
+    name, pin = block.get("name"), block.get("fingerprint")
+    source, _ = find_preset(name) if isinstance(name, str) else (None, [])
+    for key in long:
+        entry = block["resolved"][key]
+        if entry.get("from") != "preset":
+            raise PresetError(
+                f"{key} in this result is only its count and hash "
+                f"({filters[key]['count']} entries, typed on the command line); "
+                "save the preset with the same flags instead"
+            )
+        if source is None or source.fingerprint != pin or key not in source.filters:
+            raise PresetError(
+                f"{key} in this result is only its count and hash "
+                f"({filters[key]['count']} entries), and preset {name!r} no longer "
+                f"has fingerprint {pin}; copy it with `vcfclick preset save NEWNAME "
+                f"--from-preset {name}` if it is still the list you want"
+            )
+        filters[key] = list(source.filters[key])
 
 
 def revision_change(header: dict) -> str | None:

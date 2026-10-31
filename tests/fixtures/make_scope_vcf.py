@@ -108,7 +108,7 @@ IN_PANEL = {
     "recessive": ["rec_c12"],
     "dominant": ["dom_c9", "ch_c19_pat", "ch_ovl_pat", "ch_ovl_mat", "ch_c19_mat",
                  "ch_c12_pat", "ch_c12_mat"],
-    "comphet": ["C19orf12", "C12orf57"],
+    "comphet": ["C12orf57", "C19orf12"],  # sorted, as the report lists genes
     "xlinked": [],
 }  # fmt: skip
 

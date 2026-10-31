@@ -396,6 +396,11 @@ class ModelSpec:
     needs_reference: bool = False
     # Needs the gene table (compound het groups candidates by gene).
     needs_genes: bool = False
+    # The SQL the model runs under a scope, for (trio, gates, scope): every
+    # statement must carry the scope predicate (cli/scope.py). Registered in
+    # cli.scope.SCOPE_AWARE_BUILDERS with the model, and walked by
+    # tests/test_scope_models_drift.py.
+    scope_builder: Callable | None = None
 
 
 MODELS: dict[str, ModelSpec] = {}
@@ -403,10 +408,16 @@ MODELS: dict[str, ModelSpec] = {}
 
 def register_model(spec: ModelSpec) -> ModelSpec:
     """Add a model after the existing ones: registration order is the order
-    of `models` in the document and of the lines in the `all` summary."""
+    of `models` in the document and of the lines in the `all` summary. Its
+    scope builder goes into cli.scope.SCOPE_AWARE_BUILDERS; a model without
+    one fails the scope drift test."""
     if spec.name in MODELS:
         raise ValueError(f"model {spec.name!r} is already registered")
     MODELS[spec.name] = spec
+    if spec.scope_builder is not None:
+        from cli.scope import register_scope_builder
+
+        register_scope_builder(spec.name, spec.scope_builder)
     return spec
 
 
@@ -479,6 +490,14 @@ def _row_model(name: str, *, needs_reference: bool) -> ModelSpec:
                 + (extra[i] if extra else "")
             )
 
+    def scope_builder(trio, gates, scope) -> list[str]:
+        from cli.trio_analysis import trio_sql
+
+        return [
+            trio_sql(name, trio, gates, count_only=count, scope=scope)
+            for count in (False, True)
+        ]
+
     return ModelSpec(
         name,
         lambda trio: True,
@@ -486,31 +505,46 @@ def _row_model(name: str, *, needs_reference: bool) -> ModelSpec:
         summary,
         detail,
         needs_reference=needs_reference,
+        scope_builder=scope_builder,
     )
 
 
 # ───────────────────────────── compound het ─────────────────────────────
 
 
-def _comphet_entry(sym: str, sides: dict) -> dict:
+def _comphet_entry(sym: str, sides: dict, scope=None) -> dict:
     """One gene of the comphet model. `paternal` and `maternal` are emitted
     for the sides present; a consumer must treat each as optional (a model
-    that cannot tell parent of origin omits them)."""
+    that cannot tell parent of origin omits them). With a scope that includes
+    genes or regions, each variant carries `in_scope` (a partner outside a
+    capture edge is flagged, not dropped)."""
     entry: dict = {"gene": sym}
+    flag = scope is not None and scope.flags_variants
     for origin in ("paternal", "maternal"):
         if sides.get(origin) is None:
             continue
         entry[origin] = [
             {"chrom": c, "pos": int(p), "ref": r, "alt": a, "af": _num(af)}
+            | ({"in_scope": scope.contains(c, int(p))} if flag else {})
             for c, p, r, a, af in sides[origin]
         ]
     return entry
 
 
+def outside_note(analysis, chrom: str, pos) -> str:
+    """`  (outside the scope)` for a compound-het partner the scope flags."""
+    scope = getattr(analysis, "scope", None)
+    if scope is None or not scope.flags_variants or scope.contains(chrom, int(pos)):
+        return ""
+    return "  (outside the scope)"
+
+
 def _build_comphet(render: Render) -> dict:
     analysis, limit = render.analysis, render.limit
     genes = analysis.comphet_genes()
-    entries = [_comphet_entry(sym, genes[sym]) for sym in sorted(genes)[:limit]]
+    entries = [
+        _comphet_entry(sym, genes[sym], analysis.scope) for sym in sorted(genes)[:limit]
+    ]
     blocked = _legacy_blocked(True, analysis)
     needs_genes = not render.have["genes"]
     return {
@@ -541,7 +575,16 @@ def _detail_comphet(analysis: TrioAnalysis) -> None:
         for origin in ("paternal", "maternal"):
             for chrom, pos, ref, alt, af in entry[origin]:
                 af_s = "NA" if af is None else f"{af}"
-                click.echo(f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}")
+                click.echo(
+                    f"    {origin:8s} {chrom}:{pos} {ref}>{alt}  AF={af_s}"
+                    + outside_note(analysis, chrom, pos)
+                )
+
+
+def _comphet_scope_sql(trio, gates, scope) -> list[str]:
+    from cli.trio_analysis import _comphet_sql
+
+    return [_comphet_sql(trio, gates, scope=scope)]
 
 
 register_model(_row_model("denovo", needs_reference=True))
@@ -556,6 +599,7 @@ register_model(
         _detail_comphet,
         needs_reference=True,
         needs_genes=True,
+        scope_builder=_comphet_scope_sql,
     )
 )
 
@@ -671,6 +715,19 @@ def _trio_json(
                     f"return the document dict, not {type(doc).__name__}"
                 )
     return doc
+
+
+def _scope_document(doc: dict, render: Render) -> dict:
+    """The top-level `scope` object, for a run with genes or regions."""
+    scope = getattr(render.analysis, "scope", None)
+    if scope is not None:
+        from cli.scope import scope_document
+
+        doc["scope"] = scope_document(scope, render.analysis.stats)
+    return doc
+
+
+register_document_decorator(_scope_document)
 
 
 def trio_text(analysis: TrioAnalysis, category: str | Sequence[str]) -> None:

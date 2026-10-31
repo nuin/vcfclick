@@ -392,3 +392,74 @@ def test_a_preset_adds_a_bounded_cost_on_a_synthetic_wgs_store(
         "samples' rows; a query per candidate or a second pass shows up here."
     )
     assert took < 3 * plain + 1.0, (took, plain)
+
+
+def _bed(path, n_intervals: int, n_sites: int):
+    """`n_intervals` BED intervals spread evenly over the synthetic sites
+    (chr1, 1000 + i * SITE_STEP), each covering half of its stretch."""
+    span = n_sites * SITE_STEP
+    step = span // n_intervals
+    lines = [
+        f"chr1\t{1000 + k * step - 1}\t{1000 + k * step + step // 2}\n"
+        for k in range(n_intervals)
+    ]
+    path.write_text("".join(lines))
+    return path
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_a_scope_of_500_intervals_on_a_synthetic_wgs_store(
+    backend, vcfclick_home, tmp_path, monkeypatch
+):
+    """The scope's SQL pushdown at each of its limits (cli/scope.py):
+    SCOPE_SQL_EXACT_MAX (64) merged intervals as exact BETWEENs,
+    SCOPE_SQL_MAX_INTERVALS (500) as the bucket superset, and one interval
+    more, where the SQL carries no scope and the Python backstop alone filters
+    the rows; each against the same call without a scope. On the cohort-AF
+    store, where nearly every inherited het is a candidate, so the backstop has
+    the most rows to filter. Each interval covers half of its stretch, so the
+    scoped runs keep about half the candidates.
+
+    Measured, `db trio --format json`, best of two, Apple silicon:
+
+                       plain   64 (sql)  500 (sql_buckets)  501 (python)
+      20,000 DuckDB    0.31 s   0.31 s       0.33 s            0.33 s
+             chDB      0.41 s   0.52 s       0.44 s            0.43 s
+      200,000 DuckDB   1.02 s   0.98 s       1.09 s            1.24 s
+              chDB     0.96 s   1.13 s       1.09 s            1.18 s
+
+    500 intervals as BETWEENs (the first form) cost 2.7-2.9 s on chDB at
+    200,000 sites, 1.7 s over plain: chDB evaluates every BETWEEN on every row
+    of each of the three joined sides. That is why 65-500 intervals go as a
+    bucket set, an IN over integers that costs nothing measurable."""
+    from cli.scope import SCOPE_SQL_EXACT_MAX, SCOPE_SQL_MAX_INTERVALS
+
+    n, _ = _wgs_store("cohort", backend, vcfclick_home, tmp_path, monkeypatch)
+    budget = _synthetic_budget(n, _baseline(vcfclick_home, backend))
+    trio = ("db", "trio", "t", "--proband", "CHILD", "--format", "json")
+    plain_s, plain = _best_of_two(vcfclick_home, backend, *trio)
+    base = json.loads(plain.stdout)["models"]
+    for n_intervals, applied in (
+        (SCOPE_SQL_EXACT_MAX, "sql"),
+        (SCOPE_SQL_MAX_INTERVALS, "sql_buckets"),
+        (SCOPE_SQL_MAX_INTERVALS + 1, "python"),
+    ):
+        bed = _bed(tmp_path / f"r{n_intervals}.bed", n_intervals, n)
+        took, result = _best_of_two(
+            vcfclick_home, backend, *trio, "--region-file", str(bed)
+        )
+        doc = json.loads(result.stdout)
+        print(
+            f"\n[timing] {n} sites, {n_intervals} intervals ({applied}), {backend}: "
+            f"{took:.2f}s (plain {plain_s:.2f}s, budget {budget:.1f}s)"
+        )
+        assert doc["scope"]["applied"] == applied
+        assert doc["scope"]["intervals"] == n_intervals
+        # the scenario is what it says: about half the candidates are kept
+        kept = doc["models"]["dominant"]["count"] / base["dominant"]["count"]
+        assert 0.3 < kept < 0.7, kept
+        assert took < budget, (
+            f"`db trio --region-file` with {n_intervals} intervals on {n} sites "
+            f"({backend}) took {took:.1f}s, budget {budget:.1f}s"
+        )
+        assert took < 1.5 * plain_s + 0.5, (applied, took, plain_s)
