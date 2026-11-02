@@ -335,6 +335,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   spelt as the VCF spells it: `'5'`, `'1,2,3,4'`, `'.'` for missing, with
   end-of-vector padding dropped, so `CAST(format_extra['MIN_DP'] AS INT)`
   works. Databases ingested earlier keep the old strings until re-ingested.
+- An INFO field that is routed to a scalar column but carries several values
+  (GATK's `SB` declared `Number=4`, or `AC=1,0` under `Number=.`) aborted the
+  whole ingest with a raw `ArrowInvalid`. The values now go to `info_extra`
+  (`'1,2,3,4'`) and the column stays NULL.
+- A `FORMAT` integer above a column's range (`DP=70000` on a mitochondrial or
+  amplicon call; the `gq`, `dp`, `ad_*`, `pl_*`, `mq` and `pq` columns are
+  UInt16) aborted the ingest with `Value 70000 too large to fit in C integer
+  type`. The value is now clamped to the column maximum (65535) and one
+  warning is logged. `ps` is UInt32 and keeps a phase set's full value.
+- A VCF with samples but no `GT` in `FORMAT` (or one record without it)
+  crashed with cyvcf2's `error parsing genotypes`. Such a record now stores
+  its variant row with the called counts "not recorded" (NULL) and no
+  genotype rows, as `called_counts` already reported it.
 
 ## [0.14.3]
 

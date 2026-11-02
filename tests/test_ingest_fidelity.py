@@ -13,7 +13,13 @@ from pathlib import Path
 import pytest
 from cyvcf2 import VCF
 
-from ingest._arrow import GENOTYPES_COLUMNS, VARIANTS_COLUMNS
+from ingest._arrow import (
+    GENOTYPES_ARROW_SCHEMA,
+    GENOTYPES_COLUMNS,
+    VARIANTS_ARROW_SCHEMA,
+    VARIANTS_COLUMNS,
+    write_parquet,
+)
 from ingest.vcf_rows import build_record_rows
 from tests.conftest import bgzip_vcf, run_cli
 
@@ -27,6 +33,7 @@ HEADER = """\
 ##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Depth">
 ##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allele depths">
 ##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Likelihoods">
+##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set">
 ##FORMAT=<ID=MIN_DP,Number=1,Type=Integer,Description="Min depth">
 ##FORMAT=<ID=SBX,Number=4,Type=Integer,Description="Strand counts">
 ##FORMAT=<ID=FX,Number=1,Type=Float,Description="A float">
@@ -116,3 +123,68 @@ def test_numeric_format_extra_queryable_after_ingest(vcfclick_home, tmp_path, ba
         "JSONCompact",
     )
     assert json.loads(r.stdout)["data"] == [["A", "5", "1,2,3,4"], ["B", ".", "."]]
+
+
+# ─── finding 36: a multi-value INFO field aimed at a scalar column ──────
+
+
+def test_multi_value_info_scalar_goes_to_info_extra(tmp_path):
+    """INFO SB declared Number=4 (GATK) cannot fill the float info_SB
+    column: the tuple lands in info_extra and the row still writes."""
+    vcf = _write_vcf(
+        tmp_path / "sb.vcf",
+        ["A"],
+        ["chr1\t100\t.\tA\tG\t50\tPASS\tSB=1,2,3,4;AC=1,0;DP=9\tGT\t0/1"],
+    )
+    _, rows = _rows(vcf)
+    variant = _variant_dict(rows[0][0])
+    assert variant["info_SB"] is None
+    assert variant["info_AC"] is None
+    assert variant["info_DP"] == 9
+    assert variant["info_extra"] == {"SB": "1,2,3,4", "AC": "1,0"}
+    write_parquet([rows[0][0]], VARIANTS_ARROW_SCHEMA, tmp_path / "v.parquet")
+
+
+# ─── finding 37: FORMAT integers above the uint16 column range ──────────
+
+
+def test_wide_format_integers_clamp_to_uint16(tmp_path):
+    """DP=70000 and AD=80000,5 are clamped to 65535, so the batch writes
+    instead of aborting the ingest with an ArrowInvalid."""
+    vcf = _write_vcf(
+        tmp_path / "dp.vcf",
+        ["A"],
+        [
+            "chr1\t100\t.\tA\tG\t50\tPASS\tDP=9\tGT:DP:AD:PL:PS"
+            "\t0|1:70000:80000,5:0,70000,99:200000000"
+        ],
+    )
+    _, rows = _rows(vcf)
+    gt = _gt_dict(rows[0][1])["A"]
+    assert (gt["dp"], gt["ad_ref"], gt["ad_alt"]) == (65535, 65535, 5)
+    assert (gt["pl_ref_ref"], gt["pl_ref_alt"], gt["pl_alt_alt"]) == (0, 65535, 99)
+    assert gt["ps"] == 200000000  # ps is UInt32: a phase set keeps its value
+    write_parquet(rows[0][1], GENOTYPES_ARROW_SCHEMA, tmp_path / "g.parquet")
+
+
+# ─── finding 40: samples but no GT ──────────────────────────────────────
+
+
+def test_record_without_gt_builds_no_genotype_rows(tmp_path):
+    """FORMAT=DP only: called counts are "not recorded" and there are no
+    genotype rows, instead of a raw cyvcf2 exception."""
+    vcf = _write_vcf(
+        tmp_path / "nogt.vcf",
+        ["A"],
+        ["chr1\t200\t.\tA\tG\t50\tPASS\tDP=9\tDP\t10"],
+    )
+    _, rows = _rows(vcf)
+    variant_row, genotype_rows, missing_rows = rows[0]
+    variant = _variant_dict(variant_row)
+    assert (variant["n_called"], variant["an_called"], variant["ac_called"]) == (
+        None,
+        None,
+        None,
+    )
+    assert genotype_rows == []
+    assert missing_rows == []

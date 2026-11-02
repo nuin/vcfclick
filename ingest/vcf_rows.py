@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
+import pyarrow as pa
 
-from ingest._arrow import GENOTYPES_COLUMNS, VARIANTS_COLUMNS
+from ingest._arrow import GENOTYPES_ARROW_SCHEMA, GENOTYPES_COLUMNS, VARIANTS_COLUMNS
 from ingest.routing import FORMAT_PAIR, FORMAT_SCALAR, FORMAT_TRIPLE
 from ingest.routing import INFO_FLAG, INFO_PAIR, INFO_SCALAR
+
+log = logging.getLogger(__name__)
 
 
 # htslib sentinels in cyvcf2's int32 FORMAT arrays: a missing value and
@@ -73,14 +77,45 @@ def _cell(arr, i):
     return v
 
 
-def _scalar_int(arr, i):
+# Upper bound of each unsigned genotypes column, from the Arrow schema:
+# 65,535 for the UInt16 columns (gq, dp, ad_*, pl_*, mq, pq) and
+# 4,294,967,295 for ps. A value above the bound (mitochondrial or
+# amplicon depth above 65,535) is clamped to it rather than aborting the
+# ingest with an ArrowInvalid, and the clamp is logged once per process.
+_COLUMN_MAX: dict[str, int] = {
+    f.name: 2**f.type.bit_width - 1
+    for f in GENOTYPES_ARROW_SCHEMA
+    if pa.types.is_unsigned_integer(f.type)
+}
+_UINT16_MAX = 65535
+_clamp_warned = False
+
+
+def _bounded(v: int, max_value: int) -> int | None:
+    global _clamp_warned
+    if v < 0:
+        return None
+    if v > max_value:
+        if not _clamp_warned:
+            _clamp_warned = True
+            log.warning(
+                "[ingest] FORMAT value %d exceeds the column range; "
+                "clamping such values to %d",
+                v,
+                max_value,
+            )
+        return max_value
+    return v
+
+
+def _scalar_int(arr, i, max_value: int = _UINT16_MAX):
     if arr is None:
         return None
     try:
         v = int(_cell(arr, i))
     except (IndexError, TypeError, ValueError):
         return None
-    return v if v >= 0 else None
+    return _bounded(v, max_value)
 
 
 def _pair_int(arr, i):
@@ -93,7 +128,7 @@ def _pair_int(arr, i):
         a, b = int(v[0]), int(v[1])
     except (IndexError, TypeError, ValueError):
         return (None, None)
-    return (a if a >= 0 else None, b if b >= 0 else None)
+    return (_bounded(a, _UINT16_MAX), _bounded(b, _UINT16_MAX))
 
 
 def _triple_int(arr, i):
@@ -107,9 +142,9 @@ def _triple_int(arr, i):
     except (IndexError, TypeError, ValueError):
         return (None, None, None)
     return (
-        a if a >= 0 else None,
-        b if b >= 0 else None,
-        c if c >= 0 else None,
+        _bounded(a, _UINT16_MAX),
+        _bounded(b, _UINT16_MAX),
+        _bounded(c, _UINT16_MAX),
     )
 
 
@@ -216,7 +251,16 @@ def build_variant_row(
     extra: dict[str, str] = {}
     for field, value in info.items():
         if field in INFO_SCALAR:
-            row[INFO_SCALAR[field]] = value
+            # A header may declare a routed field with Number=4 (GATK's
+            # SB) or Number=. and carry several values; a scalar column
+            # cannot hold them, so the tuple goes to info_extra instead.
+            if isinstance(value, (list, tuple)):
+                if len(value) == 1:
+                    row[INFO_SCALAR[field]] = value[0]
+                elif value:
+                    extra[field] = _stringify(value)
+            else:
+                row[INFO_SCALAR[field]] = value
         elif field in INFO_PAIR:
             ref_col, alt_col = INFO_PAIR[field]
             if isinstance(value, (list, tuple)) and len(value) >= 2:
@@ -260,8 +304,15 @@ def build_genotype_rows(
     keep_reference: bool = False,
 ) -> list[list]:
     encode = GT_ENCODE_KEEP_REF if keep_reference else GT_ENCODE
-    gt_types = variant.gt_types
-    gt_phases = variant.gt_phases
+    try:
+        gt_types = variant.gt_types
+        gt_phases = variant.gt_phases
+    except Exception:
+        # cyvcf2 raises when GT is absent from the record (FORMAT without
+        # GT, or a sites-only record among called ones). called_counts
+        # reports the same record as NOT_RECORDED; there is nothing to
+        # store per sample.
+        return []
     scalar_arrs = {f: _format_arr(variant, f) for f in FORMAT_SCALAR}
     pair_arrs = {f: _format_arr(variant, f) for f in FORMAT_PAIR}
     triple_arrs = {f: _format_arr(variant, f) for f in FORMAT_TRIPLE}
@@ -290,7 +341,9 @@ def build_genotype_rows(
 
         for src, col in FORMAT_SCALAR.items():
             if col != "ft":
-                row[col] = _scalar_int(scalar_arrs[src], i)
+                row[col] = _scalar_int(
+                    scalar_arrs[src], i, _COLUMN_MAX.get(col, _UINT16_MAX)
+                )
 
         ft_arr = scalar_arrs.get("FT")
         if ft_arr is not None:
