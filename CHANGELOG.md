@@ -329,6 +329,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `-1` "hemizygous" code that the encoder has never written. A haploid ALT
   call (male non-PAR chrX/chrY, chrM) is stored as `gt = 2` with
   `phased = 1`; `gt` is never negative.
+- A numeric `FORMAT` field routed to `format_extra` (Mutect2 `F1R2`/`F2R1`/
+  `SB`, DRAGEN fields, `MIN_DP`, ...) was stored as the numpy repr
+  (`'[5]'`, `'[1 2 3 4]'`, `'[-2147483648]'` for a missing value). It is now
+  spelt as the VCF spells it: `'5'`, `'1,2,3,4'`, `'.'` for missing, with
+  end-of-vector padding dropped, so `CAST(format_extra['MIN_DP'] AS INT)`
+  works. Databases ingested earlier keep the old strings until re-ingested.
 
 ## [0.14.3]
 

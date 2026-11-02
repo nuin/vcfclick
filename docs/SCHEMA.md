@@ -383,7 +383,7 @@ artefact.
 
 | Column | Type | Meaning |
 |---|---|---|
-| `format_extra` | `Map(String, String)` | every non-routed `FORMAT` field, value stringified per sample |
+| `format_extra` | `Map(String, String)` | every non-routed `FORMAT` field, value stringified per sample as the VCF spells it: `'5'`, `'1,2,3,4'`, `'.'` for a missing value (end-of-vector padding dropped), so `CAST(format_extra['MIN_DP'] AS INT)` works |
 
 ### Projections + indexes
 

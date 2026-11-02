@@ -11,7 +11,46 @@ from ingest.routing import FORMAT_PAIR, FORMAT_SCALAR, FORMAT_TRIPLE
 from ingest.routing import INFO_FLAG, INFO_PAIR, INFO_SCALAR
 
 
+# htslib sentinels in cyvcf2's int32 FORMAT arrays: a missing value and
+# the padding after a vector shorter than the header's Number.
+_INT_MISSING = -2147483648
+_INT_END_OF_VECTOR = -2147483647
+# The float sentinels are NaNs with these payloads (bcf_float_missing /
+# bcf_float_vector_end), told apart from a real NaN by their bits.
+_FLOAT_MISSING_BITS = 0x7F800001
+_FLOAT_END_OF_VECTOR_BITS = 0x7F800002
+
+
+def _stringify_numpy(arr: np.ndarray) -> str:
+    """One FORMAT value from a cyvcf2 array as the VCF would spell it:
+    elements joined by ',', '.' for a missing element, end-of-vector
+    padding dropped. A value that is entirely missing is '.'."""
+    if arr.ndim == 0:
+        arr = arr.reshape(1)
+    out: list[str] = []
+    if arr.dtype.kind == "f":
+        bits = arr.astype(np.float32).view(np.uint32)
+        for x, b in zip(arr, bits):
+            if b == _FLOAT_END_OF_VECTOR_BITS:
+                break
+            out.append("." if (b == _FLOAT_MISSING_BITS or x != x) else str(x))
+    elif arr.dtype.kind in "iu":
+        for x in arr:
+            if x == _INT_END_OF_VECTOR:
+                break
+            out.append("." if x == _INT_MISSING else str(x))
+    else:
+        out = [x.decode() if isinstance(x, bytes) else str(x) for x in arr]
+    if not out or all(s == "." for s in out):
+        return "."
+    return ",".join(out)
+
+
 def _stringify(value) -> str:
+    if isinstance(value, np.ndarray):
+        return _stringify_numpy(value)
+    if isinstance(value, np.generic):
+        return _stringify_numpy(np.asarray(value))
     if isinstance(value, (list, tuple)):
         return ",".join(str(v) for v in value)
     return str(value)
