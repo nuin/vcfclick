@@ -327,14 +327,18 @@ def get_schema() -> str:
 def run_sql(query: str) -> dict:
     """Execute a read-only SQL query and return rows + the SQL that ran.
 
-    Only a single SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is run;
-    anything that could write is refused without touching the database.
+    Only a single SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement over the
+    cohort tables is run; a write, a table function (file(), url(),
+    read_csv(), ...), a file path, a system table or a SETTINGS clause is
+    refused without touching the database.
     """
     if not is_read_only(query):
         return {
             "sql": query,
             "error": "run_sql is read-only — only a single "
-            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is allowed",
+            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement over the cohort "
+            "tables is allowed (no table functions, file paths, system "
+            "tables or SETTINGS)",
         }
     sess = get_session()
     raw = sess.query(query, "JSONCompact").bytes().decode()

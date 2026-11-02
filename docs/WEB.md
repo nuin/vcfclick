@@ -30,7 +30,11 @@ Stop the server with `Ctrl-C`.
   Arrow schemas), click to expand.
 - **SQL** — write a query, run it, see the result table. Read-only: the
   query is parsed and only a single `SELECT`/`WITH`/`SHOW`/`DESCRIBE`/
-  `EXPLAIN` statement with no write anywhere in it is run.
+  `EXPLAIN` statement with no write anywhere in it is run, and every `FROM` /
+  `JOIN` source must be a cohort table or a CTE. A table function (`file()`,
+  `url()`, `read_csv()`, `numbers()`, ...), a path in quotes, `system.*`,
+  `information_schema`, another catalog, a scalar `file()` / `getenv()` and a
+  `SETTINGS` clause are refused with the same `read-only` error as a write.
 - **Ask** — type a question in English; the server uses the same schema
   briefing the MCP server gives an LLM to generate SQL, shows you the
   SQL, and runs it. Bring your own API key (Gemini or Anthropic) — it

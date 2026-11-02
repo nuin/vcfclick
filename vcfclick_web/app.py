@@ -202,7 +202,9 @@ def query(body: QueryBody) -> dict:
     if not is_read_only(sql):
         return {
             "error": "the web UI is read-only — only a single "
-            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is allowed"
+            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement over the cohort "
+            "tables is allowed (no table functions, file paths, system "
+            "tables or SETTINGS)"
         }
     try:
         return _run_sql(sql)

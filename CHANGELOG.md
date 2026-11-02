@@ -209,6 +209,22 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Web SQL and MCP `run_sql` read the cohort tables only.** The read-only
+  guard (`storage.sql_guard`) accepted any `SELECT`, so `file()`, `url()`,
+  `s3()`, `remote()`, `executable()`, `read_csv()`, `read_text()`,
+  `read_parquet()`, `glob()`, a string-literal path as a `FROM` source,
+  `numbers(1e12)` / `range(1e12)`, the scalar `file()` / `getenv()`,
+  `system.*` tables, `SHOW PROCESSLIST` / `SHOW TABLES FROM system` and a
+  `SETTINGS` clause (`SETTINGS readonly = 0`) all ran. A page that reaches the
+  localhost web server, or an LLM prompt-injected through a VCF field, could
+  read any file the user can read and probe local network addresses. Every
+  `FROM` / `JOIN` source must now be a plain table name (optionally
+  `main.` / `default.`): the cohort tables and CTEs. Table functions,
+  literal paths, other catalogs, `information_schema`, the functions above,
+  `SETTINGS` and system introspection are refused with the same `read-only`
+  error as a write. Plain `SELECT`, `WITH`, `JOIN`, subqueries,
+  `SHOW TABLES`, `SHOW CREATE TABLE`, `DESCRIBE` and `EXPLAIN` of the cohort
+  tables are unchanged. `db query` on the command line is not affected.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only

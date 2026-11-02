@@ -94,11 +94,116 @@ def test_allows_reads(sql, dialect):
     assert is_read_only(sql, dialect) is True
 
 
+# Statements that read something other than the cohort tables: a file, a
+# URL, the environment, the server's own state, or an unbounded generator.
+# The guard allows a FROM source only when it is a plain table identifier
+# (optionally schema-qualified with main / default).
+EXTERNAL_READS = [
+    "SELECT * FROM file('/etc/hosts', 'LineAsString')",
+    "SELECT * FROM url('http://169.254.169.254/latest', CSV)",
+    "SELECT * FROM s3('http://x/y', CSV)",
+    "SELECT * FROM remote('h', db.t)",
+    "SELECT * FROM mysql('h:3306', 'db', 't', 'u', 'p')",
+    "SELECT * FROM executable('cat /etc/hosts', TabSeparated, 'x String')",
+    "SELECT content FROM read_text('/etc/hosts')",
+    "SELECT * FROM read_blob('/etc/hosts')",
+    "SELECT * FROM read_csv('/tmp/x.csv')",
+    "SELECT * FROM read_csv_auto('/tmp/x.csv')",
+    "SELECT * FROM read_parquet('/tmp/x.parquet')",
+    "SELECT * FROM read_json_auto('/tmp/x.json')",
+    "SELECT * FROM sniff_csv('/tmp/x.csv')",
+    "SELECT * FROM glob('/Users/*/.ssh/*')",
+    "SELECT * FROM '/etc/hosts'",
+    "SELECT * FROM 'x.parquet'",
+    'SELECT * FROM "x.parquet"',
+    "SELECT * FROM numbers(1000000000000)",
+    "SELECT * FROM range(1000000000000)",
+    "SELECT * FROM generate_series(1, 1000000000000)",
+    "SELECT * FROM duckdb_settings()",
+    "SELECT * FROM duckdb_tables()",
+    "SELECT * FROM pragma_database_size()",
+    # scalar file / environment functions
+    "SELECT file('/etc/passwd')",
+    "SELECT getenv('HOME')",
+    # the same sources below a plain cohort query
+    "SELECT * FROM variants WHERE chrom IN (SELECT * FROM file('/x', 'CSV'))",
+    "SELECT * FROM variants v JOIN read_csv('/tmp/x.csv') r ON v.pos = r.pos",
+    "WITH f AS (SELECT * FROM read_csv('/tmp/x.csv')) SELECT * FROM f",
+    "SELECT 1 UNION ALL SELECT * FROM numbers(3)",
+    "EXPLAIN SELECT * FROM numbers(3)",
+    "EXPLAIN SELECT * FROM file('/etc/hosts', 'LineAsString')",
+    "DESCRIBE SELECT * FROM read_csv('/tmp/x.csv')",
+    "DESCRIBE TABLE file('/etc/hosts', 'LineAsString')",
+    # another database, catalog or schema
+    "SELECT * FROM store.main.variants",
+    "SELECT * FROM information_schema.tables",
+    "SELECT * FROM pg_catalog.pg_tables",
+]
+
+# Server introspection and per-query setting overrides.
+SYSTEM_READS = [
+    "SELECT * FROM system.processes",
+    "SELECT query FROM system.processes",
+    "SELECT * FROM system.tables",
+    "DESCRIBE system.processes",
+    "SHOW TABLES FROM system",
+    "SHOW CREATE TABLE system.processes",
+    "SHOW PROCESSLIST",
+    "SELECT 1 SETTINGS readonly = 0",
+    "SELECT 1 SETTINGS max_execution_time = 0",
+    "SELECT 1 SETTINGS max_threads = 2",
+    "SELECT count() FROM variants SETTINGS max_result_rows = 0 FORMAT JSONCompact",
+    "SELECT * FROM (SELECT 1 SETTINGS readonly = 0)",
+]
+
+# Cohort reads the stricter source rule must keep accepting.
+COHORT_READS = [
+    "SELECT chrom, pos FROM variants WHERE pos > 100 ORDER BY pos LIMIT 10",
+    "WITH hi AS (SELECT chrom, pos FROM variants WHERE qual > 30) "
+    "SELECT count(*) FROM hi",
+    "SELECT v.chrom, g.sample_id FROM variants v "
+    "JOIN genotypes g ON v.chrom = g.chrom AND v.pos = g.pos",
+    "SELECT * FROM variants v, samples s WHERE v.ingest_id = s.ingest_id",
+    "SELECT * FROM variants AS v LEFT JOIN genotypes AS g USING (ingest_id, chrom, pos)",
+    "SELECT * FROM variants WHERE pos IN (SELECT pos FROM genotypes)",
+    'SELECT * FROM "variants" LIMIT 1',
+    "SELECT * FROM (SELECT 1 AS n) t",
+    "SELECT * FROM (VALUES (1), (2)) AS t(x)",
+    "SELECT count(*) FROM genotypes GROUP BY sample_id",
+    "DESCRIBE variants",
+    "SHOW TABLES",
+    "SHOW CREATE TABLE variants",
+    "EXPLAIN SELECT chrom FROM variants JOIN samples USING (ingest_id)",
+]
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("sql", EXTERNAL_READS)
+def test_blocks_file_url_and_generator_sources(sql, dialect):
+    assert is_read_only(sql, dialect) is False
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("sql", SYSTEM_READS)
+def test_blocks_system_tables_and_settings(sql, dialect):
+    assert is_read_only(sql, dialect) is False
+
+
+@pytest.mark.parametrize("dialect", DIALECTS)
+@pytest.mark.parametrize("sql", COHORT_READS)
+def test_allows_cohort_reads(sql, dialect):
+    assert is_read_only(sql, dialect) is True
+
+
+def test_allows_default_schema_qualifier():
+    assert is_read_only("SELECT * FROM main.variants", "duckdb") is True
+    assert is_read_only("SELECT * FROM default.variants", "clickhouse") is True
+
+
 @pytest.mark.parametrize(
     "sql",
     [
         "SELECT count(*) FROM genotypes FORMAT JSONCompact",
-        "SELECT 1 SETTINGS max_threads = 2",
         "SELECT arrayJoin([1, 2]) AS x",
         "EXPLAIN SYNTAX SELECT 1",
         "SHOW TABLES LIKE '%into outfile%'",
@@ -163,3 +268,5 @@ def test_mcp_run_sql_refuses_writes_without_touching_db(monkeypatch):
     out = server.run_sql("DROP TABLE variants")
     assert "read-only" in out["error"]
     assert out["sql"] == "DROP TABLE variants"
+    out = server.run_sql("SELECT * FROM file('/etc/hosts', 'LineAsString')")
+    assert "read-only" in out["error"]
