@@ -9,6 +9,8 @@ DuckDB refuses above 65535.
 
 from __future__ import annotations
 
+import json
+
 
 import pytest
 
@@ -83,3 +85,77 @@ def test_dump_writes_into_a_directory_with_a_quote_in_its_name(
     assert (out / "variants.parquet").stat().st_size > 0
     assert (out / "genotypes.parquet").stat().st_size > 0
     assert not list(out.glob("tmp*")), "staging file left behind"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_trio_allele_balance_gate_survives_deep_allele_depths(
+    backend, vcfclick_home, tmp_path
+):
+    """A het proband call with AD 30000,40000 (70000 reads, over the 65535
+    a UInt16 holds) is a de novo candidate with allele balance 0.571 on both
+    engines. DuckDB raised `Overflow in addition of UINT16` on the unwidened
+    sum and the whole run died."""
+    sites = [
+        Site(
+            "chr1",
+            1000,
+            "A",
+            "G",
+            ("0/1:30000,40000:99:65000", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+            info="AF=0.0005",
+            fmt="GT:AD:GQ:DP",
+        ),
+        Site(
+            "chr1",
+            2000,
+            "A",
+            "G",
+            ("0/1:15,15:99:30", "0/0:30,0:99:30", "0/0:30,0:99:30"),
+            info="AF=0.0006",
+            fmt="GT:AD:GQ:DP",
+        ),
+    ]
+    vcf = _vcf(tmp_path, "deep", ["CHILD", "FATHER", "MOTHER"], sites)
+    run_cli(vcfclick_home, backend, "db", "create", "t")
+    run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ingest",
+        "t",
+        str(vcf),
+        "--ingest-id",
+        "i1",
+        "--serial",
+        "--keep-reference",
+    )
+    run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ped",
+        "t",
+        "--proband",
+        "CHILD",
+        "--father",
+        "FATHER",
+        "--mother",
+        "MOTHER",
+    )
+    r = run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "trio",
+        "t",
+        "--proband",
+        "CHILD",
+        "--category",
+        "denovo",
+        "--max-af",
+        "0.001",
+        "--format",
+        "json",
+    )
+    dn = json.loads(r.stdout)["models"]["denovo"]
+    assert {c["pos"] for c in dn["candidates"]} == {1000, 2000}

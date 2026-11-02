@@ -320,6 +320,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - `db dump` quotes its staging path. The path sits in the output directory
   the user named, so `--out "O'Brien"` was a SQL syntax error on both
   backends.
+- `db trio` on DuckDB no longer dies on a het call with more than 65535
+  reads. The allele-balance gate added `ad_ref + ad_alt` as 16-bit
+  unsigned columns, which DuckDB refuses to overflow (`AD=30000,40000`
+  raised `Overflow in addition of UINT16` and killed every model of the
+  run); both are widened to 64 bits first, as `allele_fraction_sql` and
+  the X-linked models already did. The pinned trio SQL text changes in
+  that one clause.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
