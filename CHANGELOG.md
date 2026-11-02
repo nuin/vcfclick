@@ -325,6 +325,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `vcfclick web` on DuckDB returned another request's rows, or an empty
+  result, when two requests ran at once (the UI fires `/api/meta` and
+  `/api/query` together). The one cached DuckDB session ran every statement
+  on the connection's shared cursor from the server's threadpool; 4 threads
+  running 200 queries each got 451 of 800 results wrong. Each query now runs
+  on a cursor of its own (a duplicate connection to the same database), and
+  the session cache opens one session per database under concurrent first
+  calls.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

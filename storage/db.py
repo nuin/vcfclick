@@ -37,6 +37,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 import pyarrow as pa
@@ -116,6 +117,9 @@ _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DB_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,62}$")
 
 _sessions: dict[str, object] = {}
+# Serialises the check-and-open in get_session and the one-time lockdown in
+# get_readonly_session: `vcfclick web` calls both from a threadpool.
+_sessions_lock = threading.RLock()
 
 
 def _resolve_name(name: str | None) -> str | None:
@@ -159,11 +163,12 @@ def get_session(name: str | None = None):
     # juggling both engines (tests, in-process backend switch)
     # doesn't hand back the wrong handle.
     cache_key = f"{backend()}::{resolved or '_legacy'}"
-    if cache_key not in _sessions:
-        path = db_path(name)
-        path.mkdir(parents=True, exist_ok=True)
-        _sessions[cache_key] = _open_session(path)
-    return _sessions[cache_key]
+    with _sessions_lock:
+        if cache_key not in _sessions:
+            path = db_path(name)
+            path.mkdir(parents=True, exist_ok=True)
+            _sessions[cache_key] = _open_session(path)
+        return _sessions[cache_key]
 
 
 # Marker set on a session once `session_lockdown_sql` has run on it.
@@ -181,12 +186,13 @@ def get_readonly_session(name: str | None = None):
     the processes that only read the cohort (`vcfclick web`, the MCP
     server), and backs the parse-time check in `storage.sql_guard`.
     """
-    sess = get_session(name)
-    if not getattr(sess, _LOCKED_ATTR, False):
-        for stmt in session_lockdown_sql():
-            sess.query(stmt)
-        setattr(sess, _LOCKED_ATTR, True)
-    return sess
+    with _sessions_lock:
+        sess = get_session(name)
+        if not getattr(sess, _LOCKED_ATTR, False):
+            for stmt in session_lockdown_sql():
+                sess.query(stmt)
+            setattr(sess, _LOCKED_ATTR, True)
+        return sess
 
 
 def list_dbs() -> list[str]:
