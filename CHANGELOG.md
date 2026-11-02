@@ -326,6 +326,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   failed parallel ingest removes its staging directory (the library's
   `keep_staging=True` keeps it) instead of leaving the staged Parquet
   under the database.
+- `ingest_parallel(staging_dir=...)` (library API; the CLI does not expose
+  it) stages into a fresh `<ingest_id>.*` subdirectory of the given
+  directory and removes only that subdirectory. It used to glob stale
+  `variants_*.parquet` files already in the directory into the import and
+  then delete the whole directory, with whatever else it held.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

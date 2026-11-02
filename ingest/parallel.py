@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+import tempfile
 import time
 import uuid
 from concurrent.futures import ProcessPoolExecutor
@@ -207,13 +208,15 @@ def _make_staging_dir(options: ParallelOptions) -> Path:
     Under the database it is `staging/<ingest_id>`, wiped first when a
     failed run under the same id left it behind: the bulk-import globs
     at the end of Phase 2 would otherwise pick up the old Parquets
-    alongside the new ones. A caller-supplied staging_dir is theirs and
-    is not wiped first.
+    alongside the new ones. A caller-supplied staging_dir is theirs:
+    this run gets a fresh subdirectory inside it, so files already there
+    are neither imported nor deleted, and only that subdirectory is
+    removed afterwards.
     """
     if options.staging_dir:
-        staging = Path(options.staging_dir)
-        staging.mkdir(parents=True, exist_ok=True)
-        return staging
+        base = Path(options.staging_dir)
+        base.mkdir(parents=True, exist_ok=True)
+        return Path(tempfile.mkdtemp(prefix=f"{options.ingest_id}.", dir=base))
     staging = db_path() / "staging" / options.ingest_id
     if staging.exists():
         shutil.rmtree(staging)

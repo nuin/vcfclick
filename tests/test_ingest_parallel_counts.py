@@ -272,3 +272,52 @@ def test_staged_count_must_match_index_record_count(
     assert "--serial" in result["raised"], result["raised"]
     assert result["variants"] == "5", result
     assert result["staging"] == [], result
+
+
+_USER_STAGING_INGEST = """
+import json
+import sys
+from pathlib import Path
+
+from ingest.parallel import ingest_parallel
+from storage import apply_schema, db_path, get_session
+
+db_path("par").mkdir(parents=True, exist_ok=True)
+apply_schema()
+user_dir = Path(sys.argv[2])
+ingest_parallel(sys.argv[1], cohort="A", ingest_id="t1", workers=2, staging_dir=str(user_dir))
+
+sess = get_session("par")
+raw = sess.query("SELECT count(*) FROM variants", "CSV").bytes().decode().strip()
+n = [ln for ln in raw.splitlines() if ln.strip()][-1]
+print("RESULT " + json.dumps({
+    "variants": n,
+    "left": sorted(p.name for p in user_dir.iterdir()),
+}))
+"""
+
+
+def test_user_staging_dir_is_neither_imported_nor_deleted(
+    tmp_path, vcfclick_home, run_python
+):
+    """A caller-supplied staging_dir keeps its own files: a stale
+    `variants_*.parquet` in it is not globbed into the import (it is not
+    a Parquet file, so importing it would fail) and the directory itself
+    survives the post-commit cleanup."""
+    user_dir = tmp_path / "userdir"
+    user_dir.mkdir()
+    (user_dir / "precious.txt").write_text("keep me\n")
+    (user_dir / "variants_stale_0000.parquet").write_text("not parquet\n")
+
+    out = run_python(
+        vcfclick_home,
+        _USER_STAGING_INGEST,
+        str(TINY_VCF),
+        str(user_dir),
+        VCFCLICK_DB_NAME="par",
+        VCFCLICK_BACKEND=_backend(),
+    )
+    line = [ln for ln in out.splitlines() if ln.startswith("RESULT ")][-1]
+    result = json.loads(line.removeprefix("RESULT "))
+    assert result["variants"] == "5", result
+    assert result["left"] == ["precious.txt", "variants_stale_0000.parquet"], result
