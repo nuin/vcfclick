@@ -57,7 +57,7 @@ from ingest._arrow import (
     INGESTIONS_ARROW_SCHEMA,
     SAMPLES_ARROW_SCHEMA,
 )
-from ingest.parallel_split import DEFAULT_BUCKET_SIZE, split_by_variant_count
+from ingest.parallel_split import DEFAULT_BUCKET_SIZE, plan_by_variant_count
 from ingest.parallel_worker import _worker
 from ingest.routing import classify_header
 from ingest.vcf_load import BATCH_SIZE
@@ -74,6 +74,11 @@ from storage import (
 )
 
 log = logging.getLogger(__name__)
+
+
+class ParallelIngestError(RuntimeError):
+    """The workers staged a different number of variants than the VCF
+    holds. Raised before any engine write, so prior data is intact."""
 
 
 def _ensure_schema() -> None:
@@ -152,23 +157,10 @@ def _ingest_parallel_locked(
     extra_format_fields = classification["extra_format"]
     samples = list(vcf.samples)
 
-    staging = (
-        Path(options.staging_dir)
-        if options.staging_dir
-        else db_path() / "staging" / options.ingest_id
-    )
-    # Wipe a stale staging directory from a previous failed run under
-    # the same ingest_id. Without this the bulk-import globs at the end
-    # of Phase 2 would pick up the old Parquets alongside the new ones —
-    # documented corruption path. Only clear when we chose the staging
-    # location ourselves; a user-supplied --staging-dir is theirs.
-    if not options.staging_dir and staging.exists():
-        shutil.rmtree(staging)
-    staging.mkdir(parents=True, exist_ok=True)
+    regions, expected, split_elapsed = _plan_regions(vcf_path, options)
+    staging = _make_staging_dir(options)
 
     _log_parallel_plan(vcf_path, cohort, samples, staging, classification, options)
-
-    regions, split_elapsed = _plan_regions(vcf_path, options)
 
     # Tracks whether Phase 2 (engine writes) have started — see the same
     # flag in ingest.vcf_load.ingest. Determines whether the except arm
@@ -185,6 +177,7 @@ def _ingest_parallel_locked(
         total, parse_elapsed = _stage_regions(
             vcf_path, staging, regions, extra_format_fields, options
         )
+        _check_staged_count(total, expected, vcf_path)
 
         # ── Phase 2: workers succeeded. Commit atomically. ──
         # Wipe prior rows under this ingest_id, then bulk-import the
@@ -197,12 +190,10 @@ def _ingest_parallel_locked(
         )
     except BaseException:
         _parallel_failure(commit_started, options.ingest_id)
+        _remove_staging_dir(staging, options)
         raise
 
-    if not options.keep_staging:
-        shutil.rmtree(staging)
-    else:
-        log.info("[parallel-ingest] staging Parquet files kept at %s", staging)
+    _remove_staging_dir(staging, options)
 
     _log_parallel_timing(
         total, split_elapsed, parse_elapsed, import_elapsed, options.workers
@@ -210,34 +201,92 @@ def _ingest_parallel_locked(
     return options.ingest_id
 
 
-def _plan_regions(vcf_path: str, options: ParallelOptions):
-    # Plan balanced regions. Prefer the tabix index (essentially free)
-    # and fall back to a cyvcf2 pre-pass if the .tbi is missing.
-    from ingest._tabix import split_via_tbi
+def _make_staging_dir(options: ParallelOptions) -> Path:
+    """The directory this run's workers write their Parquet files to.
+
+    Under the database it is `staging/<ingest_id>`, wiped first when a
+    failed run under the same id left it behind: the bulk-import globs
+    at the end of Phase 2 would otherwise pick up the old Parquets
+    alongside the new ones. A caller-supplied staging_dir is theirs and
+    is not wiped first.
+    """
+    if options.staging_dir:
+        staging = Path(options.staging_dir)
+        staging.mkdir(parents=True, exist_ok=True)
+        return staging
+    staging = db_path() / "staging" / options.ingest_id
+    if staging.exists():
+        shutil.rmtree(staging)
+    staging.mkdir(parents=True, exist_ok=True)
+    return staging
+
+
+def _remove_staging_dir(staging: Path, options: ParallelOptions) -> None:
+    """Remove this run's staging directory unless keep_staging asked for
+    it. Runs after success and after failure: a failed WGS run would
+    otherwise leave tens of GB of Parquet behind under the database."""
+    if options.keep_staging:
+        log.info("[parallel-ingest] staging Parquet files kept at %s", staging)
+        return
+    shutil.rmtree(staging, ignore_errors=True)
+
+
+def _check_staged_count(total: int, expected: int, vcf_path: str) -> None:
+    """Fail before the commit when the workers staged more or fewer
+    variants than the VCF holds.
+
+    `expected` comes from the tabix index's per-contig record counts or
+    from the cyvcf2 pre-pass, neither of which depends on the regions
+    the workers were given, so a planning gap (a region that ends before
+    a contig's last record) or an overlap (one record staged by two
+    workers) shows up here instead of as a quietly wrong database.
+    """
+    if total == expected:
+        return
+    raise ParallelIngestError(
+        f"parallel ingest staged {total:,} variants but {vcf_path} holds "
+        f"{expected:,} records; nothing was written to the database. "
+        "If the .tbi index is older than the VCF, rebuild it "
+        "(tabix -f -p vcf FILE); otherwise re-run with --serial and "
+        "report this."
+    )
+
+
+def _plan_regions(
+    vcf_path: str, options: ParallelOptions
+) -> tuple[list[str], int, float]:
+    """Balanced regions plus the number of records the VCF holds.
+
+    Prefers the tabix index (essentially free): its linear index gives
+    the regions and its pseudo-bins the record count. Falls back to one
+    cyvcf2 pre-pass, which yields both, when the .tbi is missing, when
+    it has no contigs (a header-only VCF) or when it lacks the
+    pseudo-bins (an index not written by htslib).
+    """
+    from ingest._tabix import split_via_tbi, tbi_record_count
 
     started_split = time.time()
     regions = split_via_tbi(vcf_path, options.workers, options.bucket_size)
-    # Tabix-derived split returns None when no .tbi is present and an
-    # empty list when the index exists but the linear-index buckets are
-    # too sparse to balance (typical for tiny VCFs — a 5-record fixture
-    # may fit in a single 16Kb bucket with no measurable density to
-    # split on). Both cases fall back to the cyvcf2 count pre-pass,
-    # which can split any non-empty VCF into at least one region.
-    if not regions:
-        regions = split_by_variant_count(vcf_path, options.workers, options.bucket_size)
+    expected = tbi_record_count(vcf_path) if regions else None
+    if not regions or expected is None:
+        regions, expected = plan_by_variant_count(
+            vcf_path, options.workers, options.bucket_size
+        )
         split_source = "cyvcf2 pre-pass"
     else:
         split_source = "tabix .tbi"
     split_elapsed = time.time() - started_split
     log.info(
-        "[parallel-ingest] split:  %.2fs via %s → %d regions across %d contigs",
+        "[parallel-ingest] split:  %.2fs via %s → %d regions across %d contigs, "
+        "%s records",
         split_elapsed,
         split_source,
         len(regions),
-        len({r.split(":")[0] for r in regions}),
+        len({r.rsplit(":", 1)[0] for r in regions}),
+        f"{expected:,}",
     )
 
-    return regions, split_elapsed
+    return regions, expected, split_elapsed
 
 
 def _stage_regions(
@@ -308,8 +357,16 @@ def _commit_parallel(staging, vcf_path, cohort, ingest_id, samples, total):
     v_expr = parquet_file_expr(f"{staging}/variants_*.parquet")
     g_expr = parquet_file_expr(f"{staging}/genotypes_*.parquet")
     m_expr = parquet_file_expr(f"{staging}/missing_*.parquet")
-    sess.query(f"INSERT INTO variants ({v_cols}) SELECT {v_cols} FROM {v_expr}")
-    sess.query(f"INSERT INTO genotypes ({g_cols}) SELECT {g_cols} FROM {g_expr}")
+    # A VCF with no records stages no Parquet at all (a worker flushes
+    # only non-empty batches, and an empty file plans no regions). Both
+    # engines raise on a glob that matches no file, and by this point
+    # the prior rows under this ingest_id are gone, so each INSERT runs
+    # only when its files exist: the ingest then records 0 variants, as
+    # the serial path does.
+    if any(staging.glob("variants_*.parquet")):
+        sess.query(f"INSERT INTO variants ({v_cols}) SELECT {v_cols} FROM {v_expr}")
+    if any(staging.glob("genotypes_*.parquet")):
+        sess.query(f"INSERT INTO genotypes ({g_cols}) SELECT {g_cols} FROM {g_expr}")
     if any(staging.glob("missing_*.parquet")):
         sess.query(
             f"INSERT INTO missing_genotypes ({m_cols}) SELECT {m_cols} FROM {m_expr}"

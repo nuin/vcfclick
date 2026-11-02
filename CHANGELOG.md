@@ -302,6 +302,30 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Parallel `db ingest` (the default) lands the same rows as `--serial`.
+  Four shapes lost or duplicated rows while exiting 0:
+  - a small or sparse VCF whose records share one BGZF block gave every
+    16 kb tabix window a byte delta of 0, and those windows were skipped,
+    so the planned region was the last 100 kb bucket alone (150 variants
+    20 kb apart on one contig stored 5);
+  - the last tabix window of a contig was credited to the 100 kb bucket of
+    its first base only, so when it straddled a bucket boundary the
+    variants past the boundary were never read (20,000 sites at POS
+    1000..200990 stored 19,901);
+  - a region query returns every record that overlaps the region, so a
+    deletion starting before a region boundary was staged by two workers
+    and stored twice;
+  - on the cyvcf2 pre-pass path (no `.tbi`), a contig whose first record
+    sits at an exact multiple of 100,000 fell outside every region.
+  After staging, the ingest now compares the staged variant count against
+  the record count from the tabix index's pseudo-bins (or from the pre-pass)
+  and fails with both numbers, before any database write, when they differ;
+  a stale `.tbi` is the usual cause. Re-ingesting a header-only VCF under an
+  id that held data recorded 0 variants on the serial path but raised on
+  the parallel path after the prior rows were gone; it records 0 now. A
+  failed parallel ingest removes its staging directory (the library's
+  `keep_staging=True` keeps it) instead of leaving the staged Parquet
+  under the database.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
