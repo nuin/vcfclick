@@ -134,6 +134,18 @@ EXTERNAL_READS = [
     "EXPLAIN SELECT * FROM file('/etc/hosts', 'LineAsString')",
     "DESCRIBE SELECT * FROM read_csv('/tmp/x.csv')",
     "DESCRIBE TABLE file('/etc/hosts', 'LineAsString')",
+    # a literal where a table goes (DuckDB SUMMARIZE / SHOW scan the file)
+    "SUMMARIZE '/etc/hosts'",
+    "SUMMARIZE TABLE '/etc/hosts'",
+    "SUMMARIZE 'http://example.com/x.csv'",
+    "SUMMARIZE read_csv('/etc/hosts')",
+    "SUMMARIZE SELECT * FROM read_csv('/etc/hosts')",
+    "DESCRIBE '/etc/hosts'",
+    "DESCRIBE 'http://example.com/x.csv'",
+    "DESCRIBE read_csv('/etc/hosts')",
+    "SHOW '/etc/hosts'",
+    "SHOW TABLE '/etc/hosts'",
+    "SHOW TABLES FROM '/etc/hosts'",
     # another database, catalog or schema
     "SELECT * FROM store.main.variants",
     "SELECT * FROM information_schema.tables",

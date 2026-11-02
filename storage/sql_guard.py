@@ -60,6 +60,10 @@ _READ_ROOTS: tuple[type[exp.Expression], ...] = tuple(
     if t is not None
 )
 
+_SUMMARIZE: tuple[type[exp.Expression], ...] = tuple(
+    t for t in (getattr(exp, "Summarize", None),) if t is not None
+)
+
 # Nodes that write or change session/database state. Looked up by name
 # so the guard survives sqlglot versions that lack some of them.
 _WRITE_NODES: tuple[type[exp.Expression], ...] = tuple(
@@ -177,15 +181,29 @@ def _show_tail_ok(text: str, dialect: str) -> bool:
         tokens = Dialect.get_or_raise(dialect).tokenize(text)
     except (SqlglotError, RecursionError):
         return False
+    previous: TokenType | None = None
     for t in tokens:
         if t.token_type == TokenType.INTO:
             return False
         if t.token_type == TokenType.STRING:
-            continue
-        word = t.text.upper()
-        if word in _FILE_WORDS or word in _SYSTEM_WORDS:
-            return False
+            # A string is a name pattern after LIKE; anywhere else it is a
+            # path (DuckDB `SHOW '/etc/hosts'` describes the file).
+            if previous not in (TokenType.LIKE, TokenType.ILIKE):
+                return False
+        else:
+            word = t.text.upper()
+            if word in _FILE_WORDS or word in _SYSTEM_WORDS:
+                return False
+        previous = t.token_type
     return True
+
+
+def _root_source_ok(node: exp.Expression) -> bool:
+    """DESCRIBE / SUMMARIZE take a table or a query; a string literal there
+    is a path DuckDB scans (`SUMMARIZE '/etc/hosts'`)."""
+    if not isinstance(node, (exp.Describe, *_SUMMARIZE)):
+        return True
+    return isinstance(node.this, (exp.Table, exp.Query))
 
 
 def _table_ok(table: exp.Table) -> bool:
@@ -238,7 +256,7 @@ def _check(node: exp.Expression, dialect: str, depth: int = 0) -> bool:
         return False
     if not isinstance(node, _READ_ROOTS):
         return False
-    return _tree_ok(node)
+    return _root_source_ok(node) and _tree_ok(node)
 
 
 def is_read_only(sql: str, dialect: str | None = None) -> bool:
