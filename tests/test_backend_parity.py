@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from tests.conftest import bgzip_vcf, run_cli
+from tests.conftest import FIXTURES, bgzip_vcf, run_cli
 from tests.fixtures._vcfgen import Site, write_vcf
 
 BACKENDS = ("chdb", "duckdb")
@@ -58,3 +58,28 @@ def test_stats_counts_distinct_sample_pairs_not_concatenations(
     out = run_cli(vcfclick_home, backend, "db", "stats", "t").stdout
     line = next(ln for ln in out.splitlines() if ln.strip().startswith("X "))
     assert line.split()[-2:] == ["2", "samples"], line
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
+def test_dump_writes_into_a_directory_with_a_quote_in_its_name(
+    backend, vcfclick_home, tmp_path
+):
+    """The staging file sits in the output directory, whose name the user
+    chose; the path is quoted like every other literal."""
+    run_cli(vcfclick_home, backend, "db", "create", "t")
+    run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ingest",
+        "t",
+        str(FIXTURES / "tiny.vcf.gz"),
+        "--ingest-id",
+        "i1",
+        "--serial",
+    )
+    out = tmp_path / "O'Brien"
+    run_cli(vcfclick_home, backend, "db", "dump", "t", "--out", str(out))
+    assert (out / "variants.parquet").stat().st_size > 0
+    assert (out / "genotypes.parquet").stat().st_size > 0
+    assert not list(out.glob("tmp*")), "staging file left behind"
