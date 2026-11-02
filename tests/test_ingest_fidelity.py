@@ -188,3 +188,34 @@ def test_record_without_gt_builds_no_genotype_rows(tmp_path):
     )
     assert genotype_rows == []
     assert missing_rows == []
+
+
+# ─── finding 39: a record with no ALT allele ────────────────────────────
+
+
+def test_no_alt_record_names_the_remedy(tmp_path):
+    """ALT '.' is not a multi-allelic site: the error says the record has
+    no ALT allele and names the bcftools filter that drops such records.
+    A real multi-allelic record keeps the norm remedy."""
+    from ingest.vcf_rows import require_single_alt
+
+    vcf = _write_vcf(
+        tmp_path / "alt.vcf",
+        ["A"],
+        [
+            "chr1\t100\t.\tA\t.\t50\tPASS\tDP=9\tGT\t0/0",
+            "chr1\t200\t.\tA\tG,T\t50\tPASS\tDP=9\tGT\t1/2",
+        ],
+    )
+    _, (ref_only, multi) = _records(vcf)
+    with pytest.raises(ValueError) as e:
+        require_single_alt(ref_only, "in.vcf.gz")
+    msg = str(e.value)
+    assert "chr1:100" in msg and "no ALT allele" in msg
+    assert "bcftools view -e 'ALT=\".\"'" in msg
+    assert "Multi-allelic" not in msg
+    with pytest.raises(ValueError, match="Multi-allelic site at chr1:200"):
+        require_single_alt(multi, "in.vcf.gz")
+    assert "bcftools norm -m -" in str(
+        pytest.raises(ValueError, require_single_alt, multi, "in.vcf.gz").value
+    )

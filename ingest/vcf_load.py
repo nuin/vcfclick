@@ -39,7 +39,7 @@ from ingest._arrow import (
     write_parquet,
 )
 from ingest.routing import classify_header
-from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows
+from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows, require_single_alt
 from storage import (
     apply_schema,
     db_path,
@@ -206,12 +206,7 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
     n_variants = 0
 
     for variant in vcf:
-        if len(variant.ALT) != 1:
-            raise ValueError(
-                f"Multi-allelic site at {variant.CHROM}:{variant.POS} "
-                f"({len(variant.ALT)} ALTs). Re-normalise with: "
-                f"bcftools norm -m - {options.vcf_path} | bgzip > out.vcf.gz"
-            )
+        require_single_alt(variant, options.vcf_path)
         variant_row, genotype_rows, missing_rows = build_record_rows(
             variant,
             options.samples,

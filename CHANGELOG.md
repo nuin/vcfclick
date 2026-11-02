@@ -348,6 +348,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   crashed with cyvcf2's `error parsing genotypes`. Such a record now stores
   its variant row with the called counts "not recorded" (NULL) and no
   genotype rows, as `called_counts` already reported it.
+- A record with no ALT allele (`ALT` is `.`, as `bcftools mpileup` without
+  `-v` writes) was reported as `Multi-allelic site ... (0 ALTs)` with a
+  `bcftools norm -m -` remedy that leaves the record in place. Serial and
+  parallel ingests now say the record has no ALT allele and name
+  `bcftools view -e 'ALT="."'` to drop such records.
 
 ## [0.14.3]
 

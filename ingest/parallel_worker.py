@@ -10,7 +10,7 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
-from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows
+from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows, require_single_alt
 
 
 def _worker(args: tuple) -> tuple[str, int, int]:
@@ -57,11 +57,7 @@ def _worker(args: tuple) -> tuple[str, int, int]:
         batch_idx += 1
 
     for variant in vcf(region):
-        if len(variant.ALT) != 1:
-            raise ValueError(
-                f"Multi-allelic at {variant.CHROM}:{variant.POS}. "
-                f"Normalise with bcftools norm -m -."
-            )
+        require_single_alt(variant, vcf_path)
         variant_row, genotype_rows, missing_rows = build_record_rows(
             variant,
             samples,

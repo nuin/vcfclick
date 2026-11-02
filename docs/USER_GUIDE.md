@@ -37,6 +37,11 @@ bcftools norm -m - input.vcf.gz | bgzip > normalised.vcf.gz
 tabix -p vcf normalised.vcf.gz
 ```
 
+A record with no ALT allele (`ALT` is `.`, as `bcftools mpileup` without
+`-v` writes) is refused as well: vcfclick stores variant sites only.
+Drop such records with `bcftools view -e 'ALT="."' input.vcf.gz -Oz -o
+sites.vcf.gz`.
+
 The `.tbi` index is required for parallel ingestion and useful for
 range-aware splitting.
 

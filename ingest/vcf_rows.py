@@ -222,6 +222,30 @@ def called_counts(variant, n_samples: int) -> CalledCounts:
     )
 
 
+def require_single_alt(variant, vcf_path: str) -> None:
+    """Raise ValueError unless the record has exactly one ALT allele.
+
+    The loaders expect `bcftools norm -m -` output. A record with two or
+    more ALTs is told to re-normalise; a record with none (ALT '.', as
+    bcftools mpileup without -v or some joint-call exports write) cannot
+    be fixed by norm, so it is told which records to drop instead.
+    """
+    n_alt = len(variant.ALT)
+    if n_alt == 1:
+        return
+    site = f"{variant.CHROM}:{variant.POS}"
+    if n_alt == 0:
+        raise ValueError(
+            f"Record at {site} has no ALT allele (ALT is '.'); vcfclick "
+            f"stores variant sites only. Drop such records with: "
+            f"bcftools view -e 'ALT=\".\"' {vcf_path} -Oz -o out.vcf.gz"
+        )
+    raise ValueError(
+        f"Multi-allelic site at {site} ({n_alt} ALTs). Re-normalise with: "
+        f"bcftools norm -m - {vcf_path} | bgzip > out.vcf.gz"
+    )
+
+
 def build_missing_rows(
     variant, samples: list[str], counts: CalledCounts, ingest_id: str
 ) -> list[list]:
