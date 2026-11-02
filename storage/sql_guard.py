@@ -29,6 +29,11 @@ Anything sqlglot cannot parse is rejected (fail closed). Comments are
 handled by the tokenizer, so they can neither hide a verb nor false-trip
 the check, and SQL *functions* such as ``replace()`` or ``truncate()``
 are not confused with statements.
+
+The guard is the first of two layers. `storage.get_readonly_session`
+also locks the session itself (DuckDB ``enable_external_access = false``
+plus ``lock_configuration``, chDB ``readonly = 1``), so a statement the
+parser misreads still cannot reach a file or change a setting.
 """
 
 from __future__ import annotations

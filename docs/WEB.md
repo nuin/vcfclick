@@ -35,6 +35,10 @@ Stop the server with `Ctrl-C`.
   `url()`, `read_csv()`, `numbers()`, ...), a path in quotes, `system.*`,
   `information_schema`, another catalog, a scalar `file()` / `getenv()` and a
   `SETTINGS` clause are refused with the same `read-only` error as a write.
+  The server also locks the database session it queries (DuckDB
+  `enable_external_access = false` with the configuration locked, chDB
+  `readonly = 1`), so a statement the parser misreads still cannot open a
+  file, fetch a URL or change a setting.
 - **Ask** — type a question in English; the server uses the same schema
   briefing the MCP server gives an LLM to generate SQL, shows you the
   SQL, and runs it. Bring your own API key (Gemini or Anthropic) — it

@@ -25,7 +25,7 @@ from cli.family_checks import PROBE_FRACTION, PROBE_MIN_SITES, PROBE_REL_TOLERAN
 from cli.filter_registry import DEFAULTS as _FILTER_DEFAULTS
 from cli.trio_analysis import CATEGORY_CHOICES, DEFAULT_MAX_AF
 from cli.xchrom import GRCH37_CHRX_LENGTH, NPX_INTERVALS
-from storage import get_session
+from storage import get_readonly_session, get_session
 from storage.sql import AF_EPSILON
 from storage.sql_guard import is_read_only
 
@@ -340,7 +340,8 @@ def run_sql(query: str) -> dict:
             "tables is allowed (no table functions, file paths, system "
             "tables or SETTINGS)",
         }
-    sess = get_session()
+    # Locked at the engine level too (storage.sql.session_lockdown_sql).
+    sess = get_readonly_session()
     raw = sess.query(query, "JSONCompact").bytes().decode()
     parsed = json.loads(raw)
     return {

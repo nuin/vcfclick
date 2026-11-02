@@ -264,7 +264,7 @@ def test_mcp_run_sql_refuses_writes_without_touching_db(monkeypatch):
     def boom():
         raise AssertionError("get_session must not be called for a write")
 
-    monkeypatch.setattr(server, "get_session", boom)
+    monkeypatch.setattr(server, "get_readonly_session", boom)
     out = server.run_sql("DROP TABLE variants")
     assert "read-only" in out["error"]
     assert out["sql"] == "DROP TABLE variants"

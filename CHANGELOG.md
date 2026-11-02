@@ -225,6 +225,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   error as a write. Plain `SELECT`, `WITH`, `JOIN`, subqueries,
   `SHOW TABLES`, `SHOW CREATE TABLE`, `DESCRIBE` and `EXPLAIN` of the cohort
   tables are unchanged. `db query` on the command line is not affected.
+- The web server and the MCP server lock the database session they query
+  at the engine level before the first caller statement
+  (`storage.get_readonly_session`): DuckDB `enable_external_access = false`
+  with `lock_configuration = true`, chDB `readonly = 1`. The lock holds for
+  the life of the process, so a statement the parser misreads still cannot
+  open a file, fetch a URL, write, or change a setting. `db query`, ingest
+  and the TUI keep the unlocked session.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only
