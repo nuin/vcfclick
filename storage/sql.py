@@ -6,7 +6,7 @@ _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def sql_quote_str(s: str) -> str:
-    """ClickHouse string literal — backslashes AND quotes both escaped.
+    """A string literal for the active backend; the one quoting helper.
 
     ClickHouse / chDB recognises two escape forms inside string
     literals: `''` is a single quote, and `\\'` is also a single
@@ -14,14 +14,22 @@ def sql_quote_str(s: str) -> str:
     NOT enough on its own: a payload like `\\'; DROP TABLE …` would,
     after quote-doubling, become `\\''; DROP TABLE …` — the engine
     reads the first quote as backslash-escaped, the second as the
-    string terminator, and arbitrary SQL after it.
+    string terminator, and arbitrary SQL after it. So on chDB every
+    backslash is doubled FIRST (each `\\` → `\\\\`), then every quote
+    (each `'` → `''`); the other order would double the just-added
+    backslashes again.
 
-    Order of operations matters: escape backslashes FIRST (each `\\`
-    → `\\\\`), then quotes (each `'` → `''`). Doing it the other way
-    would double the just-added backslashes again.
+    DuckDB reads a backslash inside a plain literal as a character like
+    any other and knows only `''`. Doubling the backslash there builds a
+    literal that is not the value: `'DOM\\\\kid'` is 8 characters and never
+    equals the 7-character sample id, so the sample silently vanishes from
+    every WHERE, JOIN and IN. DuckDB gets quote-doubling only.
     """
-    escaped = s.replace("\\", "\\\\").replace("'", "''")
-    return "'" + escaped + "'"
+    from storage.db import backend
+
+    if backend() == "duckdb":
+        return "'" + s.replace("'", "''") + "'"
+    return "'" + s.replace("\\", "\\\\").replace("'", "''") + "'"
 
 
 def delete_where_sql(table: str, where: str) -> str:

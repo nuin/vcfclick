@@ -302,6 +302,17 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- One string-literal quoting rule per backend. `sql_quote_str` doubled
+  backslashes on DuckDB too, where a backslash is a plain character, so a
+  sample id or cohort such as `DOM\kid` quoted to a literal that never
+  equalled the stored value: the sample vanished from `db trio`, the
+  pivot and join queries, and `db export --samples` wrote `0/0` at every
+  site. DuckDB now gets quote-doubling only. `db diff`, `db export` and
+  `db gene` quoted with private helpers of their own (one left
+  backslashes unescaped, so chDB read `c\ne` as an escape and `db diff`
+  called the cohort unknown; one wrote `\'`, which DuckDB cannot parse);
+  all three now use `storage.sql.sql_quote_str`, and `db diff` reads the
+  cohort names back as JSON, so a name with a backslash is matched.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
