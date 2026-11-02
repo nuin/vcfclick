@@ -313,6 +313,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   called the cohort unknown; one wrote `\'`, which DuckDB cannot parse);
   all three now use `storage.sql.sql_quote_str`, and `db diff` reads the
   cohort names back as JSON, so a name with a backslash is matched.
+- `db stats` on DuckDB counts a cohort's samples as distinct
+  `(ingest_id, sample_id)` tuples, as chDB does. It concatenated the pair
+  with no separator, under which the samples `('a', 'bc')` and
+  `('ab', 'c')` were one string and counted once.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
