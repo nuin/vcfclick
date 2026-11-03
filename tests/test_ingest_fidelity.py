@@ -210,6 +210,44 @@ def test_keep_reference_stores_no_row_for_a_partial_reference_call(tmp_path):
     assert [r[-1] for r in rows[0][2]] == ["F"]  # missing_genotypes: ./. only
 
 
+class _NoAlleleArray:
+    """A cyvcf2 record whose allele array cannot be read; the rest of the
+    record (gt_types, FORMAT fields) is the real one."""
+
+    def __init__(self, variant):
+        self._variant = variant
+
+    def __getattr__(self, name):
+        if name == "genotype":
+            raise Exception("couldn't get genotypes for variant")
+        return getattr(self._variant, name)
+
+
+def test_unreadable_allele_array_stores_no_gt0_row(tmp_path, caplog):
+    """Without the allele array a './0' cannot be told from a '0/0', so
+    under --keep-reference no gt=0 row is written for the record (and a
+    warning names it), where a fallback to gt_types alone would store the
+    half-call as a provable 0/0. Non-reference calls are kept."""
+    import logging
+
+    from ingest.routing import classify_header
+    from ingest.vcf_rows import build_genotype_rows
+
+    vcf = _write_vcf(
+        tmp_path / "mask.vcf",
+        ["A", "B", "C"],
+        ["chr1\t100\t.\tA\tG\t50\tPASS\tDP=9\tGT\t./0\t0/0\t0/1"],
+    )
+    samples, (variant,) = _records(vcf)
+    extra = classify_header(VCF(str(vcf)))["extra_format"]
+    with caplog.at_level(logging.WARNING):
+        rows = build_genotype_rows(
+            _NoAlleleArray(variant), samples, extra, "i1", keep_reference=True
+        )
+    assert {s: g["gt"] for s, g in _gt_dict(rows).items()} == {"C": 1}
+    assert "chr1:100" in caplog.text
+
+
 @pytest.mark.parametrize("backend", ["duckdb", "chdb"])
 def test_half_called_parent_is_no_denovo_evidence(vcfclick_home, tmp_path, backend):
     """Father './0' at a site where the child is 0/1: with --keep-reference

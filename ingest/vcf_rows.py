@@ -324,12 +324,33 @@ GT_ENCODE = {1: 1, 3: 2}
 GT_ENCODE_KEEP_REF = {0: 0, 1: 1, 3: 2}
 
 
-def _partial_calls(variant):
-    """Per-sample flag: True where the GT has a missing allele (-1)."""
+_partial_mask_warned = False
+
+
+def _partial_calls(variant, n_samples: int):
+    """Per-sample flag: True where the GT has a missing allele (-1).
+
+    build_genotype_rows calls this only once gt_types has been read, so
+    the GT field is present. Should cyvcf2 still fail to give the allele
+    array, every sample is flagged: a gt=0 row is then not written for
+    the record (absence reads as "no call"), which is safe, where an
+    unflagged './0' would be stored as a provable 0/0. Logged once per
+    process with the record's position.
+    """
+    global _partial_mask_warned
     try:
         return (variant.genotype.array()[:, :-1] == -1).any(axis=1)
-    except Exception:
-        return None
+    except Exception as err:  # cyvcf2 raises a bare Exception
+        if not _partial_mask_warned:
+            _partial_mask_warned = True
+            log.warning(
+                "[ingest] cannot read the alleles of %s:%s (%s); "
+                "hom-ref calls there are not stored as gt=0",
+                variant.CHROM,
+                variant.POS,
+                err,
+            )
+        return np.ones(n_samples, dtype=bool)
 
 
 def build_genotype_rows(
@@ -349,7 +370,7 @@ def build_genotype_rows(
         # reports the same record as NOT_RECORDED; there is nothing to
         # store per sample.
         return []
-    partial = _partial_calls(variant) if keep_reference else None
+    partial = _partial_calls(variant, len(samples)) if keep_reference else None
     scalar_arrs = {f: _format_arr(variant, f) for f in FORMAT_SCALAR}
     pair_arrs = {f: _format_arr(variant, f) for f in FORMAT_PAIR}
     triple_arrs = {f: _format_arr(variant, f) for f in FORMAT_TRIPLE}
