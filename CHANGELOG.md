@@ -316,6 +316,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A preset's `regions_build` was applied only with the preset's
+  `regions`, so a preset that set only `exclude_regions` on a database
+  of another build reported `scope.regions_build: null`, gave no
+  `scope_build_mismatch` warning and removed the wrong loci. It now
+  follows either region list, in `db trio` and in
+  `preset save --from-result`.
 - The `strict_missing_dropped` count for `comphet` counted every
   dominant-pattern het strict_missing dropped unless the run had an
   include scope, so a run with no scope or with exclusions only warned

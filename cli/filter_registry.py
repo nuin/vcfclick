@@ -817,6 +817,14 @@ def _default(key: FilterKey) -> Resolved:
     return Resolved(normalise_value(key, key.default), FROM_DEFAULT)
 
 
+# a descriptive (META) scope key and the lists it describes: it is applied
+# from a preset when any of those lists came from the preset
+SCOPE_COMPANIONS: dict[str, tuple[str, ...]] = {
+    "genes_label": ("genes",),
+    "regions_build": ("regions", "exclude_regions"),
+}
+
+
 def cross_key_problems(values: Mapping[str, Any]) -> list[str]:
     """Rules that span keys, checked on RESOLVED values so that a flag can
     repair a preset: the allele-balance band must not be empty."""

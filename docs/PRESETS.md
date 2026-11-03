@@ -300,7 +300,7 @@ flags ([TRIO.md](TRIO.md#genes-and-regions)):
 | `gene_flank` | `--gene-flank` | base pairs added to each side of every gene (default 0) |
 | `regions` | `--region`, `--region-file` | `chrN:FROM-TO`, 1-based inclusive |
 | `exclude_regions` | `--exclude-region` | regions to leave out |
-| `regions_build` | `preset save --regions-build` | `GRCh37` or `GRCh38`: the regions' assembly, checked against the database's when known |
+| `regions_build` | `preset save --regions-build` | `GRCh37` or `GRCh38`: the assembly of the preset's `regions` and `exclude_regions`, checked against the database's when known; applied when either list comes from the preset |
 
 ```bash
 vcfclick preset save id-panel --from-preset rare-recessive \

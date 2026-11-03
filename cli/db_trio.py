@@ -327,11 +327,14 @@ def _build_scope(ctx: click.Context, options: TrioOptions, sess, ingest_id: str)
     resolved, _ = resolve_filters(ctx, "trio", state)
     values = {k: resolved[k].value for k in SCOPE_KEYS if k in resolved}
     if state is not None:
-        # the descriptive companions follow the list they describe: a typed
-        # --genes replaces the preset's list, and its label with it
+        # the descriptive companions follow the lists they describe: a typed
+        # --genes replaces the preset's list, and its label with it. The build
+        # describes both region lists, so it follows either one.
         filters = state.located.preset.filters
-        for meta, of in (("genes_label", "genes"), ("regions_build", "regions")):
-            if meta in filters and resolved[of].source == fr.FROM_PRESET:
+        for meta, lists in fr.SCOPE_COMPANIONS.items():
+            if meta in filters and any(
+                resolved[of].source == fr.FROM_PRESET for of in lists
+            ):
                 values[meta] = filters[meta]
     try:
         request = ScopeRequest.from_values(

@@ -521,3 +521,26 @@ def test_comphet_strict_count_is_about_shown_genes_in_every_scope_form(world, sc
     assert names(doc, "comphet") == names(plain, "comphet")
     codes = [w["code"] for w in doc["effective"]["warnings"]]
     assert "strict_missing_dropped" not in codes
+
+
+def test_a_presets_regions_build_follows_its_exclusions_too(world, tmp_path):
+    """A preset that sets only exclude_regions with regions_build GRCh37, on a
+    GRCh38 database: the build is checked and the mismatch said, as it is for
+    a preset with regions. `preset save --from-result` keeps the build."""
+    run_cli(
+        world.home, world.backend, "preset", "save", "ex37", "--force",
+        "--exclude-region", "chr1:1-100", "--regions-build", "GRCh37",
+    )  # fmt: skip
+    doc = jtrio(world, "c", "--preset", "ex37", "--build", "GRCh38")
+    assert doc["scope"]["regions_build"] == "GRCh37"
+    codes = [w["code"] for w in doc["effective"]["warnings"]]
+    assert "scope_build_mismatch" in codes
+    saved = tmp_path / "result.json"
+    saved.write_text(json.dumps(doc))
+    run_cli(
+        world.home, world.backend, "preset", "save", "ex37-again", "--force",
+        "--from-result", str(saved),
+    )  # fmt: skip
+    again = json.loads((world.home / "presets" / "ex37-again.json").read_text())
+    assert again["filters"]["regions_build"] == "GRCh37"
+    assert again["filters"]["exclude_regions"] == ["chr1:1-100"]
