@@ -555,9 +555,7 @@ def collect_variant_stats(
     how many carry a FILTER label other than PASS, and how many sit on each
     chromosome. With a scope (cli/scope.Scope), only the variants inside it,
     exactly in every mode: the INFO/AF and FILTER gates can act only there."""
-    sql, trim = variant_stats_sql(
-        ingest_id, filter_present=filter_present, scope=scope
-    )
+    sql, trim = variant_stats_sql(ingest_id, filter_present=filter_present, scope=scope)
     data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
     if trim:
         from cli.scope import site_in_scope
@@ -630,9 +628,7 @@ def collect_gnomad_probe(
     With a scope, the sample is drawn from the variants inside it."""
     from annotations import gnomad_af_many
 
-    keys = (
-        sample_cohort_keys(sess, ingest_id, variants.n, scope) if variants.n else []
-    )
+    keys = sample_cohort_keys(sess, ingest_id, variants.n, scope) if variants.n else []
     unique = list(dict.fromkeys(keys))
     found = gnomad_af_many(unique)
     judged = sum(1 for g in found.values() if g.popmax is not None)
@@ -1096,7 +1092,9 @@ def build_report(
     af_run = gates.af_gate != AF_GATE_SKIPPED and gates.max_af < 1
     af_share = variants.af_fraction
     af_ok = af_run and af_share is not None and af_share >= ENFORCEABLE_MIN
-    of_variants = "of the variants inside the run's scope" if variants.scoped else "of variants"
+    of_variants = (
+        "of the variants inside the run's scope" if variants.scoped else "of variants"
+    )
     if af_run:
         bound["max_af"] = af_ok
         if af_ok and af_share < 1.0:
@@ -1112,7 +1110,11 @@ def build_report(
             )
         if not af_ok:
             have = (
-                ("no variants inside the run's scope" if variants.scoped else "no variants")
+                (
+                    "no variants inside the run's scope"
+                    if variants.scoped
+                    else "no variants"
+                )
                 if af_share is None
                 else f"only {pct(af_share)} {of_variants} carry INFO/AF"
             )

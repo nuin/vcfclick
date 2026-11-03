@@ -268,9 +268,7 @@ def test_set_parses_bare_text_for_list_and_text_keys_and_reports_bad_json(
     assert "is not a number" in run("set", "p1", "max_af=abc", ok=False).output
 
 
-def test_set_warns_when_min_ab_would_sit_above_the_default_max_ab(
-    run, vcfclick_home
-):
+def test_set_warns_when_min_ab_would_sit_above_the_default_max_ab(run, vcfclick_home):
     run("save", "p1", "--min-gq", "20")
     r = run("set", "p1", "min_ab=0.9")
     assert "min_ab (0.9) is above max_ab (0.75)" in r.output
