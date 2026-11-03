@@ -822,28 +822,41 @@ class TrioAnalysis:
     # ─────────────────────── classic models ───────────────────────
 
     def detail_rows(self, category: str) -> list:
-        sql = trio_sql(
-            category,
-            self.trio,
-            self.gates,
-            count_only=False,
-            x_guard=self.x_guard_sql(),
-            scope=self.scope,
-        )
-        return self._gnomad(self._scoped(query_rows(self.session, sql)))
+        """The model's candidate rows, fetched once per gates (a copy made
+        with other gates shares `_cache`, so the gates are in the key)."""
+        key = ("detail_rows", category, self.gates)
+        if key not in self._cache:
+            sql = trio_sql(
+                category,
+                self.trio,
+                self.gates,
+                count_only=False,
+                x_guard=self.x_guard_sql(),
+                scope=self.scope,
+            )
+            self._cache[key] = self._gnomad(self._scoped(query_rows(self.session, sql)))
+        return list(self._cache[key])
 
     def count(self, category: str) -> int:
-        if not self._count_in_sql():
+        """The model's candidate count: the length of the rows when they were
+        already fetched, else one SQL count (or the rows, when the count
+        cannot be SQL)."""
+        if ("detail_rows", category, self.gates) in self._cache or (
+            not self._count_in_sql()
+        ):
             return len(self.detail_rows(category))
-        sql = trio_sql(
-            category,
-            self.trio,
-            self.gates,
-            count_only=True,
-            x_guard=self.x_guard_sql(),
-            scope=self.scope,
-        )
-        return query_rows(self.session, sql)[0][0]
+        key = ("count", category, self.gates)
+        if key not in self._cache:
+            sql = trio_sql(
+                category,
+                self.trio,
+                self.gates,
+                count_only=True,
+                x_guard=self.x_guard_sql(),
+                scope=self.scope,
+            )
+            self._cache[key] = query_rows(self.session, sql)[0][0]
+        return self._cache[key]
 
     def dropped_by_strict(self, category: str) -> int:
         """How many candidates of this model pass every gate (the gnomAD filter
@@ -929,10 +942,15 @@ class TrioAnalysis:
         return len(rows) - len(self.x_rows())
 
     def comphet_genes(self) -> dict:
-        sql = _comphet_sql(
-            self.trio, self.gates, x_guard=self.x_guard_sql(), scope=self.scope
-        )
-        return self._genes_in_scope(self._comphet_rows(sql), "comphet")
+        """The compound-het genes, grouped once per gates; the scope stats
+        `_genes_in_scope` records are written on that first call only."""
+        key = ("comphet_genes", self.gates)
+        if key not in self._cache:
+            sql = _comphet_sql(
+                self.trio, self.gates, x_guard=self.x_guard_sql(), scope=self.scope
+            )
+            self._cache[key] = self._genes_in_scope(self._comphet_rows(sql), "comphet")
+        return dict(self._cache[key])
 
 
 def _strict_dropped_scope_sql(trio: Trio, gates: Gates, scope) -> list:
