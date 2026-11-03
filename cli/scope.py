@@ -582,8 +582,8 @@ def build_scope(request: ScopeRequest, *, build: str | None = None) -> Scope | N
     if request.genes or request.exclude_genes:
         from annotations.db import (
             gene_count,
-            get_connection,
             has_gene_aliases,
+            read_connection,
             resolve_gene_tokens,
         )
 
@@ -593,7 +593,7 @@ def build_scope(request: ScopeRequest, *, build: str | None = None) -> Scope | N
                 "annotation store are GRCh38, and this database is GRCh37 "
                 "(use --region with GRCh37 coordinates instead)"
             )
-        conn = get_connection()
+        conn = read_connection()
         try:
             if gene_count(conn) == 0:
                 raise ScopeError(NEEDS_GENES)

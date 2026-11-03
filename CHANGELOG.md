@@ -302,6 +302,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The annotation store opens read-only for every lookup and runs no DDL,
+  so two `db trio` runs, the web UI and the MCP server read it at once,
+  and a mode-444 store answers. A store another process is writing used
+  to read as "nothing loaded" in `db trio` (exit 0, empty `genes`,
+  `clinvar` and `gnomad_popmax`) and as a raw DuckDB traceback in
+  `db trio --genes`. Every command now stops with exit 1 and
+  `the annotation store PATH cannot be opened for reading: another
+  process (PID n) has it open for writing`. Loaders keep the writer.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

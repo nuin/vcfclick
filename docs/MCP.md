@@ -91,6 +91,14 @@ incrementally; pass `--replace` to start fresh.
 The annotation store is separate from cohort databases. Loading
 annotations does not modify any `variants` or `genotypes` table.
 
+Lookups open the store read-only and change nothing in it, so any number
+of `db trio` runs, the web UI and the MCP server read it at once, and a
+store on a read-only file system (mode 444, a read-only site-packages)
+still answers. A loader is the one writer. While a load runs, DuckDB
+keeps readers out: a command that needs the store then stops with
+`the annotation store ... cannot be opened for reading: another process
+(PID n) has it open for writing`, and a retry after the load succeeds.
+
 ## Start The MCP Server
 
 Run the server with a Python executable that can import vcfclick:

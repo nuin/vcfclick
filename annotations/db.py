@@ -92,13 +92,104 @@ CREATE TABLE IF NOT EXISTS gene_aliases (
 """
 
 
-def get_connection() -> duckdb.DuckDBPyConnection:
-    """Open (and initialise on first use) the DuckDB annotation store."""
-    conn = duckdb.connect(str(_store_path()))
-    conn.execute(SCHEMA_DDL)
+class AnnotationStoreUnavailable(RuntimeError):
+    """The annotation store exists but cannot be opened: another process is
+    writing it (DuckDB lets one writer or many readers hold a file), or the
+    file cannot be read. Distinct from an empty or missing store, which reads
+    as "nothing loaded"."""
+
+
+def _all_ddl() -> str:
     from annotations.transcripts import TRANSCRIPTS_SCHEMA_DDL
 
-    conn.execute(TRANSCRIPTS_SCHEMA_DDL)
+    return SCHEMA_DDL + TRANSCRIPTS_SCHEMA_DDL
+
+
+def ensure_schema(conn: duckdb.DuckDBPyConnection) -> None:
+    """Create every annotation table and index the store lacks. Writers only:
+    the loaders, through `get_connection`."""
+    conn.execute(_all_ddl())
+
+
+def _table_ddl() -> dict[str, str]:
+    """{table: its CREATE TABLE statement}, from the schema DDL."""
+    out = {}
+    for stmt in _all_ddl().split(";"):
+        body = "\n".join(
+            line.split("--", 1)[0] for line in stmt.strip().splitlines()
+        ).strip()
+        head = "CREATE TABLE IF NOT EXISTS "
+        if body.startswith(head):
+            out[body[len(head) :].split()[0]] = body
+    return out
+
+
+def _unavailable(
+    path: Path, error: duckdb.Error, mode: str
+) -> AnnotationStoreUnavailable:
+    import re
+
+    text = str(error)
+    pid = re.search(r"PID (\d+)", text)
+    if pid:
+        why = (
+            f"another process (PID {pid.group(1)}) has it open for writing, "
+            "probably a `vcfclick annotations load*`; retry when it finishes"
+        )
+    else:
+        why = text.strip()
+    return AnnotationStoreUnavailable(
+        f"the annotation store {path} cannot be opened {mode}: {why}"
+    )
+
+
+def get_connection() -> duckdb.DuckDBPyConnection:
+    """Open the annotation store for writing and create any table it lacks.
+
+    For loaders and other writers only. DuckDB gives a writer the file to
+    itself, so every lookup uses `read_connection` instead."""
+    path = _store_path()
+    try:
+        conn = duckdb.connect(str(path))
+    except duckdb.IOException as e:
+        raise _unavailable(path, e, "for writing") from e
+    ensure_schema(conn)
+    return conn
+
+
+def read_connection() -> duckdb.DuckDBPyConnection:
+    """Open the annotation store for lookups: read-only, no DDL, so any number
+    of processes read at once and a read-only file still answers.
+
+    A missing store is an empty in-memory one (nothing loaded, no file made).
+    A table an older store lacks is an empty temporary table on this
+    connection only. Raises AnnotationStoreUnavailable when another process
+    is writing the store or the file cannot be read."""
+    path = _store_path()
+    if not path.exists():
+        conn = duckdb.connect(":memory:")
+        ensure_schema(conn)
+        return conn
+    try:
+        conn = duckdb.connect(str(path), read_only=True)
+    except duckdb.ConnectionException:
+        # this process already holds the store open for writing (a loader,
+        # or a test seeding it): DuckDB shares that instance, not a second one
+        conn = duckdb.connect(str(path))
+    except duckdb.IOException as e:
+        raise _unavailable(path, e, "for reading") from e
+    present = {
+        r[0]
+        for r in conn.execute(
+            "SELECT table_name FROM duckdb_tables() "
+            "WHERE database_name = current_database() AND schema_name = 'main'"
+        ).fetchall()
+    }
+    for table, ddl in _table_ddl().items():
+        if table not in present:
+            conn.execute(
+                ddl.replace("CREATE TABLE IF NOT EXISTS", "CREATE TEMP TABLE", 1)
+            )
     return conn
 
 
@@ -148,7 +239,7 @@ def position_for_gene(symbol: str) -> GeneRange | None:
     stored with its lower-case letters); a symbol stored in exactly the
     spelling asked for wins over one that differs only in case.
     """
-    conn = get_connection()
+    conn = read_connection()
     try:
         row = conn.execute(
             """
@@ -174,7 +265,7 @@ def gene_at(chrom: str, pos: int) -> list[GeneRange]:
 
     names = list(chrom_aliases(chrom))
     marks = ", ".join("?" for _ in names)
-    conn = get_connection()
+    conn = read_connection()
     try:
         rows = conn.execute(
             f"""
@@ -201,7 +292,7 @@ class GeneIndex:
     def __init__(self, conn: duckdb.DuckDBPyConnection | None = None) -> None:
         own = conn is None
         if conn is None:
-            conn = get_connection()
+            conn = read_connection()
         try:
             rows = conn.execute(
                 "SELECT gene_symbol, chrom, start_pos, end_pos, strand "
@@ -263,16 +354,19 @@ def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | 
     Returns None if the variant is not in ClinVar — which the caller
     should distinguish from "benign" in user-facing output.
     """
-    conn = get_connection()
-    row = conn.execute(
-        """
-        SELECT chrom, pos, ref, alt, clin_sig, review_status,
-               clinvar_id, condition
-        FROM clinvar_variants
-        WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?
-        """,
-        [chrom, pos, ref, alt],
-    ).fetchone()
+    conn = read_connection()
+    try:
+        row = conn.execute(
+            """
+            SELECT chrom, pos, ref, alt, clin_sig, review_status,
+                   clinvar_id, condition
+            FROM clinvar_variants
+            WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?
+            """,
+            [chrom, pos, ref, alt],
+        ).fetchone()
+    finally:
+        conn.close()
     return ClinVarRecord(*row) if row else None
 
 
@@ -283,12 +377,15 @@ def gnomad_af(chrom: str, pos: int, ref: str, alt: str) -> GnomadAF | None:
     the caller should treat absence as "rare", not as AF 0, since the
     loaded slice may not cover the locus.
     """
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT chrom, pos, ref, alt, af, af_grpmax FROM gnomad_af "
-        "WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?",
-        [chrom, pos, ref, alt],
-    ).fetchone()
+    conn = read_connection()
+    try:
+        row = conn.execute(
+            "SELECT chrom, pos, ref, alt, af, af_grpmax FROM gnomad_af "
+            "WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?",
+            [chrom, pos, ref, alt],
+        ).fetchone()
+    finally:
+        conn.close()
     return GnomadAF(*row) if row else None
 
 
@@ -305,7 +402,7 @@ def clinvar_many(
         return {}
     own = conn is None
     if conn is None:
-        conn = get_connection()
+        conn = read_connection()
     try:
         if conn.execute("SELECT 1 FROM clinvar_variants LIMIT 1").fetchone() is None:
             return {}
@@ -359,7 +456,7 @@ def gnomad_af_many(
         return {}
     own = conn is None
     if conn is None:
-        conn = get_connection()
+        conn = read_connection()
     try:
         # the common case: no gnomAD loaded, nothing to look up
         if conn.execute("SELECT 1 FROM gnomad_af LIMIT 1").fetchone() is None:
@@ -451,7 +548,7 @@ def resolve_gene_tokens(
         return {}
     own = conn is None
     if conn is None:
-        conn = get_connection()
+        conn = read_connection()
     try:
         import pyarrow as pa
 
