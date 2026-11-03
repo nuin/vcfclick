@@ -210,6 +210,37 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db qc` Ti/Tv over A/C/G/T SNVs only (behaviour change).** Any
+  one-base ALT that was not a transition counted as a transversion,
+  including a `*` spanning deletion from `bcftools norm -m -` and N bases,
+  which lowered `ti_tv`. Both REF and ALT must now be A, C, G or T. A ratio
+  of 0/0 (`ti_tv` of a sample with no SNV calls, `het_hom_ratio` likewise)
+  is `"NA"` instead of `"inf"`; values stay strings in `--format json`.
+- **`db relatedness` counts autosomes only (behaviour change on data with
+  sex chromosomes or chrM).** Every SNV counted, so a male's haploid chrX,
+  chrY and chrM calls (stored as `1/1`, or absent and read as `0/0`) added
+  opposite homozygotes and lowered kinship in mixed-sex pairs. Sites are now
+  limited to autosomes by the rule `db popgen` uses, and `n_sites` /
+  `span_bp` count only those. New `--pass-only` also drops FILTER-failed
+  sites; the JSON gains `pass_only` (additive).
+- **`db relatedness` skips recorded no-calls (behaviour change on sparse
+  ingests).** Without `--keep-reference` an absent genotype was read as
+  `0/0`, including the full no-calls `db ingest` records in
+  `missing_genotypes`. A no-call next to a hom-alt call added an IBS0 and
+  lowered kinship, enough to turn a parent/child pair into full siblings
+  and a pedigree check into `mismatch`. Those no-calls are now skipped for
+  the pair, so a sparse and a `--keep-reference` ingest of the same VCF give
+  the same pairs; on `tests/fixtures/related.vcf` only pairs with U2 (3%
+  no-calls) change. JSON keys are unchanged.
+- `db relatedness` thins SNVs to `--max-sites` in SQL and fetches genotype
+  rows only for the kept sites, as Arrow, so memory follows `--max-sites`
+  instead of the cohort's whole genotype table. The 20,000-sample limit is
+  checked before the genotype matrix is allocated, and KING-robust sums its
+  matrix products over 10,000-site chunks (peak memory was about 20x the
+  genotype matrix). Kept sites are the ranks floor(i x total / max-sites) in
+  integer arithmetic; the float arithmetic it replaces kept the site before
+  at a few exact-integer boundaries. Output on `tests/fixtures/related.vcf`
+  is unchanged.
 - `db trio --category xlinked`: the effective-gate report judges the X
   model's GQ / DP / AD gates on its own candidate rows (non-PAR chrX
   sites matching its patterns for the proband's sex, after the rarity and
@@ -366,6 +397,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db relatedness --min-kinship` below 0.0442 reports the pairs at or above
+  it. The pairs were selected by kinship and then dropped again for being
+  classified `unrelated`, so `--min-kinship 0.01` returned the default list.
+- `db relatedness --max-sites` takes 1 to 16,000,000. `--max-sites 0` was a
+  `ZeroDivisionError` traceback, a negative value kept no sites and reported
+  "no related pairs", and above 2^24 sites the float32 pair counts are no
+  longer exact. Out-of-range values are now a usage error (exit 2).
 - A typed `--max-af-x` was ignored when a cohort-derived `INFO/AF`
   skipped `--max-af` (only `--max-af` counted as typed), so the X model
   ran with no rarity gate while `gates.max_af_x` reported the cap. The

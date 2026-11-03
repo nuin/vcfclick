@@ -1041,17 +1041,18 @@ Usage: vcfclick db relatedness [OPTIONS] NAME
   Pairwise kinship (KING-robust): duplicates, relatives, pedigree errors.
 
 Options:
-  --ingest-id TEXT       Only this ingestion (default: each ingestion
-                         separately).
-  --min-kinship FLOAT    Report pairs at or above this kinship (third degree
-                         by default).  [default: 0.0442]
-  --all                  Report every pair, including unrelated ones.
-  --max-sites INTEGER    Thin to at most this many SNVs (evenly spread) to
-                         bound memory.  [default: 200000]
-  --force                Classify pairs even when the data covers too small a
-                         region.
-  --format [table|json]  [default: table]
-  --help                 Show this message and exit.
+  --ingest-id TEXT           Only this ingestion (default: each ingestion
+                             separately).
+  --min-kinship FLOAT        Report pairs at or above this kinship (third
+                             degree by default).  [default: 0.0442]
+  --all                      Report every pair, including unrelated ones.
+  --max-sites INTEGER RANGE  Thin to at most this many SNVs (evenly spread) to
+                             bound memory.  [default: 200000; 1<=x<=16000000]
+  --pass-only                Count only sites whose FILTER is PASS or missing.
+  --force                    Classify pairs even when the data covers too
+                             small a region.
+  --format [table|json]      [default: table]
+  --help                     Show this message and exit.
 ```
 
 </details>

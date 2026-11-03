@@ -5,7 +5,8 @@ coefficient (Manichaikul et al. 2010, Bioinformatics 26:2867):
 
     phi_ij = (N_het,het - 2 * N_ibs0) / (N_het_i + N_het_j)
 
-counted over biallelic SNVs where both samples are called. N_ibs0 is the
+counted over biallelic autosomal SNVs where both samples are called
+(--pass-only: FILTER PASS or unset). N_ibs0 is the
 number of sites where one sample is hom-ref and the other hom-alt; it is
 ~0 for parent/child and clearly non-zero for full siblings, which is how
 the two first-degree relationships are told apart.
@@ -17,10 +18,11 @@ Genotypes come from the sparse `genotypes` table, so how an absent row is
 read matters:
 - ingested with --keep-reference: 0/0 calls are stored, so absent means a
   no-call and the site is skipped for that pair;
-- otherwise only non-reference calls are stored and absent is read as 0/0
-  (a no-call cannot be told apart). Missing calls then look like hom-ref,
-  which slightly lowers kinship. Joint-called VCFs have few, so the
-  estimate is still reliable for relationship checks.
+- otherwise only non-reference calls are stored and absent is read as 0/0,
+  except the full no-calls the ingest recorded in `missing_genotypes`
+  (the default), which are skipped as above. An ingest made with
+  --no-record-missing has no such rows, so its no-calls read as hom-ref,
+  which lowers kinship and adds IBS0 next to a hom-alt call.
 
 The computation is dense matrix products (numpy), one ingestion at a time,
 since only samples genotyped together share a site list.
@@ -51,6 +53,7 @@ class RelatednessOptions:
     min_kinship: float
     include_all: bool
     max_sites: int
+    pass_only: bool
     force: bool
     out_format: str
 
@@ -77,10 +80,15 @@ class RelatednessOptions:
 )
 @click.option(
     "--max-sites",
-    type=int,
+    type=click.IntRange(1, 16_000_000),
     default=200000,
     show_default=True,
     help="Thin to at most this many SNVs (evenly spread) to bound memory.",
+)
+@click.option(
+    "--pass-only",
+    is_flag=True,
+    help="Count only sites whose FILTER is PASS or missing.",
 )
 @click.option(
     "--force",
@@ -124,6 +132,7 @@ def db_relatedness(options: RelatednessOptions) -> None:
             include_all=options.include_all,
             min_kinship=options.min_kinship,
             force=options.force,
+            pass_only=options.pass_only,
         )
         for i in ingests
     ]
@@ -149,7 +158,8 @@ def _print_table(res: dict, include_all: bool) -> None:
         click.echo(f"  WARNING: {res['warning']}")
     if res["mode"] == "sparse":
         click.echo(
-            "  absent genotypes read as 0/0 (this ingestion stored only non-reference calls)"
+            "  absent genotypes read as 0/0, recorded no-calls skipped "
+            "(this ingestion stored only non-reference calls)"
         )
     if not res["pairs"]:
         click.echo("  no related pairs" if not include_all else "  no pairs")
