@@ -327,6 +327,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   preset this is the same test; with one, a preset's `max_af` is never typed, so it
   cannot defeat the cohort-derived-AF skip. The `--help` text of the gate options
   is longer.
+- A partially missing reference call (`./0`, `0/.`) is no longer stored as
+  `gt = 0` under `--keep-reference`. cyvcf2 reports it as hom-ref, so a
+  half-called parent read as a proven `0/0` and `db trio --category denovo`
+  could report a de novo on it. Such a call now gets no `genotypes` row, as a
+  `./.` does; `./1` is still stored as a het (`gt = 1`). `n_called`,
+  `an_called` and `ac_called` are unchanged. Re-ingest to apply the rule to an
+  existing database. See docs/SCHEMA.md (partial calls).
 
 ### Fixed
 
@@ -445,6 +452,38 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `-1` "hemizygous" code that the encoder has never written. A haploid ALT
   call (male non-PAR chrX/chrY, chrM) is stored as `gt = 2` with
   `phased = 1`; `gt` is never negative.
+- A numeric `FORMAT` field routed to `format_extra` (Mutect2 `F1R2`/`F2R1`/
+  `SB`, DRAGEN fields, `MIN_DP`, ...) was stored as the numpy repr
+  (`'[5]'`, `'[1 2 3 4]'`, `'[-2147483648]'` for a missing value). It is now
+  spelt as the VCF spells it: `'5'`, `'1,2,3,4'`, `'.'` for missing, with
+  end-of-vector padding dropped, so `CAST(format_extra['MIN_DP'] AS INT)`
+  works. Databases ingested earlier keep the old strings until re-ingested.
+- An INFO field that is routed to a scalar column but carries several values
+  (GATK's `SB` declared `Number=4`, or `AC=1,0` under `Number=.`) aborted the
+  whole ingest with a raw `ArrowInvalid`. The values now go to `info_extra`
+  (`'1,2,3,4'`) and the column stays NULL.
+- A `FORMAT` integer above a column's range (`DP=70000` on a mitochondrial or
+  amplicon call; the `gq`, `dp`, `ad_*`, `pl_*`, `mq` and `pq` columns are
+  UInt16) aborted the ingest with `Value 70000 too large to fit in C integer
+  type`. The value is now clamped to the column maximum (65535), and the
+  ingest logs how many values it clamped (a parallel ingest sums its
+  workers' counts, so the total reaches the terminal). `ps` is UInt32 and keeps a phase set's full value.
+- A VCF with samples but no `GT` in `FORMAT` (or one record without it)
+  crashed with cyvcf2's `error parsing genotypes`. Such a record now stores
+  its variant row with the called counts "not recorded" (NULL) and no
+  genotype rows, as `called_counts` already reported it.
+- A record with no ALT allele (`ALT` is `.`, as `bcftools mpileup` without
+  `-v` writes) was reported as `Multi-allelic site ... (0 ALTs)` with a
+  `bcftools norm -m -` remedy that leaves the record in place. Serial and
+  parallel ingests now say the record has no ALT allele and name
+  `bcftools view -e 'ALT="."'` to drop such records.
+- A serial ingest staged its Parquet batches in `<home>/dbs/vcfclick_ingest_*`,
+  beside the databases, so `db list` showed a phantom database while it ran
+  and for good after a killed run. It now stages under the database's own
+  `staging/serial-<ingest_id>` directory, as the parallel path stages under
+  `staging/<ingest_id>`; the next ingest under that id removes a directory a
+  killed run left behind. `db list` skips a leftover `vcfclick_ingest_*`
+  directory and any name no database can have.
 
 ## [0.14.3]
 

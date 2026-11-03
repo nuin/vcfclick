@@ -196,11 +196,22 @@ def get_readonly_session(name: str | None = None):
 
 
 def list_dbs() -> list[str]:
-    """All named DBs under VCFCLICK_HOME/dbs/, sorted."""
+    """All named DBs under VCFCLICK_HOME/dbs/, sorted.
+
+    A directory whose name no DB can have (fails _DB_NAME_RE), or a
+    serial-ingest stage directory an older version left in the root
+    after a killed run (`vcfclick_ingest_*`), is not a DB.
+    """
     root = _db_root()
     if not root.exists():
         return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir()
+        and _DB_NAME_RE.match(p.name)
+        and not p.name.startswith("vcfclick_ingest_")
+    )
 
 
 def drop_db(name: str) -> None:

@@ -308,7 +308,7 @@ def test_worker_keeps_only_records_whose_pos_is_in_region(tmp_path):
     for region in ("chr1:100001-200000", "chr1:200001-300000"):
         out = tmp_path / region.replace(":", "_")
         out.mkdir()
-        _, n, _ = _worker((region, str(vcf), "t1", str(out), [], 1000, False, True))
+        _, n, _, _ = _worker((region, str(vcf), "t1", str(out), [], 1000, False, True))
         positions = []
         for p in sorted(out.glob("variants_*.parquet")):
             positions.extend(pq.read_table(p).column("pos").to_pylist())

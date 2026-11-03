@@ -60,8 +60,10 @@ from ingest._arrow import (
 )
 from ingest.parallel_split import DEFAULT_BUCKET_SIZE, plan_by_variant_count
 from ingest.parallel_worker import _worker
+from ingest._rollback import handle_ingest_failure
 from ingest.routing import classify_header
 from ingest.vcf_load import BATCH_SIZE
+from ingest.vcf_rows import log_clamp_count
 from storage import (
     apply_schema,
     db_path,
@@ -190,7 +192,7 @@ def _ingest_parallel_locked(
             staging, vcf_path, cohort, options.ingest_id, samples, total
         )
     except BaseException:
-        _parallel_failure(commit_started, options.ingest_id)
+        handle_ingest_failure(commit_started, options.ingest_id, "parallel-ingest")
         _remove_staging_dir(staging, options)
         raise
 
@@ -311,9 +313,11 @@ def _stage_regions(
 
     started_parse = time.time()
     total = 0
+    clamped = 0
     with ProcessPoolExecutor(max_workers=options.workers) as pool:
-        for region, n, n_batches in pool.map(_worker, args_list):
+        for region, n, n_batches, n_clamped in pool.map(_worker, args_list):
             total += n
+            clamped += n_clamped
             if n > 0:
                 log.info(
                     "[parallel-ingest]   %s: %s variants (%d batches)",
@@ -322,6 +326,7 @@ def _stage_regions(
                     n_batches,
                 )
     parse_elapsed = time.time() - started_parse
+    log_clamp_count(clamped, "parallel-ingest")
 
     return total, parse_elapsed
 
@@ -394,28 +399,6 @@ def _commit_parallel(staging, vcf_path, cohort, ingest_id, samples, total):
         ],
     )
     return import_elapsed
-
-
-def _parallel_failure(commit_started: bool, ingest_id: str) -> None:
-    # Only roll back if Phase 2 (engine writes) actually started. If
-    # a worker raised during Phase 1, nothing was written to the engine
-    # and rolling back would destroy prior data under the same
-    # ingest_id and silently turn a "failed re-ingest" into a wipe.
-    if commit_started:
-        log.warning(
-            "[parallel-ingest] failed mid-commit — rolling back %s",
-            ingest_id,
-        )
-        try:
-            rollback_ingest(ingest_id)
-        except Exception as rb_err:
-            log.error("[parallel-ingest] rollback FAILED: %s", rb_err)
-    else:
-        log.warning(
-            "[parallel-ingest] failed during parse — no engine writes "
-            "occurred, prior data under ingest_id=%s preserved",
-            ingest_id,
-        )
 
 
 def _log_parallel_plan(
