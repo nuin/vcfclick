@@ -123,7 +123,9 @@ or an Ensembl gene id (`ENSG00000147894`, version ignored). After the optional
 `vcfclick annotations load-hgnc hgnc_complete_set.txt` (the HGNC complete-set
 TSV you download from genenames.org), also a previous symbol, an alias, an
 HGNC id (`HGNC:28337`) or an Entrez id; a token that names two genes is not
-resolved. `--genes` takes a comma list and repeats; `--gene-file` reads one
+resolved. A gene HGNC renamed after the GENCODE release in the store (the
+store has the old symbol) resolves by its current symbol too, through HGNC's
+previous-symbol row, and counts as `previous` in `resolved_by`. `--genes` takes a comma list and repeats; `--gene-file` reads one
 token per line (`#` starts a comment); typed together, the two are joined.
 
 **Unresolved genes are an error** for a list of 20 tokens or fewer with any

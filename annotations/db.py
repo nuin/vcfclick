@@ -579,6 +579,18 @@ def resolve_gene_tokens(
                 "WHERE t.tok NOT IN (SELECT upper(alias) FROM gene_aliases "
                 "WHERE kind = 'approved')"
             )
+            # the other way round: an approved symbol the gene store lacks
+            # because the gene was renamed after the GENCODE release, which
+            # still stores it under a previous symbol of that gene
+            parts.append(
+                f"SELECT t.tok, 'previous' AS kind, {cols} FROM {name} t "
+                "JOIN gene_aliases a ON upper(a.symbol) = t.tok "
+                "AND a.kind = 'previous' "
+                "JOIN refseq_genes g ON upper(g.gene_symbol) = upper(a.alias) "
+                "WHERE t.tok IN (SELECT upper(alias) FROM gene_aliases "
+                "WHERE kind = 'approved') "
+                "AND t.tok NOT IN (SELECT upper(gene_symbol) FROM refseq_genes)"
+            )
         conn.register(name, pa.table({"tok": pa.array(keys, pa.string())}))
         try:
             rows = conn.execute(" UNION ALL ".join(parts)).fetchall()

@@ -162,3 +162,24 @@ def test_an_approved_symbol_the_store_lacks_does_not_resolve_as_previous(genes_l
     load(HGNC)
     assert _resolve(["SPG43"]) == {}
     assert _symbols(_resolve(["NBIA4"]), "NBIA4") == [("previous", "C19orf12")]
+
+
+def test_a_renamed_gene_resolves_by_its_new_symbol(isolated_annotation_db):
+    """HGNC renamed OLDSYM to NEWSYM after the GENCODE release in the store,
+    which still says OLDSYM. A panel with the current name finds the gene
+    through HGNC's previous-symbol row; the old name still works."""
+    from annotations.db import get_connection, resolve_gene_tokens
+
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO refseq_genes VALUES "
+        "('OLDSYM', 'chr3', 100, 900, '+', 'ENSG00000000003.1', 'protein_coding')"
+    )
+    conn.execute(
+        "INSERT INTO gene_aliases VALUES ('NEWSYM', 'approved', 'NEWSYM'), "
+        "('OLDSYM', 'previous', 'NEWSYM')"
+    )
+    conn.close()
+    found = resolve_gene_tokens(["NEWSYM", "OLDSYM", "newsym"])
+    assert [(k, g.gene_symbol) for k, g in found["NEWSYM"]] == [("previous", "OLDSYM")]
+    assert [(k, g.gene_symbol) for k, g in found["OLDSYM"]] == [("symbol", "OLDSYM")]
