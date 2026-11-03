@@ -209,6 +209,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db export` writes recorded no-calls as `./.` (behaviour change).** A
+  sample with a `missing_genotypes` row at a site (written at ingest unless
+  `--no-record-missing`) was `./.` in the source VCF and is now exported as
+  `./.`; before, it was written `0/0` like every other absent genotype, so a
+  round trip invented hom-ref calls and raised the call rate. The
+  `--absent-as` rule still applies to samples with no row in either table,
+  and the `##vcfclick_note` header says whether no-calls were recorded.
 - **`db query --format JSON` on DuckDB (output shape change).** `data` holds
   one object per row where it held one array per row, and each `meta` entry
   gains `type`, as on chDB. A format DuckDB does not render now fails with
@@ -337,6 +344,19 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db export` sizes its windows by genotype rows: 1,000,000 rows divided
+  by the sample count, between 200 and 50,000 variants. Windows are cut at
+  every Nth selected variant in position order, so a clustered exome no
+  longer lands in one window. With `--where`, `--pass-only` or a region,
+  the genotype query reads only the selected variants' calls; before, it
+  read every call in the window's position range.
+- `db export` writes a String INFO value as stored. A value with a dot
+  (`AA=.`, the unknown ancestral allele, or `AA=G.T`) was parsed as a
+  number and the export stopped with `could not convert string to float`.
+- `db export` writes Float INFO and QUAL values with the fewest digits that
+  read back as the stored value (up to 9 for Float32, `repr` for Float64).
+  Six digits lost one: `AF=0.123456789` came back `0.123457` and
+  `QUAL=1234567.5` came back `1.23457e+06`, so a re-ingest changed them.
 - `db query --format` on DuckDB prints what chDB prints. `JSON` came out
   as arrays with no column types (the desktop apps read `meta[].type` and
   one object per row), `CSVWithNames` and `TSVWithNames` dropped the
