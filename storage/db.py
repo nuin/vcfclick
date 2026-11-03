@@ -37,6 +37,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 import pyarrow as pa
@@ -47,6 +48,7 @@ from storage.sql import delete_where_sql as delete_where_sql
 from storage.sql import map_keys_from as map_keys_from
 from storage.sql import parquet_file_expr as parquet_file_expr
 from storage.sql import populated_expr as populated_expr
+from storage.sql import session_lockdown_sql as session_lockdown_sql
 from storage.sql import sql_quote_str as sql_quote_str
 from storage.sql import typed_columns_sql as typed_columns_sql
 
@@ -115,6 +117,9 @@ _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DB_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,62}$")
 
 _sessions: dict[str, object] = {}
+# Serialises the check-and-open in get_session and the one-time lockdown in
+# get_readonly_session: `vcfclick web` calls both from a threadpool.
+_sessions_lock = threading.RLock()
 
 
 def _resolve_name(name: str | None) -> str | None:
@@ -158,11 +163,36 @@ def get_session(name: str | None = None):
     # juggling both engines (tests, in-process backend switch)
     # doesn't hand back the wrong handle.
     cache_key = f"{backend()}::{resolved or '_legacy'}"
-    if cache_key not in _sessions:
-        path = db_path(name)
-        path.mkdir(parents=True, exist_ok=True)
-        _sessions[cache_key] = _open_session(path)
-    return _sessions[cache_key]
+    with _sessions_lock:
+        if cache_key not in _sessions:
+            path = db_path(name)
+            path.mkdir(parents=True, exist_ok=True)
+            _sessions[cache_key] = _open_session(path)
+        return _sessions[cache_key]
+
+
+# Marker set on a session once `session_lockdown_sql` has run on it.
+_LOCKED_ATTR = "_vcfclick_locked"
+
+
+def get_readonly_session(name: str | None = None):
+    """The cached session for `name`, locked at the engine level.
+
+    Runs `storage.sql.session_lockdown_sql()` once per session object
+    (DuckDB: `enable_external_access = false` + `lock_configuration`;
+    chDB: `readonly = 1`) and returns the same object `get_session` gives
+    everyone else, so every later statement in the process is covered.
+    The lock cannot be undone for the life of the session: this is for
+    the processes that only read the cohort (`vcfclick web`, the MCP
+    server), and backs the parse-time check in `storage.sql_guard`.
+    """
+    with _sessions_lock:
+        sess = get_session(name)
+        if not getattr(sess, _LOCKED_ATTR, False):
+            for stmt in session_lockdown_sql():
+                sess.query(stmt)
+            setattr(sess, _LOCKED_ATTR, True)
+        return sess
 
 
 def list_dbs() -> list[str]:

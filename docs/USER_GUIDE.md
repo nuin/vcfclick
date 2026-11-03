@@ -77,6 +77,15 @@ Rows are not merged across ingestions. The same variant in two
 different `ingest_id`s remains two variant rows because QC and INFO
 origin can differ.
 
+The parallel ingester plans one position range per worker from the
+`.tbi` index (or from one counting pass over the file when there is no
+index) and lands the same rows as `--serial`. Before it writes to the
+database it compares the number of variants the workers staged against
+the record count the index carries. When the two differ it stops with
+both numbers and writes nothing; the usual cause is an index older than
+the VCF, fixed by `tabix -f -p vcf FILE`. A failed parallel ingest
+removes its staging directory under the database.
+
 ## Ingest Many Per-Sample VCFs
 
 Directory mode:

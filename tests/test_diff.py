@@ -190,16 +190,16 @@ def test_diff_errors_when_db_missing(vcfclick_home):
     assert "not found" in r.stderr
 
 
-def test_diff_quote_helper_escapes_single_quotes():
-    """SQL-injection guard: cohort names with embedded single quotes
-    must be doubled, not passed through raw."""
-    from cli.db import _quote_str
+def test_diff_quotes_through_the_shared_helper():
+    """Cohort names are quoted by storage.sql.sql_quote_str, the one
+    backend-aware helper: db diff keeps no private copy (its old one left
+    backslashes alone, so ClickHouse read `c\\ne` as an escape and reported
+    the cohort unknown)."""
+    import inspect
 
-    assert _quote_str("plain") == "'plain'"
-    assert _quote_str("o'brien") == "'o''brien'"
-    # Classic injection attempt
-    assert _quote_str("' OR 1=1 --") == "''' OR 1=1 --'"
-    # The quoted form, if substituted into SQL like
-    #   WHERE cohort = {q}
-    # always closes with a single quote at the end, so the OR is
-    # inside the string literal.
+    from cli import db_diff
+    from storage.sql import sql_quote_str
+
+    assert db_diff.sql_quote_str is sql_quote_str
+    assert not hasattr(db_diff, "_quote_str")
+    assert 'replace("\'"' not in inspect.getsource(db_diff)

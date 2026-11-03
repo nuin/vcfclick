@@ -209,6 +209,34 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db query --format JSON` on DuckDB (output shape change).** `data` holds
+  one object per row where it held one array per row, and each `meta` entry
+  gains `type`, as on chDB. A format DuckDB does not render now fails with
+  `Format X is not supported on the DuckDB backend` where it printed a box
+  table. Details under Fixed.
+- **Web SQL and MCP `run_sql` read the cohort tables only.** The read-only
+  guard (`storage.sql_guard`) accepted any `SELECT`, so `file()`, `url()`,
+  `s3()`, `remote()`, `executable()`, `read_csv()`, `read_text()`,
+  `read_parquet()`, `glob()`, a string-literal path as a `FROM` source,
+  `numbers(1e12)` / `range(1e12)`, the scalar `file()` / `getenv()`,
+  `system.*` tables, `SHOW PROCESSLIST` / `SHOW TABLES FROM system` and a
+  `SETTINGS` clause (`SETTINGS readonly = 0`) all ran. A page that reaches the
+  localhost web server, or an LLM prompt-injected through a VCF field, could
+  read any file the user can read and probe local network addresses. Every
+  `FROM` / `JOIN` source must now be a plain table name (optionally
+  `main.` / `default.`): the cohort tables and CTEs. Table functions,
+  literal paths, other catalogs, `information_schema`, the functions above,
+  `SETTINGS` and system introspection are refused with the same `read-only`
+  error as a write. Plain `SELECT`, `WITH`, `JOIN`, subqueries,
+  `SHOW TABLES`, `SHOW CREATE TABLE`, `DESCRIBE` and `EXPLAIN` of the cohort
+  tables are unchanged. `db query` on the command line is not affected.
+- The web server and the MCP server lock the database session they query
+  at the engine level before the first caller statement
+  (`storage.get_readonly_session`): DuckDB `enable_external_access = false`
+  with `lock_configuration = true`, chDB `readonly = 1`. The lock holds for
+  the life of the process, so a statement the parser misreads still cannot
+  open a file, fetch a URL, write, or change a setting. `db query`, ingest
+  and the TUI keep the unlocked session.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only
@@ -309,6 +337,94 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db query --format` on DuckDB prints what chDB prints. `JSON` came out
+  as arrays with no column types (the desktop apps read `meta[].type` and
+  one object per row), `CSVWithNames` and `TSVWithNames` dropped the
+  header, `JSONEachRow` and `TSVWithNames` fell through to a box table,
+  every float went through six significant digits (`1234567.25` printed
+  as `1.23457e+06`), CSV left strings unquoted, TSV escaped no tab,
+  newline or backslash, and an unknown format name printed a box table.
+  Now `JSON`, `JSONCompact`, `JSONEachRow`, `TSV`, `TSVWithNames`, `CSV`
+  and `CSVWithNames` match chDB byte for byte, except that a type name has
+  no `Nullable(...)` / `LowCardinality(...)` wrapper and `statistics`
+  holds `elapsed` only. A format DuckDB does not render raises
+  `Format X is not supported on the DuckDB backend`. Code that parses
+  DuckDB's `JSONCompact` now reads a REAL as its Float32 text (`0.33`, not
+  `0.33000001311302185`) and an integral float as an integer, as on chDB.
+  So `db trio` on DuckDB prints `"af": 0.05` and `AF=0.05`, as chDB
+  does, where it printed `0.05000000074505806`; the DuckDB trio goldens
+  are now identical to the chDB ones.
+- One string-literal quoting rule per backend. `sql_quote_str` doubled
+  backslashes on DuckDB too, where a backslash is a plain character, so a
+  sample id or cohort such as `DOM\kid` quoted to a literal that never
+  equalled the stored value: the sample vanished from `db trio`, the
+  pivot and join queries, and `db export --samples` wrote `0/0` at every
+  site. DuckDB now gets quote-doubling only. `db diff`, `db export` and
+  `db gene` quoted with private helpers of their own (one left
+  backslashes unescaped, so chDB read `c\ne` as an escape and `db diff`
+  called the cohort unknown; one wrote `\'`, which DuckDB cannot parse);
+  all three now use `storage.sql.sql_quote_str`, and `db diff` reads the
+  cohort names back as JSON, so a name with a backslash is matched.
+- `db stats` on DuckDB counts a cohort's samples as distinct
+  `(ingest_id, sample_id)` tuples, as chDB does. It concatenated the pair
+  with no separator, under which the samples `('a', 'bc')` and
+  `('ab', 'c')` were one string and counted once.
+- `db dump` quotes its staging path. The path sits in the output directory
+  the user named, so `--out "O'Brien"` was a SQL syntax error on both
+  backends.
+- `db trio` on DuckDB no longer dies on a het call with more than 65535
+  reads. The allele-balance gate added `ad_ref + ad_alt` as 16-bit
+  unsigned columns, which DuckDB refuses to overflow (`AD=30000,40000`
+  raised `Overflow in addition of UINT16` and killed every model of the
+  run); both are widened to 64 bits first, as `allele_fraction_sql` and
+  the X-linked models already did. The pinned trio SQL text changes in
+  that one clause.
+- `vcfclick web` on DuckDB returned another request's rows, or an empty
+  result, when two requests ran at once (the UI fires `/api/meta` and
+  `/api/query` together). The one cached DuckDB session ran every statement
+  on the connection's shared cursor from the server's threadpool; 4 threads
+  running 200 queries each got 451 of 800 results wrong. Each query now runs
+  on a cursor of its own (a duplicate connection to the same database), and
+  the session cache opens one session per database under concurrent first
+  calls.
+- Parallel `db ingest` (the default) lands the same rows as `--serial`.
+  Four shapes lost or duplicated rows while exiting 0:
+  - a small or sparse VCF whose records share one BGZF block gave every
+    16 kb tabix window a byte delta of 0, and those windows were skipped,
+    so the planned region was the last 100 kb bucket alone (150 variants
+    20 kb apart on one contig stored 5);
+  - the last tabix window of a contig was credited to the 100 kb bucket of
+    its first base only, so when it straddled a bucket boundary the
+    variants past the boundary were never read (20,000 sites at POS
+    1000..200990 stored 19,901);
+  - a region query returns every record that overlaps the region, so a
+    deletion starting before a region boundary was staged by two workers
+    and stored twice;
+  - on the cyvcf2 pre-pass path (no `.tbi`), a contig whose first record
+    sits at an exact multiple of 100,000 fell outside every region.
+  After staging, the ingest now compares the staged variant count against
+  the record count from the tabix index's pseudo-bins (or from the pre-pass)
+  and fails with both numbers, before any database write, when they differ;
+  a stale `.tbi` is the usual cause. Re-ingesting a header-only VCF under an
+  id that held data recorded 0 variants on the serial path but raised on
+  the parallel path after the prior rows were gone; it records 0 now. A
+  failed parallel ingest removes its staging directory (the library's
+  `keep_staging=True` keeps it) instead of leaving the staged Parquet
+  under the database.
+- `ingest_parallel(staging_dir=...)` (library API; the CLI does not expose
+  it) stages into a fresh `<ingest_id>.*` subdirectory of the given
+  directory and removes only that subdirectory. It used to glob stale
+  `variants_*.parquet` files already in the directory into the import and
+  then delete the whole directory, with whatever else it held.
+- The published wheel ships `vcfclick_web` again. The sdist include list
+  omitted the package, and `uv build` builds the wheel from the sdist, so
+  `pip install vcfclick[web]` followed by `vcfclick web NAME` failed with
+  `ModuleNotFoundError: vcfclick_web` (0.14.3 wheel and sdist; bioconda
+  builds from the same sdist). `tests/test_packaging.py` builds both from
+  an export of the tracked tree and checks them, and a CI job installs the
+  wheel into a clean venv. The sdist patterns are root-anchored, so a
+  nested copy of the tree under an untracked directory (a `.claude/worktrees/`
+  checkout) no longer reaches a locally built sdist.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

@@ -60,6 +60,11 @@ paper/
 .playwright-mcp/
 .superpowers/
 .worktrees/
+
+# Agent working state: Claude Code worktrees and Cairn session memory.
+# Untracked nested worktrees would otherwise reach a local sdist.
+.claude/
+.cairn
 *.png
 *.jpeg
 *.jpg
