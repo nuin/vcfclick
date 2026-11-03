@@ -51,8 +51,11 @@ def gene_variants_sql(chroms: list[str], start: int, end: int, limit: int) -> st
     The variants are picked first (ordered, `limit` + 1 of them, the extra row
     telling the caller the list was truncated); the carrier counts then read
     the genotype rows of those variants only, not every carrier in the gene."""
-    in_list = ", ".join("'" + c.replace("'", "''") + "'" for c in chroms)
-    region = f"chrom IN ({in_list}) AND pos BETWEEN {int(start)} AND {int(end)}"
+    from storage.sql import str_list
+
+    region = (
+        f"chrom IN ({str_list(chroms)}) AND pos BETWEEN {int(start)} AND {int(end)}"
+    )
     return (
         "WITH picked AS ("
         "SELECT ingest_id, chrom, pos, ref, alt, qual, filter, info_AF "

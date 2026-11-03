@@ -195,7 +195,7 @@ def resolve_filters(
 ) -> tuple[dict[str, fr.Resolved], list[dict]]:
     """Walk the registry: for each key of `command`, its final value and where
     it came from (flag, preset, default), plus the preset keys a flag or
-    `--preset-ignore` overrode. The same function the web and MCP resolvers use
+    `--preset-ignore` overrode. The rule the planned web and MCP resolvers will use
     (`fr.resolve_filters_from_values`), fed from this Click context."""
     explicit = {
         key.file_key: ctx.params[key.param]

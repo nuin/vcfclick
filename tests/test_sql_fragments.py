@@ -8,11 +8,34 @@ import pytest
 from storage import sql
 
 
-def test_str_list_quotes_every_value():
+@pytest.mark.parametrize(
+    "backend,backslash,backslash_quote",
+    [
+        # ClickHouse reads `\` as an escape inside a literal: double it.
+        ("chdb", "'a\\\\b'", "'\\\\'''"),
+        # DuckDB reads `\` literally: doubling it changes the value.
+        ("duckdb", "'a\\b'", "'\\'''"),
+    ],
+)
+def test_sql_quote_str_escapes_for_the_backend(
+    backend, backslash, backslash_quote, monkeypatch
+):
+    monkeypatch.setenv("VCFCLICK_BACKEND", backend)
+    assert sql.sql_quote_str("plain") == "'plain'"
+    assert sql.sql_quote_str("o'brien") == "'o''brien'"
+    assert sql.sql_quote_str("a\\b") == backslash
+    # A quote is always doubled, never backslash-escaped (`\'` is a literal
+    # backslash plus the string terminator on DuckDB).
+    assert sql.sql_quote_str("\\'") == backslash_quote
+
+
+@pytest.mark.parametrize("backend", ["chdb", "duckdb"])
+def test_str_list_quotes_every_value(backend, monkeypatch):
+    monkeypatch.setenv("VCFCLICK_BACKEND", backend)
     assert sql.str_list(["a", "b"]) == "'a', 'b'"
     assert sql.str_list([]) == ""
     # quotes and backslashes go through sql_quote_str, never concatenated
-    assert sql.str_list(["it's", "a\\b"]) == "'it''s', 'a\\\\b'"
+    assert sql.str_list(["it's", "a\\b"]) == ("'it''s', " + sql.sql_quote_str("a\\b"))
     assert sql.str_list(iter(("x",))) == "'x'"
 
 

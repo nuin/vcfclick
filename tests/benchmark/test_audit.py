@@ -78,3 +78,22 @@ def test_annotated_false_positives(tmp_path):
     fps = annotated_errors(_conc(), ann, kind="FP")
     assert len(fps) == 1
     assert fps[0]["pos"] == 300 and fps[0]["gene"] is None  # unannotated FP
+
+
+def test_audit_matches_bare_contigs(tmp_path):
+    """An error on contig `1` is annotated from the store's `chr1` rows and
+    keeps its own spelling in the output."""
+    ann = _ann(tmp_path / "ann.duckdb")
+    frame = _conc()
+    bare = frame.set_column(
+        frame.schema.get_field_index("chrom"),
+        "chrom",
+        pa.array([c.removeprefix("chr") for c in frame.column("chrom").to_pylist()]),
+    )
+    want = annotated_errors(frame, ann, kind="FN")
+    got = annotated_errors(bare, ann, kind="FN")
+    assert [r["chrom"] for r in got] == [r["chrom"].removeprefix("chr") for r in want]
+    assert [(r["gene"], r["clin_sig"], r["af"]) for r in got] == [
+        (r["gene"], r["clin_sig"], r["af"]) for r in want
+    ]
+    assert any(r["gene"] for r in got)

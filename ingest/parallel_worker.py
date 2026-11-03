@@ -10,14 +10,34 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
-from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows
+from ingest.vcf_rows import (
+    MAX_BATCH_ROWS,
+    build_record_rows,
+    require_single_alt,
+    take_clamp_count,
+)
 
 
-def _worker(args: tuple) -> tuple[str, int, int]:
+def region_bounds(region: str) -> tuple[int, int]:
+    """1-based closed (start, end) of a `chrom:start-end` region string."""
+    _, span = region.rsplit(":", 1)
+    start, end = span.split("-")
+    return int(start), int(end)
+
+
+def _worker(args: tuple) -> tuple[str, int, int, int]:
     """Parse one region, emit Parquet files in BATCH_SIZE batches.
 
-    Returns (region, n_variants, n_batches) — n_batches is informational,
-    used to log per-worker progress in the main process log.
+    Returns (region, n_variants, n_batches, n_clamped). n_batches is
+    informational, used to log per-worker progress in the main process
+    log; n_clamped counts FORMAT values clamped to their column range,
+    which the parent logs as one total.
+
+    A region query returns every record that overlaps the region, so a
+    deletion (or a gVCF block with INFO/END) that starts before the
+    region's first base comes back from two neighbouring regions. Only
+    the records whose POS lies in the region are staged, so each record
+    lands in exactly one worker's output.
     """
     (
         region,
@@ -29,8 +49,10 @@ def _worker(args: tuple) -> tuple[str, int, int]:
         keep_reference,
         record_missing,
     ) = args
+    take_clamp_count()  # a reused pool process starts from 0
     vcf = VCF(vcf_path)
     samples = list(vcf.samples)
+    region_start, region_end = region_bounds(region)
 
     safe_region = region.replace(":", "_").replace("-", "_")
     staging = Path(staging_dir)
@@ -57,11 +79,9 @@ def _worker(args: tuple) -> tuple[str, int, int]:
         batch_idx += 1
 
     for variant in vcf(region):
-        if len(variant.ALT) != 1:
-            raise ValueError(
-                f"Multi-allelic at {variant.CHROM}:{variant.POS}. "
-                f"Normalise with bcftools norm -m -."
-            )
+        if not region_start <= variant.POS <= region_end:
+            continue
+        require_single_alt(variant, vcf_path)
         variant_row, genotype_rows, missing_rows = build_record_rows(
             variant,
             samples,
@@ -81,4 +101,4 @@ def _worker(args: tuple) -> tuple[str, int, int]:
             flush()
 
     flush()
-    return region, total_variants, batch_idx
+    return region, total_variants, batch_idx, take_clamp_count()

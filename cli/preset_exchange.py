@@ -242,12 +242,10 @@ def filters_from_result(text: str | bytes) -> tuple[dict, dict]:
     requested = (
         block.get("requested") if isinstance(block.get("requested"), dict) else {}
     )
-    for meta, of in (("genes_label", "genes"), ("regions_build", "regions")):
-        entry = block["resolved"].get(of)
-        if (
-            meta in requested
-            and isinstance(entry, dict)
-            and entry.get("from") == "preset"
+    for meta, lists in fr.SCOPE_COMPANIONS.items():
+        entries = [block["resolved"].get(of) for of in lists]
+        if meta in requested and any(
+            isinstance(e, dict) and e.get("from") == "preset" for e in entries
         ):
             filters[meta] = requested[meta]
     _restore_long_lists(filters, block)

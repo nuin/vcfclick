@@ -38,6 +38,7 @@ import os
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 
 import pyarrow as pa
@@ -48,6 +49,7 @@ from storage.sql import delete_where_sql as delete_where_sql
 from storage.sql import map_keys_from as map_keys_from
 from storage.sql import parquet_file_expr as parquet_file_expr
 from storage.sql import populated_expr as populated_expr
+from storage.sql import session_lockdown_sql as session_lockdown_sql
 from storage.sql import sql_quote_str as sql_quote_str
 from storage.sql import typed_columns_sql as typed_columns_sql
 
@@ -116,6 +118,9 @@ _TABLE_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _DB_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_-]{0,62}$")
 
 _sessions: dict[str, object] = {}
+# Serialises the check-and-open in get_session and the one-time lockdown in
+# get_readonly_session: `vcfclick web` calls both from a threadpool.
+_sessions_lock = threading.RLock()
 
 
 def _resolve_name(name: str | None) -> str | None:
@@ -159,19 +164,55 @@ def get_session(name: str | None = None):
     # juggling both engines (tests, in-process backend switch)
     # doesn't hand back the wrong handle.
     cache_key = f"{backend()}::{resolved or '_legacy'}"
-    if cache_key not in _sessions:
-        path = db_path(name)
-        path.mkdir(parents=True, exist_ok=True)
-        _sessions[cache_key] = _open_session(path)
-    return _sessions[cache_key]
+    with _sessions_lock:
+        if cache_key not in _sessions:
+            path = db_path(name)
+            path.mkdir(parents=True, exist_ok=True)
+            _sessions[cache_key] = _open_session(path)
+        return _sessions[cache_key]
+
+
+# Marker set on a session once `session_lockdown_sql` has run on it.
+_LOCKED_ATTR = "_vcfclick_locked"
+
+
+def get_readonly_session(name: str | None = None):
+    """The cached session for `name`, locked at the engine level.
+
+    Runs `storage.sql.session_lockdown_sql()` once per session object
+    (DuckDB: `enable_external_access = false` + `lock_configuration`;
+    chDB: `readonly = 1`) and returns the same object `get_session` gives
+    everyone else, so every later statement in the process is covered.
+    The lock cannot be undone for the life of the session: this is for
+    the processes that only read the cohort (`vcfclick web`, the MCP
+    server), and backs the parse-time check in `storage.sql_guard`.
+    """
+    with _sessions_lock:
+        sess = get_session(name)
+        if not getattr(sess, _LOCKED_ATTR, False):
+            for stmt in session_lockdown_sql():
+                sess.query(stmt)
+            setattr(sess, _LOCKED_ATTR, True)
+        return sess
 
 
 def list_dbs() -> list[str]:
-    """All named DBs under VCFCLICK_HOME/dbs/, sorted."""
+    """All named DBs under VCFCLICK_HOME/dbs/, sorted.
+
+    A directory whose name no DB can have (fails _DB_NAME_RE), or a
+    serial-ingest stage directory an older version left in the root
+    after a killed run (`vcfclick_ingest_*`), is not a DB.
+    """
     root = _db_root()
     if not root.exists():
         return []
-    return sorted(p.name for p in root.iterdir() if p.is_dir())
+    return sorted(
+        p.name
+        for p in root.iterdir()
+        if p.is_dir()
+        and _DB_NAME_RE.match(p.name)
+        and not p.name.startswith("vcfclick_ingest_")
+    )
 
 
 def drop_db(name: str) -> None:
@@ -538,7 +579,8 @@ def query_arrow(sql: str, sess=None) -> pa.Table:
     DuckDB hands Arrow over natively; chDB returns an Arrow IPC stream
     (`ArrowStream`), which carries the schema even for an empty result.
     Column types follow the engine, so cast aggregates explicitly in SQL
-    (e.g. `CAST(sum(x) AS BIGINT)`) where both must agree.
+    (e.g. `CAST(sum(x) AS BIGINT)`) where both must agree. `sess` is the
+    session to run on (default: the current DB's).
     """
     if sess is None:
         sess = get_session()

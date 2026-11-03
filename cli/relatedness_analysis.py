@@ -4,7 +4,7 @@ from functools import partial
 
 import click
 import numpy as np
-from storage import arrow_rows, has_reference_rows, query_rows
+from storage import has_reference_rows, query_rows
 
 # KING kinship thresholds (powers of 2 between the expected values).
 _DUPLICATE = 0.354
@@ -21,6 +21,8 @@ _MIN_SPAN_BP = 10_000_000
 _MIN_SITES = 1000
 # A pair needs this many heterozygous sites between them to be estimable.
 _MIN_PAIR_HETS = 20
+# Sites per chunk in king_robust: bounds the float32 indicator matrices.
+_CHUNK_SITES = 10_000
 
 
 def _pair(stats, samples, classify_pairs: bool, i: int, j: int) -> dict:
@@ -55,10 +57,14 @@ def _related_pairs(stats, samples, pair, include_all, classify_pairs, min_kinshi
             candidates = [tuple(ij) for ij in np.argwhere(np.triu(keep, 1))]
         else:
             candidates = []
+        # A --min-kinship below the third-degree cutoff asks for pairs the
+        # bins call unrelated, so kinship alone decides which are reported.
+        hidden = ("insufficient-data",)
+        if min_kinship >= _THIRD:
+            hidden += ("unrelated",)
         for i, j in candidates:
             p = pair(int(i), int(j))
-            related = p["relationship"] not in ("unrelated", "insufficient-data")
-            if include_all or related:
+            if include_all or p["relationship"] not in hidden:
                 pairs.append(p)
         pairs.sort(key=lambda p: -(p["kinship"] if p["kinship"] is not None else -9))
 
@@ -105,23 +111,41 @@ def _pedigree_checks(pedigree, samples, stats, pair):
     return checks
 
 
-def king_robust(g: np.ndarray) -> dict[str, np.ndarray]:
+def king_robust(
+    g: np.ndarray, chunk_sites: int = _CHUNK_SITES
+) -> dict[str, np.ndarray]:
     """Pairwise KING-robust statistics.
 
     `g` is a (sites x samples) int8 matrix of alt-allele counts: 0, 1, 2,
     or -1 for a no-call. Returns samples x samples matrices: kinship, ibs0
     (count), hethet (count) and n_sites (sites where both are called).
-    """
-    called = (g >= 0).astype(np.float32)
-    het = (g == 1).astype(np.float32)
-    homref = (g == 0).astype(np.float32)
-    homalt = (g == 2).astype(np.float32)
 
-    hethet = het.T @ het
-    ibs0 = homref.T @ homalt
+    The 0/1 indicator matrices are built `chunk_sites` rows at a time and
+    their products summed into samples x samples accumulators, so peak
+    memory is about chunk_sites x samples x 16 bytes plus the outputs.
+    Each product is an exact integer count in float32 (below 2^24 sites,
+    the --max-sites cap), so the sum equals the single-pass result.
+    """
+    n = g.shape[1]
+    hethet = np.zeros((n, n), dtype=np.float32)
+    ibs0 = np.zeros((n, n), dtype=np.float32)
+    het_given_called = np.zeros((n, n), dtype=np.float32)
+    both_called = np.zeros((n, n), dtype=np.float32)
+    step = max(1, int(chunk_sites))
+    for lo in range(0, g.shape[0], step):
+        c = g[lo : lo + step]
+        called = (c >= 0).astype(np.float32)
+        het = (c == 1).astype(np.float32)
+        hethet += het.T @ het
+        # het count of sample i over the sites where sample j is also called
+        het_given_called += het.T @ called
+        both_called += called.T @ called
+        del called
+        homref = (c == 0).astype(np.float32)
+        homalt = (c == 2).astype(np.float32)
+        ibs0 += homref.T @ homalt
+        del het, homref, homalt
     ibs0 = ibs0 + ibs0.T
-    # het count of sample i over the sites where sample j is also called
-    het_given_called = het.T @ called
     denom = het_given_called + het_given_called.T
     with np.errstate(divide="ignore", invalid="ignore"):
         kinship = np.where(denom > 0, (hethet - 2 * ibs0) / denom, np.nan)
@@ -130,7 +154,7 @@ def king_robust(g: np.ndarray) -> dict[str, np.ndarray]:
         "kinship": kinship,
         "ibs0": ibs0.astype(np.int64),
         "hethet": hethet.astype(np.int64),
-        "n_sites": (called.T @ called).astype(np.int64),
+        "n_sites": both_called.astype(np.int64),
     }
 
 
@@ -148,23 +172,146 @@ def classify(kinship: float, ibs0_frac: float) -> str:
     return "unrelated"
 
 
-def _span_bp(sites: list[list]) -> int:
-    """Total genomic span covered by the sites: sum over chromosomes of max - min."""
-    by_chrom: dict[str, list[int]] = {}
-    for chrom, pos, *_ in sites:
-        lo_hi = by_chrom.setdefault(chrom, [int(pos), int(pos)])
-        lo_hi[0] = min(lo_hi[0], int(pos))
-        lo_hi[1] = max(lo_hi[1], int(pos))
-    return sum(hi - lo for lo, hi in by_chrom.values())
+def _arrow(sess, sql: str):
+    from storage.db import query_arrow
+
+    return query_arrow(sql, sess)
+
+
+def _thin_keeps(k: int, total: int, max_sites: int) -> bool:
+    """True when the site of 0-based rank k is one of the max_sites kept,
+    the ranks floor(i * total / max_sites). Mirrors `_thin_sql`."""
+    if total <= max_sites:
+        return True
+    r = (k * max_sites) % total
+    return r == 0 or r > total - max_sites
+
+
+def _thin_sql(col: str, total: int, max_sites: int) -> str:
+    """SQL form of `_thin_keeps` on the rank column `col`. Integer
+    arithmetic only, so both backends keep the same sites."""
+    if total <= max_sites:
+        return "1 = 1"
+    m, t = int(max_sites), int(total)
+    return f"(({col} * {m}) % {t} = 0 OR ({col} * {m}) % {t} > {t - m})"
+
+
+def _kept_sites_cte(where: str, total: int, max_sites: int) -> str:
+    """`WITH ... kept AS (chrom, pos, ref, alt, i)`: the thinned SNV sites,
+    with i their 0-based row in the genotype matrix."""
+    return (
+        "WITH ranked AS (SELECT v.chrom AS chrom, v.pos AS pos, v.ref AS ref, "
+        "v.alt AS alt, row_number() OVER (ORDER BY v.chrom, v.pos, v.ref, v.alt) "
+        f"- 1 AS k FROM variants v WHERE {where}), "
+        "kept AS (SELECT chrom, pos, ref, alt, "
+        "row_number() OVER (ORDER BY k) - 1 AS i "
+        f"FROM ranked WHERE {_thin_sql('k', total, max_sites)}) "
+    )
+
+
+def _kept_join(alias: str) -> str:
+    return " AND ".join(
+        f"{alias}.{c} = kept.{c}" for c in ("chrom", "pos", "ref", "alt")
+    )
+
+
+def _fill(g: np.ndarray, table, samples: list[str], value: int | None) -> None:
+    """Write `table`'s rows (i, sample_id[, gt]) into g: gt, or `value`."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    if table.num_rows == 0:
+        return
+    rows = np.asarray(table.column("i").to_numpy(), dtype=np.int64)
+    ids = pc.cast(table.column("sample_id"), pa.string())
+    cols = pc.fill_null(pc.index_in(ids, value_set=pa.array(samples, pa.string())), -1)
+    cols = np.asarray(cols.to_numpy(), dtype=np.int64)
+    if value is None:
+        vals = np.asarray(table.column("gt").to_numpy(), dtype=np.int64)
+        ok = (cols >= 0) & (vals >= 0)
+    else:
+        vals = np.full(len(rows), value, dtype=np.int64)
+        ok = cols >= 0
+    g[rows[ok], cols[ok]] = vals[ok].astype(np.int8)
+
+
+def _genotype_matrix(
+    sess, q: str, cte: str, n_sites: int, samples: list[str], keep_ref: bool
+) -> np.ndarray:
+    """(sites x samples) int8 alt-allele counts over the kept sites, -1 for a
+    no-call. Only the kept sites' rows leave the database."""
+    g = np.full((n_sites, len(samples)), -1 if keep_ref else 0, dtype=np.int8)
+    min_gt = 0 if keep_ref else 1
+    _fill(
+        g,
+        _arrow(
+            sess,
+            f"{cte}SELECT kept.i AS i, g.sample_id AS sample_id, g.gt AS gt "
+            f"FROM genotypes g INNER JOIN kept ON {_kept_join('g')} "
+            f"WHERE g.ingest_id = {q} AND g.gt >= {min_gt}",
+        ),
+        samples,
+        None,
+    )
+    if not keep_ref:
+        _mark_no_calls(sess, q, cte, g, samples)
+    return g
+
+
+def _mark_no_calls(sess, q: str, cte: str, g: np.ndarray, samples: list[str]) -> None:
+    """Sparse mode reads an absent genotype as 0/0; the full no-calls an
+    ingest recorded in missing_genotypes are set to -1 so they are skipped
+    for every pair. An ingest made with --no-record-missing has none."""
+    from storage import table_exists
+
+    if not table_exists("missing_genotypes"):
+        return
+    _fill(
+        g,
+        _arrow(
+            sess,
+            f"{cte}SELECT kept.i AS i, m.sample_id AS sample_id "
+            f"FROM missing_genotypes m INNER JOIN kept ON {_kept_join('m')} "
+            f"WHERE m.ingest_id = {q}",
+        ),
+        samples,
+        -1,
+    )
+
+
+def _site_where(sess, q: str, pass_only: bool) -> str:
+    """The SNV sites kinship is counted on, as a predicate on `variants v`:
+    autosomes only, by the rule db popgen uses (sex chromosomes and chrM
+    carry haploid calls stored as diploid), and with `pass_only` FILTER
+    PASS or unset."""
+    from cli.trio_analysis import PASS_ONLY_SQL
+    from popgen.analysis import is_autosome
+    from storage.sql import chrom_in_sql
+
+    where = f"v.ingest_id = {q} AND length(v.ref) = 1 AND length(v.alt) = 1"
+    chroms = [
+        r[0]
+        for r in query_rows(
+            sess, f"SELECT DISTINCT v.chrom FROM variants v WHERE {where}"
+        )
+    ]
+    autosomes = sorted(c for c in chroms if is_autosome(c))
+    where += " AND " + (chrom_in_sql("v.chrom", autosomes) if autosomes else "1 = 0")
+    if pass_only:
+        where += f" AND {PASS_ONLY_SQL}"
+    return where
 
 
 def _load(
-    sess, ingest_id: str, max_sites: int
+    sess, ingest_id: str, max_sites: int, pass_only: bool = False
 ) -> tuple[list[str], np.ndarray, str, int, int]:
-    """Samples, (sites x samples) matrix, mode, total SNV sites, genomic span."""
-    from cli.db_diff import _quote_str
+    """Samples, (sites x samples) matrix, mode, total SNV sites, genomic span.
 
-    q = _quote_str(ingest_id)
+    Refuses a cohort above _MAX_SAMPLES before anything is allocated.
+    """
+    from storage.sql import sql_quote_str, to_int64
+
+    q = sql_quote_str(ingest_id)
     samples = [
         r[0]
         for r in query_rows(
@@ -172,45 +319,40 @@ def _load(
             f"SELECT DISTINCT sample_id FROM samples WHERE ingest_id = {q} ORDER BY sample_id",
         )
     ]
+    if len(samples) > _MAX_SAMPLES:
+        raise click.ClickException(
+            f"{len(samples):,} samples in {ingest_id!r}; pairwise kinship above {_MAX_SAMPLES:,} "
+            "samples needs more memory than this command uses."
+        )
     keep_ref = has_reference_rows(sess, ingest_id)
-    snv = "length(ref) = 1 AND length(alt) = 1"
-    sites = arrow_rows(
-        sess,
-        f"SELECT chrom, pos, ref, alt FROM variants WHERE ingest_id = {q} AND {snv} ORDER BY chrom, pos, ref, alt",
+    where = _site_where(sess, q, pass_only)
+    total = int(
+        query_rows(sess, f"SELECT count(*) FROM variants v WHERE {where}")[0][0]
     )
-    total = len(sites)
-    span = _span_bp(sites)
-    if total > max_sites:
-        # Deterministic, evenly spread thinning keeps memory bounded.
-        step = total / max_sites
-        sites = [sites[int(i * step)] for i in range(max_sites)]
-    site_index = {s: i for i, s in enumerate(sites)}
-    sample_index = {s: j for j, s in enumerate(samples)}
-
-    g = np.full((len(sites), len(samples)), -1 if keep_ref else 0, dtype=np.int8)
-    min_gt = 0 if keep_ref else 1
-    for chrom, pos, ref, alt, sample_id, gt in arrow_rows(
-        sess,
-        f"SELECT chrom, pos, ref, alt, sample_id, gt FROM genotypes "
-        f"WHERE ingest_id = {q} AND {snv} AND gt >= {min_gt}",
-    ):
-        i = site_index.get((chrom, pos, ref, alt))
-        j = sample_index.get(sample_id)
-        if i is not None and j is not None and int(gt) >= 0:
-            g[i, j] = int(gt)
+    span = int(
+        query_rows(
+            sess,
+            f"SELECT {to_int64('coalesce(sum(s), 0)')} FROM ("
+            f"SELECT max(v.pos) - min(v.pos) AS s FROM variants v WHERE {where} "
+            "GROUP BY v.chrom) t",
+        )[0][0]
+    )
+    n_sites = min(total, max_sites)
+    cte = _kept_sites_cte(where, total, max_sites)
+    g = _genotype_matrix(sess, q, cte, n_sites, samples, keep_ref)
     return samples, g, "keep-reference" if keep_ref else "sparse", total, span
 
 
 def _pedigree(sess, ingest_id: str) -> list[tuple[str, str, str]]:
     """(child, parent, role) for every declared parent in the pedigree."""
-    from cli.db_diff import _quote_str
     from storage import table_exists
+    from storage.sql import sql_quote_str
 
     if not table_exists("pedigree"):
         return []
     rows = query_rows(
         sess,
-        f"SELECT sample_id, father_id, mother_id FROM pedigree WHERE ingest_id = {_quote_str(ingest_id)}",
+        f"SELECT sample_id, father_id, mother_id FROM pedigree WHERE ingest_id = {sql_quote_str(ingest_id)}",
     )
     out = []
     for child, father, mother in rows:
@@ -228,8 +370,9 @@ def relatedness(
     include_all: bool,
     min_kinship: float,
     force: bool = False,
+    pass_only: bool = False,
 ) -> dict:
-    samples, g, mode, total, span = _load(sess, ingest_id, max_sites)
+    samples, g, mode, total, span = _load(sess, ingest_id, max_sites, pass_only)
     warning = None
     if span < _MIN_SPAN_BP or total < _MIN_SITES:
         warning = (
@@ -243,11 +386,6 @@ def relatedness(
             )
         )
     classify_pairs = warning is None or force
-    if len(samples) > _MAX_SAMPLES:
-        raise click.ClickException(
-            f"{len(samples):,} samples in {ingest_id!r}; pairwise kinship above {_MAX_SAMPLES:,} "
-            "samples needs more memory than this command uses."
-        )
     stats = king_robust(g) if len(samples) and g.shape[0] else None
 
     pair = partial(_pair, stats, samples, classify_pairs)
@@ -264,6 +402,7 @@ def relatedness(
         "n_sites": total,
         "sites_used": int(g.shape[0]),
         "span_bp": span,
+        "pass_only": pass_only,
         "warning": warning,
         "pairs": pairs,
         "pedigree_checks": checks,

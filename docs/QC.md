@@ -14,7 +14,7 @@ vcfclick db qc my-cohort --format json   # for pipelines
 | `variants` | stored non-reference calls for the sample |
 | `het` / `hom` | heterozygous (`gt=1`) / homozygous-alt (`gt=2`) counts |
 | `het/hom` | het-to-hom-alt ratio (a standard genotyping sanity check) |
-| `ti/tv` | transition/transversion ratio over SNVs (≈2.0–2.1 for WGS, ≈3 for exomes; low values suggest false positives) |
+| `ti/tv` | transition/transversion ratio over SNVs with A/C/G/T REF and ALT (≈2.0–2.1 for WGS, ≈3 for exomes; low values suggest false positives); `NA` for a sample with neither, `inf` with no transversions |
 | `chrX-het` | heterozygous fraction on chromosome X |
 | `sex` | sex inferred from chrX heterozygosity (`male` if low, `female` if high), `*` when it disagrees with the pedigree |
 
@@ -62,7 +62,9 @@ kinship = (sites both het  -  2 x sites with opposite homozygotes) / (het sites 
 | 0.044 – 0.088 | third degree |
 | below | unrelated |
 
-By default only related pairs are listed; `--all` lists every pair. When a
+By default only related pairs are listed; `--all` lists every pair, and a
+`--min-kinship` below the third-degree cutoff (0.0442) lists every pair at
+or above it, `unrelated` ones included. When a
 pedigree is loaded, every declared parent is checked against the
 genotypes, and a declared parent who isn't a first-degree `parent-child`
 match is flagged `mismatch` (sample swap, mislabel or non-paternity).
@@ -75,9 +77,18 @@ Two limits come from the data:
   are left unclassified with a warning (`--force` classifies anyway).
 - **No-calls.** For ingestions made with `--keep-reference`, an absent
   genotype is a real no-call and is skipped for that pair. Otherwise only
-  non-reference calls were stored, so absent is read as `0/0`; missing
-  calls then look hom-ref and pull kinship slightly down. Joint-called VCFs
-  have few, so relationship calls remain reliable.
+  non-reference calls were stored, so absent is read as `0/0`, except the
+  full no-calls (`./.`) that `db ingest` records in `missing_genotypes` by
+  default: those are skipped too, so both modes give the same kinship. An
+  ingestion made with `--no-record-missing` has no such record; its
+  no-calls look hom-ref, which pulls kinship down and adds IBS0 next to a
+  hom-alt call.
+
+Only autosomal SNVs count, by the rule `db popgen` uses: chrX, chrY, chrM
+and unplaced or decoy contigs are left out, because a male's haploid calls
+there are stored as `1/1` or not at all and would read as opposite
+homozygotes. `--pass-only` also leaves out sites whose FILTER is set and
+not `PASS`; the JSON says which was used (`pass_only`).
 
 Kinship is computed with dense matrix products, one ingestion at a time,
 and SNVs are thinned evenly to `--max-sites` (default 200,000) to bound
@@ -88,7 +99,7 @@ To cross-check relatedness and the sex call against somalier, see
 
 ## What it does not report
 
-The genotypes table is **sparse** — only non-reference calls are stored,
-so a sample's `0/0` and `./.` are indistinguishable by absence. Genotype
-*missingness* / call rate therefore cannot be computed here; QC reports
-only the metrics the stored non-reference calls support honestly.
+QC counts the stored non-reference calls. Full no-calls (`./.`) are
+recorded per sample in `missing_genotypes` by default (not on older
+databases or ingests made with `--no-record-missing`), but `db qc` does not
+read that table yet, so it reports no call rate.

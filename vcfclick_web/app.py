@@ -3,11 +3,12 @@
 A thin HTTP layer over existing vcfclick internals — it adds no new query
 logic. Endpoints reuse storage.get_session (the same path as `db query`
 and the MCP run_sql tool), cli.db_trio's SQL builders, and
-ingest.combine. Served on localhost only; arbitrary SELECTs are allowed
-because the caller already owns the database (same trust level as the
-CLI), but write statements are rejected as a guardrail
-(storage.sql_guard: an AST check, since a malicious page can POST to a
-local server via CSRF / DNS-rebinding).
+ingest.combine. Served on localhost only. A malicious page can still POST
+to a local server (CSRF / DNS-rebinding), so caller SQL passes two layers:
+storage.sql_guard (an AST check: one read statement over the cohort
+tables, no write, table function, file path, system table or SETTINGS)
+and the engine-level lock of storage.get_readonly_session (DuckDB
+enable_external_access = false, chDB readonly = 1).
 """
 
 from __future__ import annotations
@@ -33,7 +34,13 @@ from ingest._arrow import (
     column_names,
 )
 from ingest.combine import CombineError, combine_vcfs
-from storage import get_session, query_json, table_columns, table_exists
+from storage import (
+    get_readonly_session,
+    get_session,
+    query_json,
+    table_columns,
+    table_exists,
+)
 from cli.trio_analysis import CATEGORIES, DEFAULT_MAX_AF
 from storage.sql_guard import is_read_only
 from vcfclick_web.page import INDEX_HTML
@@ -58,8 +65,11 @@ def _db_name() -> str | None:
 
 
 def _run_sql(sql: str) -> dict:
-    """Execute SQL via the shared session path; shape it like run_sql."""
-    parsed = query_json(get_session(), sql)
+    """Execute SQL via the shared session path; shape it like run_sql.
+
+    The session is locked at the engine level first (storage.sql.
+    session_lockdown_sql), the second layer behind `is_read_only`."""
+    parsed = query_json(get_readonly_session(), sql)
     return {
         "sql": sql,
         "columns": [m["name"] for m in parsed.get("meta", [])],
@@ -199,7 +209,9 @@ def query(body: QueryBody) -> dict:
     if not is_read_only(sql):
         return {
             "error": "the web UI is read-only — only a single "
-            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is allowed"
+            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement over the cohort "
+            "tables is allowed (no table functions, file paths, system "
+            "tables or SETTINGS)"
         }
     try:
         return _run_sql(sql)

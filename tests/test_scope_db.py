@@ -66,9 +66,10 @@ def _load_annotations(path: Path, *, hgnc: bool) -> None:
             hgnc_aliases.load(FIXTURES / "hgnc_aliases.tsv")
 
 
-def _edited_vcf(dest: Path, edit) -> Path:
+def _edited_vcf(dest: Path, edit, site=None) -> Path:
     """scope.vcf.gz as plain text with `edit(chrom, pos, sample_index, call)`
-    applied to every sample call (GT:AD:GQ:DP)."""
+    applied to every sample call (GT:AD:GQ:DP), and `site(fields)` (when
+    given) to the fixed columns of every record."""
     import gzip
 
     lines = []
@@ -79,6 +80,8 @@ def _edited_vcf(dest: Path, edit) -> Path:
                 continue
             f = line.rstrip("\n").split("\t")
             f[9:] = [edit(f[0], int(f[1]), i, call) for i, call in enumerate(f[9:])]
+            if site is not None:
+                f = site(f)
             lines.append("\t".join(f) + "\n")
     dest.write_text("".join(lines))
     return dest
@@ -89,6 +92,37 @@ def _no_gq_from_70kb(chrom, pos, i, call):
     region chr7:1-60000)."""
     gt, ad, gq, dp = call.split(":")
     return f"{gt}:{ad}:.:{dp}" if chrom == "chr7" and pos >= 70_000 else call
+
+
+def _keep_call(chrom, pos, i, call):
+    return call
+
+
+def _af_out_labels_out(f: list[str]) -> list[str]:
+    """INFO/AF removed inside chr7:10000-20000 (dn_c9, dom_c9), and a FILTER
+    label on three sites outside it: the INFO/AF and FILTER gates can act only
+    outside that region."""
+    pos = int(f[1])
+    if f[0] == "chr7" and 10_000 <= pos <= 20_000:
+        f[7] = "."
+    if f[0] == "chr7" and pos in (75_000, 85_000, 90_000):
+        f[6] = "q10"
+    return f
+
+
+def _no_father_dp_off_comphet(chrom, pos, i, call):
+    """The father's DP removed at dom_out (85 kb), an intergenic paternal het
+    that pairs with no maternal het: the compound-het report never shows it,
+    with strict_missing or without. (One row in ten, so the DP gate binds.)"""
+    gt, ad, gq, dp = call.split(":")
+    return f"{gt}:{ad}:{gq}:." if i == 1 and pos == 85_000 else call
+
+
+def _no_proband_gq_on_x(chrom, pos, i, call):
+    """GQ removed from the proband's chrX calls: 2 of the proband's 20 rows,
+    so the share over all of them is 90% while the X candidates have none."""
+    gt, ad, gq, dp = call.split(":")
+    return f"{gt}:{ad}:.:{dp}" if i == 0 and chrom == "chrX" else call
 
 
 def _no_father_dp_at(chrom, pos, i, call):
@@ -113,6 +147,9 @@ def world(backend, tmp_path_factory):
     edited = {
         "q": _edited_vcf(base / "nogq.vcf", _no_gq_from_70kb),
         "s": _edited_vcf(base / "nodp.vcf", _no_father_dp_at),
+        "a": _edited_vcf(base / "afout.vcf", _keep_call, _af_out_labels_out),
+        "d": _edited_vcf(base / "nodp2.vcf", _no_father_dp_off_comphet),
+        "x": _edited_vcf(base / "noxgq.vcf", _no_proband_gq_on_x),
     }
     for db, vcf in (
         ("c", FIXTURES / "scope.vcf.gz"),
@@ -445,3 +482,92 @@ def test_comphet_strict_count_is_about_the_genes_the_scope_keeps(world):
     )
     python = forced(world, "s", "python", *args)
     assert python["effective"] == doc["effective"]
+
+
+def test_the_variant_level_gates_are_judged_inside_the_scope(world):
+    """Inside chr7:10000-20000 no variant carries INFO/AF or a FILTER label;
+    outside, every one carries INFO/AF and three carry q10. The INFO/AF and
+    FILTER gates remove nothing from that region, so neither binds there, in
+    every SQL mode."""
+    args = ("--category", "dominant", "--pass-only", "--strict-missing")
+    region = ("--region", "chr7:10000-20000")
+    whole = jtrio(world, "a", *args)["effective"]
+    assert whole["info_af"]["bound"] is True
+    assert whole["filter_column"]["non_pass_variants"] == 3
+    docs = {
+        mode: forced(world, "a", mode, *args, *region)
+        for mode in ("python", "sql_buckets", "sql")
+    }
+    want = jtrio(world, "a", *args, *region)
+    for mode, doc in docs.items():
+        assert doc["effective"] == want["effective"], mode
+    eff = want["effective"]
+    assert eff["info_af"]["bound"] is False
+    assert eff["filter_column"]["non_pass_variants"] == 0
+    codes = {(w["code"], w["key"]) for w in eff["warnings"]}
+    assert ("pass_only_no_labels", "pass_only") in codes
+    assert ("gate_unbound", "max_af") in codes
+    [msg] = [
+        w["message"] for w in eff["warnings"] if w["code"] == "pass_only_no_labels"
+    ]
+    assert "inside the run's scope" in msg
+    r = trio(world, "a", *args, *region, "--require-bound-gates", ok=False)
+    assert "max_af" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [(), ("--exclude-region", "chr7:1-100"), ("--region", "chr7:1-100000")],
+    ids=["none", "exclude-only", "include"],
+)
+def test_comphet_strict_count_is_about_shown_genes_in_every_scope_form(world, scope):
+    """strict_missing drops a paternal het that no compound het shows, with it
+    or without: the count is 0 whatever form the scope takes (it was 1 without
+    an include scope)."""
+    args = ("--category", "comphet", "--strict-missing", "--min-dp", "10", *scope)
+    doc = jtrio(world, "d", *args)
+    assert doc["effective"]["dp"]["bound"] is True  # the strict gate is in force
+    plain = jtrio(world, "d", "--category", "comphet", "--min-dp", "10", *scope)
+    assert names(doc, "comphet") == names(plain, "comphet")
+    codes = [w["code"] for w in doc["effective"]["warnings"]]
+    assert "strict_missing_dropped" not in codes
+
+
+def test_a_presets_regions_build_follows_its_exclusions_too(world, tmp_path):
+    """A preset that sets only exclude_regions with regions_build GRCh37, on a
+    GRCh38 database: the build is checked and the mismatch said, as it is for
+    a preset with regions. `preset save --from-result` keeps the build."""
+    run_cli(
+        world.home, world.backend, "preset", "save", "ex37", "--force",
+        "--exclude-region", "chr1:1-100", "--regions-build", "GRCh37",
+    )  # fmt: skip
+    doc = jtrio(world, "c", "--preset", "ex37", "--build", "GRCh38")
+    assert doc["scope"]["regions_build"] == "GRCh37"
+    codes = [w["code"] for w in doc["effective"]["warnings"]]
+    assert "scope_build_mismatch" in codes
+    saved = tmp_path / "result.json"
+    saved.write_text(json.dumps(doc))
+    run_cli(
+        world.home, world.backend, "preset", "save", "ex37-again", "--force",
+        "--from-result", str(saved),
+    )  # fmt: skip
+    again = json.loads((world.home / "presets" / "ex37-again.json").read_text())
+    assert again["filters"]["regions_build"] == "GRCh37"
+    assert again["filters"]["exclude_regions"] == ["chr1:1-100"]
+
+
+def test_the_x_model_is_judged_on_its_own_candidate_rows(world):
+    """The proband's GQ is on 90% of its rows but on none of its chrX calls.
+    --category xlinked reads only those, so min_gq cannot bind there; judged
+    on the whole sample it would. The pool is the X model's candidates."""
+    args = ("--category", "xlinked", "--build", "GRCh38", "--min-gq", "20",
+            "--strict-missing")  # fmt: skip
+    r = trio(world, "x", *args, ok=False)
+    assert "min_gq" in r.stderr and "xlinked candidate sites" in r.stderr
+    doc = jtrio(world, "x", *args, "--no-require-bound-gates")
+    assert doc["models"]["xlinked"]["count"] == 2
+    assert doc["effective"]["gq"]["bound"] is False
+    # the autosomal models still read their own rows, which all carry GQ
+    dom = jtrio(world, "x", "--category", "dominant", "--min-gq", "20",
+                "--strict-missing")  # fmt: skip
+    assert dom["effective"]["gq"]["bound"] is True

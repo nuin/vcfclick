@@ -399,6 +399,7 @@ def save(
         )
         path = save_user_preset(doc, force=force)
     click.echo(f"saved preset {name!r} (fingerprint {fingerprint(doc)}) to {path}")
+    _warn_band(doc.get("filters", {}))
 
 
 # ─────────────────────────── set / unset / edit ───────────────────────────
@@ -422,13 +423,21 @@ def _parse_assignment(text: str) -> tuple[str, object]:
         if raw.lower() not in words:
             raise PresetError(f"{key}: must be true or false")
         value: object = words[raw.lower()]
-    elif spec.type == "category":
-        value = json.loads(raw) if raw.startswith("[") else raw
+    elif spec.type in ("category", "text", *fr.LIST_TYPES):
+        # a bare word is the text itself; JSON only when it is spelt as JSON
+        if raw.startswith(("[", '"')):
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                raise PresetError(f"{key}: {raw[:20]!r} is not valid JSON") from None
+        else:
+            value = raw
     else:
         try:
             value = json.loads(raw)
         except ValueError:
-            raise PresetError(f"{key}: {raw[:20]!r} is not a number") from None
+            what = "an integer" if spec.type == "int" else "a number"
+            raise PresetError(f"{key}: {raw[:20]!r} is not {what}") from None
     checked, bad = fr.check_value(spec, value)
     if bad:
         raise PresetError(f"{key}: {bad}")
@@ -497,8 +506,22 @@ def set_cmd(name: str, assignments: tuple[str, ...], force: bool) -> None:
     """Set filter values in a preset of yours: `preset set id-panel max_af=0.003`."""
     with _errors():
         pairs = [_parse_assignment(a) for a in assignments]
-        _change(name, force, lambda f: {**f, **dict(pairs)})
+        p = _change(name, force, lambda f: {**f, **dict(pairs)})
     click.echo(f"set {', '.join(k for k, _ in pairs)} in {name!r}")
+    _warn_band({**p.filters, **dict(pairs)})
+
+
+def _warn_band(filters: dict) -> None:
+    """A cross-key rule is judged on the resolved values, so a file with an
+    empty allele-balance band is stored (a flag can repair it at run time);
+    say so here, against the defaults, since every plain run would refuse."""
+    values = {k: filters.get(k, fr.REGISTRY[k].default) for k in ("min_ab", "max_ab")}
+    for message in fr.cross_key_problems(values):
+        click.echo(
+            f"warning: {message} with the defaults; a run with this preset "
+            "fails unless a flag repairs it",
+            err=True,
+        )
 
 
 @preset.command(short_help="Remove keys from a preset of yours.")

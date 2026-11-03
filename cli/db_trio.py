@@ -54,6 +54,7 @@ from cli.trio_analysis import DEFAULT_MAX_AF as DEFAULT_MAX_AF
 from cli.trio_analysis import Gates as Gates
 from cli.trio_analysis import Trio as Trio
 from cli.trio_analysis import (
+    AF_GATE_SKIPPED,
     TrioAnalysis,
     _has_reference_rows,
     _resolve_parents,
@@ -248,6 +249,14 @@ def db_trio(options: TrioOptions) -> None:
     if af_message:
         click.echo(f"note: {af_message}", err=True)
     gates = options.gates._replace(af_gate=af_gate)
+    if af_gate == AF_GATE_SKIPPED and is_explicit(ctx, "max_af_x"):
+        # --max-af-x typed: the X model applies it, as --max-af would be
+        gates = gates._replace(af_gate_x="cohort_derived_suspected")
+        click.echo(
+            f"note: --max-af-x {options.gates.max_af_x:g} is applied to the "
+            "X-linked model as requested and may remove real candidates.",
+            err=True,
+        )
     scope = _build_scope(ctx, options, sess, ingest_id)
     cohort_cache: dict = {}
     analyses = [
@@ -329,11 +338,14 @@ def _build_scope(ctx: click.Context, options: TrioOptions, sess, ingest_id: str)
     resolved, _ = resolve_filters(ctx, "trio", state)
     values = {k: resolved[k].value for k in SCOPE_KEYS if k in resolved}
     if state is not None:
-        # the descriptive companions follow the list they describe: a typed
-        # --genes replaces the preset's list, and its label with it
+        # the descriptive companions follow the lists they describe: a typed
+        # --genes replaces the preset's list, and its label with it. The build
+        # describes both region lists, so it follows either one.
         filters = state.located.preset.filters
-        for meta, of in (("genes_label", "genes"), ("regions_build", "regions")):
-            if meta in filters and resolved[of].source == fr.FROM_PRESET:
+        for meta, lists in fr.SCOPE_COMPANIONS.items():
+            if meta in filters and any(
+                resolved[of].source == fr.FROM_PRESET for of in lists
+            ):
                 values[meta] = filters[meta]
     try:
         request = ScopeRequest.from_values(
