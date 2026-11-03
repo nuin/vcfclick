@@ -62,7 +62,9 @@ kinship = (sites both het  -  2 x sites with opposite homozygotes) / (het sites 
 | 0.044 – 0.088 | third degree |
 | below | unrelated |
 
-By default only related pairs are listed; `--all` lists every pair. When a
+By default only related pairs are listed; `--all` lists every pair, and a
+`--min-kinship` below the third-degree cutoff (0.0442) lists every pair at
+or above it, `unrelated` ones included. When a
 pedigree is loaded, every declared parent is checked against the
 genotypes, and a declared parent who isn't a first-degree `parent-child`
 match is flagged `mismatch` (sample swap, mislabel or non-paternity).

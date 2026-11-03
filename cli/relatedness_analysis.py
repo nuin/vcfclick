@@ -57,10 +57,14 @@ def _related_pairs(stats, samples, pair, include_all, classify_pairs, min_kinshi
             candidates = [tuple(ij) for ij in np.argwhere(np.triu(keep, 1))]
         else:
             candidates = []
+        # A --min-kinship below the third-degree cutoff asks for pairs the
+        # bins call unrelated, so kinship alone decides which are reported.
+        hidden = ("insufficient-data",)
+        if min_kinship >= _THIRD:
+            hidden += ("unrelated",)
         for i, j in candidates:
             p = pair(int(i), int(j))
-            related = p["relationship"] not in ("unrelated", "insufficient-data")
-            if include_all or related:
+            if include_all or p["relationship"] not in hidden:
                 pairs.append(p)
         pairs.sort(key=lambda p: -(p["kinship"] if p["kinship"] is not None else -9))
 

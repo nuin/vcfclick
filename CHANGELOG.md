@@ -320,6 +320,9 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db relatedness --min-kinship` below 0.0442 reports the pairs at or above
+  it. The pairs were selected by kinship and then dropped again for being
+  classified `unrelated`, so `--min-kinship 0.01` returned the default list.
 - `db relatedness --max-sites` takes 1 to 16,000,000. `--max-sites 0` was a
   `ZeroDivisionError` traceback, a negative value kept no sites and reported
   "no related pairs", and above 2^24 sites the float32 pair counts are no

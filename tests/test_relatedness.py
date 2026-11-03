@@ -144,6 +144,29 @@ def test_default_hides_unrelated_pairs(vcfclick_home):
     assert all(p["relationship"] != "unrelated" for p in pairs)
 
 
+def test_min_kinship_below_third_degree_reports_unrelated_pairs(vcfclick_home):
+    """--min-kinship 0.01 reports F,M (0.0144, unrelated) and leaves out
+    M,U1 (0.0077); the classification no longer drops them a second time."""
+    _setup(vcfclick_home, ped=False)
+    out = _vc(
+        vcfclick_home,
+        "db",
+        "relatedness",
+        "r",
+        "--format",
+        "json",
+        "--min-kinship",
+        "0.01",
+    ).stdout
+    res = json.loads(out)[0]
+    fm = _pair(res, "F", "M")
+    assert fm["relationship"] == "unrelated" and fm["kinship"] >= 0.01
+    assert all(p["kinship"] >= 0.01 for p in res["pairs"])
+    names = {frozenset((p["sample_a"], p["sample_b"])) for p in res["pairs"]}
+    assert frozenset(("M", "U1")) not in names
+    assert frozenset(("C1", "D")) in names
+
+
 def test_pedigree_check_flags_a_false_parent(vcfclick_home):
     _setup(vcfclick_home)
     res = _run(vcfclick_home)
