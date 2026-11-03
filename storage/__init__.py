@@ -16,6 +16,7 @@ from storage.db import (
     db_path,
     delete_where_sql,
     drop_db,
+    get_readonly_session,
     get_session,
     ingest_id_lock,
     insert_via_parquet,
@@ -46,6 +47,7 @@ def __getattr__(name: str):
 
 __all__ = [
     "get_session",
+    "get_readonly_session",
     "apply_schema",
     "insert_via_parquet",
     "rollback_ingest",

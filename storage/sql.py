@@ -58,6 +58,27 @@ def parquet_file_expr(path: str) -> str:
     return f"file({sql_quote_str(path)}, 'Parquet')"
 
 
+def session_lockdown_sql() -> tuple[str, ...]:
+    """Statements that lock a session against anything but the cohort.
+
+      * DuckDB: `enable_external_access = false` refuses file, URL and
+        ATTACH access on every connection to the database, then
+        `lock_configuration = true` makes both settings final.
+      * chDB: `readonly = 1` refuses writes, DDL, table functions such as
+        `file()` / `url()`, and any later SET or SETTINGS clause.
+
+    Both are irreversible for the life of the session, so only a process
+    that never writes to the cohort (`vcfclick web`, the MCP server) runs
+    them; see `storage.db.get_readonly_session`.
+    """
+
+    from storage.db import backend
+
+    if backend() == "duckdb":
+        return ("SET enable_external_access = false", "SET lock_configuration = true")
+    return ("SET readonly = 1",)
+
+
 def count_expr() -> str:
     """ClickHouse permits `count()`; DuckDB requires `count(*)`."""
 

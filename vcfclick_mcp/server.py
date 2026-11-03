@@ -25,7 +25,7 @@ from cli.family_checks import PROBE_FRACTION, PROBE_MIN_SITES, PROBE_REL_TOLERAN
 from cli.filter_registry import DEFAULTS as _FILTER_DEFAULTS
 from cli.trio_analysis import CATEGORY_CHOICES, DEFAULT_MAX_AF
 from cli.xchrom import GRCH37_CHRX_LENGTH, NPX_INTERVALS
-from storage import get_session
+from storage import get_readonly_session, get_session
 from storage.sql import AF_EPSILON
 from storage.sql_guard import is_read_only
 
@@ -327,16 +327,21 @@ def get_schema() -> str:
 def run_sql(query: str) -> dict:
     """Execute a read-only SQL query and return rows + the SQL that ran.
 
-    Only a single SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is run;
-    anything that could write is refused without touching the database.
+    Only a single SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement over the
+    cohort tables is run; a write, a table function (file(), url(),
+    read_csv(), ...), a file path, a system table or a SETTINGS clause is
+    refused without touching the database.
     """
     if not is_read_only(query):
         return {
             "sql": query,
             "error": "run_sql is read-only — only a single "
-            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement is allowed",
+            "SELECT/WITH/SHOW/DESCRIBE/EXPLAIN statement over the cohort "
+            "tables is allowed (no table functions, file paths, system "
+            "tables or SETTINGS)",
         }
-    sess = get_session()
+    # Locked at the engine level too (storage.sql.session_lockdown_sql).
+    sess = get_readonly_session()
     raw = sess.query(query, "JSONCompact").bytes().decode()
     parsed = json.loads(raw)
     return {

@@ -14,13 +14,32 @@ def split_by_variant_count(
     bucket_size: int = DEFAULT_BUCKET_SIZE,
 ) -> list[str]:
     """Single-pass count of variants per position bucket."""
+    return plan_by_variant_count(vcf_path, n_workers, bucket_size)[0]
+
+
+def plan_by_variant_count(
+    vcf_path: str,
+    n_workers: int,
+    bucket_size: int = DEFAULT_BUCKET_SIZE,
+) -> tuple[list[str], int]:
+    """Single-pass count of variants per position bucket.
+
+    Returns (regions, n_records). The count comes from the same pass,
+    so the parallel ingest can check the rows its workers staged
+    against it without a second read of the file.
+    """
     vcf = VCF(vcf_path)
     counts: dict[str, dict[int, int]] = {}
+    total = 0
     for variant in vcf:
         contig = variant.CHROM
-        bucket = variant.POS // bucket_size
+        # Bucket b spans POS (b * size + 1) .. ((b + 1) * size), the
+        # same 1-based closed range the region string carries, so a
+        # record at POS = k * size belongs to bucket k - 1.
+        bucket = (variant.POS - 1) // bucket_size
         c = counts.setdefault(contig, {})
         c[bucket] = c.get(bucket, 0) + 1
+        total += 1
 
     regions: list[str] = []
     for contig in vcf.seqnames:
@@ -29,7 +48,7 @@ def split_by_variant_count(
             regions.extend(
                 _split_contig_balanced(contig, bucket_counts, n_workers, bucket_size)
             )
-    return regions
+    return regions, total
 
 
 def _split_contig_balanced(
