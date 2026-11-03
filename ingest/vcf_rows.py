@@ -191,7 +191,9 @@ NOT_RECORDED = CalledCounts(None, None, None, ())
 # as well as after the per-batch site count. On a large cohort one site can
 # carry tens of thousands of rows (missing calls, or 0/0 under
 # --keep-reference), so the site count alone does not bound memory.
-MAX_BATCH_ROWS = 2_000_000
+# 2,000,000 rows measured 1.5 to 1.75 GB per process (each of the default
+# 4 workers holds one batch); 250,000 keeps a process near 200 MB.
+MAX_BATCH_ROWS = 250_000
 
 
 def called_counts(variant, n_samples: int) -> CalledCounts:

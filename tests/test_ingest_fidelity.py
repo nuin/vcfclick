@@ -376,3 +376,15 @@ def test_serial_commit_inserts_each_table_once(vcfclick_home, run_python, tiny_v
     assert inserts.get("variants") == 1, inserts
     assert inserts.get("genotypes") == 1, inserts
     assert inserts.get("missing_genotypes", 0) <= 1, inserts
+
+
+# ─── findings 41/42: the per-batch row cap ──────────────────────────────
+
+
+def test_batch_row_cap_bounds_worker_memory():
+    """2,000,000 buffered rows measured 1.5 to 1.75 GB per process, and
+    the 4 default workers hold a batch each. 250,000 rows keeps one
+    process near 200 MB."""
+    from ingest.vcf_rows import MAX_BATCH_ROWS
+
+    assert MAX_BATCH_ROWS <= 250_000
