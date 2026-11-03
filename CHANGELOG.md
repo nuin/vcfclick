@@ -312,7 +312,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   Now `JSON`, `JSONCompact`, `JSONEachRow`, `TSV`, `TSVWithNames`, `CSV`
   and `CSVWithNames` match chDB byte for byte, except that a type name has
   no `Nullable(...)` / `LowCardinality(...)` wrapper and `statistics`
-  holds `elapsed` only. An unknown format raises. Code that parses
+  holds `elapsed` only. A format DuckDB does not render raises
+  `Format X is not supported on the DuckDB backend`. Code that parses
   DuckDB's `JSONCompact` now reads a REAL as its Float32 text (`0.33`, not
   `0.33000001311302185`) and an integral float as an integer, as on chDB.
   So `db trio` on DuckDB prints `"af": 0.05` and `AF=0.05`, as chDB

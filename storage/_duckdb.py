@@ -50,6 +50,15 @@ _PRETTY_FORMATS = {
     "prettyspace",
 }
 
+_SUPPORTED_FORMATS = ", ".join(
+    [
+        *dict.fromkeys(_duckdb_format.FORMAT_ALIASES.values()),
+        "Pretty",
+        "PrettyCompact",
+        "Vertical",
+    ]
+)
+
 # Strip an arbitrary trailing `FORMAT <name>` clause off a SQL statement.
 # chDB accepts the clause as a query terminator. DuckDB does not — the
 # format is requested out-of-band via the renderer.
@@ -141,13 +150,18 @@ class DuckDBSession:
             sql = _FORMAT_CLAUSE_RE.sub("", sql).rstrip().rstrip(";")
             format = m.group(1)
 
-        # Format names are case-insensitive, as on chDB. An unknown name
-        # fails before the statement runs, as chDB's UNKNOWN_FORMAT does.
+        # Format names are case-insensitive, as on chDB. A name outside the
+        # rendered set fails before the statement runs. chDB knows formats
+        # this renderer does not (Markdown, Values, TSVRaw, ...), so the
+        # message says the backend lacks it, not that the name is unknown.
         fmt = (format or "PrettyCompact").strip()
         key = fmt.lower()
         canonical = _duckdb_format.FORMAT_ALIASES.get(key)
         if canonical is None and key != "vertical" and key not in _PRETTY_FORMATS:
-            raise ValueError(f"Unknown format {fmt}. (UNKNOWN_FORMAT)")
+            raise ValueError(
+                f"Format {fmt} is not supported on the DuckDB backend. "
+                f"Supported: {_SUPPORTED_FORMATS}."
+            )
 
         started = time.perf_counter()
         cur = self._conn.execute(sql)

@@ -141,7 +141,10 @@ for `JSON`, `JSONCompact`, `JSONEachRow`, `TSV` (`TabSeparated`),
 - there is no `rows_before_limit_at_least`.
 
 `PrettyCompact`, `Pretty` and `Vertical` print a plain approximation of
-chDB's box tables. Any other format name is an error, as on chDB.
+chDB's box tables. DuckDB supports only these formats and the seven
+above. Any other name fails with `Format X is not supported on the DuckDB
+backend`, including formats chDB prints (`Markdown`, `Values`, `TSVRaw`,
+`JSONStrings`, ...).
 
 ## Move Data Between Backends
 

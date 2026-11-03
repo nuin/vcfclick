@@ -137,7 +137,9 @@ vcfclick db query trio "SELECT count() FROM variants"
 `JSON`, `JSONCompact`, `JSONEachRow`, `TSV`, `TSVWithNames`, `CSV` and
 `CSVWithNames` print the same text on both backends; the DuckDB exceptions
 (type wrappers, `statistics`) are listed in [BACKENDS.md](BACKENDS.md#duckdb).
-An unknown format name is an error.
+An unknown format name is an error. On DuckDB, any format outside those
+seven and `Pretty` / `PrettyCompact` / `Vertical` is an error too, though
+chDB prints it.
 
 <details><summary>options</summary>
 

@@ -206,6 +206,20 @@ def test_unknown_format_is_an_error(homes, backend):
     assert b"NoSuchFormat" in r.stderr
 
 
+def test_chdb_format_without_a_duckdb_renderer_is_named_unsupported(homes):
+    """Markdown is a chDB format the DuckDB session does not render. chDB
+    prints it; DuckDB says the backend does not support it and lists what
+    it does, so a valid name is not reported as unknown."""
+    chdb = _query(homes["chdb"], "chdb", "SELECT 1 AS x", "Markdown")
+    assert b"| x |" in chdb.stdout
+    r = _query(homes["duckdb"], "duckdb", "SELECT 1 AS x", "Markdown", ok=False)
+    assert r.returncode != 0
+    err = r.stderr.decode()
+    assert "Format Markdown is not supported on the DuckDB backend" in err
+    assert "UNKNOWN_FORMAT" not in err
+    assert "JSONCompact" in err
+
+
 @pytest.mark.parametrize(
     ("value", "single", "text"),
     [
