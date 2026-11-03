@@ -296,6 +296,98 @@ def test_bad_inputs_are_reported(vcfclick_home, tiny_vcf, tmp_path):
         assert r.returncode != 0 and msg in r.stderr, (args, r.stderr)
 
 
+# --- windows -------------------------------------------------------------------------
+
+
+def _clustered_vcf() -> str:
+    head = (
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1>\n"
+        '##FILTER=<ID=LowQual,Description="low">\n'
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+    )
+    gts = ["0/1\t0/0\t1/1", "0/0\t0/0\t0/1", "1/1\t0/1\t0/0", "0/1\t0/1\t0/0"]
+    rows = [f"chr1\t100\t.\tA\t{alt}\t50\tPASS\t.\tGT\t{gts[0]}" for alt in "GTC"]
+    for i, pos in enumerate(range(101, 110)):
+        filt = "LowQual" if pos in (105, 107) else "PASS"
+        rows.append(f"chr1\t{pos}\t.\tA\tG\t50\t{filt}\t.\tGT\t{gts[i % 4]}")
+    rows.append(f"chr1\t1000000\t.\tC\tT\t50\tPASS\t.\tGT\t{gts[1]}")
+    return head + "\n".join(rows) + "\n"
+
+
+def _source_pass_gts(vcf: Path) -> list[list[str]]:
+    out = []
+    for line in vcf.read_text().splitlines():
+        if line.startswith("#"):
+            continue
+        f = line.split("\t")
+        if f[6] == "PASS":
+            out.append([f[1], f[3], f[4], *f[9:]])
+    return out
+
+
+def test_windows_follow_variant_rank_and_the_selection(
+    vcfclick_home, tmp_path, run_python
+):
+    vcf = tmp_path / "c.vcf"
+    vcf.write_text(_clustered_vcf())
+    _db(vcfclick_home, vcf, "src")
+    out = tmp_path / "out.vcf"
+    code = (
+        "import json, os, sys\n"
+        "os.environ['VCFCLICK_DB_NAME'] = 'src'\n"
+        "import export.vcf_query as q\n"
+        "from export.vcf import export_vcf\n"
+        "from storage import get_session\n"
+        # 3 samples: a budget of 6 genotype rows is 2 variants per window.
+        "q._WINDOW_ROWS, q._WINDOW_MIN_VARIANTS = 6, 1\n"
+        "log, orig = [], q._rows\n"
+        "def spy(sess, sql):\n"
+        "    cols, rows = orig(sess, sql)\n"
+        "    log.append([sql, len(rows)])\n"
+        "    return cols, rows\n"
+        "q._rows = spy\n"
+        "export_vcf(get_session('src'), 'src', sys.argv[1], pass_only=True)\n"
+        "print(json.dumps(log))\n"
+    )
+    log = json.loads(run_python(vcfclick_home, code, str(out)))
+    variant_fetches = [
+        n
+        for sql, n in log
+        if sql.startswith("SELECT")
+        and "FROM variants WHERE" in sql
+        and "ORDER BY pos, ref, alt" in sql
+        and "row_number" not in sql
+    ]
+    # 11 PASS variants, 12 of 13 within 10 bp: windows are cut by variant
+    # rank, so no window holds more than its 2 variants plus the other
+    # alleles at its last position (3 at pos 100).
+    assert len(variant_fetches) >= 6 and max(variant_fetches) <= 3
+    genotype_fetches = [sql for sql, _ in log if "FROM genotypes AS g" in sql]
+    assert genotype_fetches and all("JOIN" in sql for sql in genotype_fetches)
+    got = [[r[1], r[3], r[4], *(c.split(":")[0] for c in r[9:])] for r in _records(out)]
+    # Export orders the alleles at one position by (ref, alt).
+    assert got == sorted(_source_pass_gts(vcf), key=lambda r: (int(r[0]), r[1], r[2]))
+    if HAS_HTSLIB:
+        fmt = "%POS\t%REF\t%ALT[\t%GT]\n"
+        want = subprocess.run(
+            ["bcftools", "query", "-i", 'FILTER="PASS"', "-f", fmt, str(vcf)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert sorted("\t".join(r) for r in got) == sorted(want.splitlines())
+
+
+def test_variants_per_window_shrink_with_the_sample_count():
+    from export.vcf_query import _variants_per_window
+
+    assert _variants_per_window(0) == 50_000  # --sites-only: no genotype rows
+    assert _variants_per_window(3) == 50_000
+    assert _variants_per_window(1_000) == 1_000
+    assert _variants_per_window(50_000) == 200
+
+
 # --- INFO and QUAL rendering ---------------------------------------------------------
 
 

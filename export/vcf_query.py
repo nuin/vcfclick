@@ -10,7 +10,12 @@ from typing import Any
 
 from .vcf_context import ExportContext, ExportError, ExportRequest, Region, SiteCalls
 
-_WINDOW_VARIANTS = 50_000
+# A window is one variants query plus one genotypes query held in memory.
+# Its size follows the genotype rows it may return, n_variants x n_samples
+# (the bound under --keep-reference; sparse ingests return fewer).
+_WINDOW_ROWS = 1_000_000
+_WINDOW_VARIANTS = 50_000  # without genotype rows (--sites-only), and the cap
+_WINDOW_MIN_VARIANTS = 200
 _REGION_RE = re.compile(r"^([^:\s]+)(?::([\d,]+)(?:-([\d,]+))?)?$")
 
 
@@ -165,17 +170,43 @@ def prepare_export(sess, request: ExportRequest) -> ExportContext:
         qual_type=next(
             (typ for column, typ, _ in typed if column == "qual"), "Float32"
         ),
+        selective=bool(request.regions or request.where or request.pass_only),
     )
 
 
-def _windows(context: ExportContext) -> Iterator[tuple[str, int, int]]:
-    # Window by chromosome and position to bound memory for large databases.
+def _variants_per_window(n_samples: int) -> int:
+    if n_samples <= 0:
+        return _WINDOW_VARIANTS
+    return max(_WINDOW_MIN_VARIANTS, min(_WINDOW_VARIANTS, _WINDOW_ROWS // n_samples))
+
+
+def _windows(sess, context: ExportContext) -> Iterator[tuple[str, int, int]]:
+    """Position windows per chromosome, each holding about `per` selected
+    variants. The cuts are the positions at every `per`-th variant in
+    (pos, ref, alt) order, so a cluster (an exome's genes) is split by
+    count; a window ends at the last position of its last variant, so the
+    other alleles at that position stay with it."""
+    per = _variants_per_window(len(context.samples))
     for chrom, lo, hi, count in context.chrom_stats:
         lo, hi, count = int(lo), int(hi), int(count)
-        n_windows = max(1, -(-count // _WINDOW_VARIANTS))
-        width = (hi - lo) // n_windows + 1
-        for w in range(n_windows):
-            yield chrom, lo + w * width, min(hi, lo + (w + 1) * width - 1)
+        if count <= per:
+            yield chrom, lo, hi
+            continue
+        cuts = _rows(
+            sess,
+            "SELECT DISTINCT pos FROM (SELECT pos, row_number() OVER (ORDER BY pos, ref, alt) AS rn "
+            f"FROM variants WHERE {context.variant_where} AND chrom = {_q(chrom)}) AS ranked "
+            f"WHERE rn % {per} = 0 ORDER BY pos",
+        )[1]
+        start = lo
+        for (cut,) in cuts:
+            cut = int(cut)
+            if cut < start:
+                continue
+            yield chrom, start, cut
+            start = cut + 1
+        if start <= hi:
+            yield chrom, start, hi
 
 
 def _window_calls(
@@ -185,16 +216,28 @@ def _window_calls(
     if not context.samples:
         return calls
     chrom, start, end = region
-    sample_filter = ""
+    span = f"chrom = {_q(chrom)} AND pos BETWEEN {start} AND {end}"
+    where = (
+        f"g.ingest_id = {_q(context.ingest_id)} AND g.chrom = {_q(chrom)} "
+        f"AND g.pos BETWEEN {start} AND {end}"
+    )
     if context.request.samples:
-        sample_filter = (
-            " AND sample_id IN (" + ", ".join(_q(s) for s in context.samples) + ")"
+        where += (
+            " AND g.sample_id IN (" + ", ".join(_q(s) for s in context.samples) + ")"
+        )
+    # --where, --pass-only and regions select variants; fetch only their
+    # calls, so a 1% selection does not read the other 99% of genotypes.
+    join = ""
+    if context.selective:
+        join = (
+            " INNER JOIN (SELECT pos, ref, alt FROM variants "
+            f"WHERE {context.variant_where} AND {span}) AS v "
+            "ON g.pos = v.pos AND g.ref = v.ref AND g.alt = v.alt"
         )
     _, rows = _rows(
         sess,
-        "SELECT pos, ref, alt, sample_id, gt, gq, dp, ad_ref, ad_alt, ft FROM genotypes "
-        f"WHERE ingest_id = {_q(context.ingest_id)} AND chrom = {_q(chrom)} "
-        f"AND pos BETWEEN {start} AND {end}{sample_filter}",
+        "SELECT g.pos, g.ref, g.alt, g.sample_id, g.gt, g.gq, g.dp, g.ad_ref, g.ad_alt, g.ft "
+        f"FROM genotypes AS g{join} WHERE {where}",
     )
     for pos, ref, alt, sid, *values in rows:
         calls.setdefault((int(pos), ref, alt), {})[sid] = values
@@ -204,7 +247,7 @@ def _window_calls(
 def iter_records(
     sess, context: ExportContext
 ) -> Iterator[tuple[dict[str, Any], SiteCalls]]:
-    for chrom, start, end in _windows(context):
+    for chrom, start, end in _windows(sess, context):
         window = (
             f"{context.variant_where} AND chrom = {_q(chrom)} "
             f"AND pos BETWEEN {start} AND {end}"

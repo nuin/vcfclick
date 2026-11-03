@@ -302,6 +302,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db export` sizes its windows by genotype rows: 1,000,000 rows divided
+  by the sample count, between 200 and 50,000 variants. Windows are cut at
+  every Nth selected variant in position order, so a clustered exome no
+  longer lands in one window. With `--where`, `--pass-only` or a region,
+  the genotype query reads only the selected variants' calls; before, it
+  read every call in the window's position range.
 - `db export` writes a String INFO value as stored. A value with a dot
   (`AA=.`, the unknown ancestral allele, or `AA=G.T`) was parsed as a
   number and the export stopped with `could not convert string to float`.
