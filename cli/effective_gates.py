@@ -434,6 +434,8 @@ def _candidate_stats(
         n = int(row[3])
         sites += n
         for i, role in enumerate(_ROLES):  # proband g, father f, mother m
+            if row[i] is None:  # no stored row (the X pivot): nothing to read
+                continue
             tally = tallies[role].setdefault(genotype_class(int(row[i])), [0, 0, 0, 0])
             tally[0] += n
             for j in range(3):  # gq, dp, ad
@@ -461,18 +463,30 @@ def collect_candidate_stats(
     filter_present: bool = True,
     x_guard: str | None = None,
     scope=None,
+    x_pool: tuple[str, str] | None = None,
 ) -> dict[str, CandidateStats]:
     """For each of `models` that has a genotype predicate, what the rows at its
     candidate sites carry (`candidate_presence_sql`: the sites `gates` keep, when
     given). One grouped count per distinct predicate (compound het reads the
-    dominant pattern and shares its count). A model without one, or a trio without
-    both parents, is left out, and its gates are judged on the sample's stored rows
-    instead."""
+    dominant pattern and shares its count). The X model's pool is its own count
+    over the NPX pivot (cli/xlinked.candidate_presence_sql), given its proband's
+    sex and region build (`x_pool`). A model without a pool, or a trio without
+    both parents, is left out, and its gates are judged on the sample's stored
+    rows instead."""
     out: dict[str, CandidateStats] = {}
     if trio.father is None or trio.mother is None:
         return out
     by_predicate: dict[str, CandidateStats] = {}
     for model in models:
+        if model == "xlinked" and x_pool is not None and gates is not None:
+            from cli.xlinked import candidate_presence_sql as x_presence_sql
+
+            sql = x_presence_sql(
+                trio, gates, *x_pool, filter_present=filter_present, scope=scope
+            )
+            data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+            out[model] = _candidate_stats(model, data, scope)
+            continue
         predicate = MODEL_PREDICATES.get(model)
         if predicate is None:
             continue
@@ -494,7 +508,8 @@ def collect_candidate_stats(
 
 @dataclass(frozen=True)
 class VariantStats:
-    """How many of the cohort's variants carry INFO/AF, and a FILTER label."""
+    """How many of the cohort's variants carry INFO/AF, and a FILTER label
+    (only the variants inside the run's scope when `scoped`)."""
 
     n: int
     with_af: int
@@ -505,18 +520,27 @@ class VariantStats:
     # counted). variants.filter is NULL for both PASS and '.', so a gate that keeps
     # PASS has something to remove only where this is above 0.
     non_pass: int | None = None
+    scoped: bool = False
+
+    @property
+    def where(self) -> str:
+        """Where the counts come from, for a message."""
+        return "inside the run's scope" if self.scoped else "in this database"
 
     @property
     def af_fraction(self) -> float | None:
         return self.with_af / self.n if self.n else None
 
 
-def collect_variant_stats(
-    sess, ingest_id: str, *, filter_present: bool = True
-) -> VariantStats:
-    """One pass over the cohort's variants: how many, how many carry INFO/AF,
-    how many carry a FILTER label other than PASS, and how many sit on each
-    chromosome."""
+def variant_stats_sql(
+    ingest_id: str, *, filter_present: bool = True, scope=None
+) -> tuple[str, bool]:
+    """(the statement of `collect_variant_stats`, trim): with a scope, only the
+    variants inside it count (cli/scope.stats_predicate, as `sample_stats_sql`);
+    when the predicate is the bucket superset the statement also groups by its
+    edge-bucket site columns and `trim` is True, so the caller keeps the
+    variants the scope contains."""
+    from cli.scope import stats_predicate
     from storage import count_expr, sql_quote_str
 
     labelled = (
@@ -524,19 +548,47 @@ def collect_variant_stats(
         if filter_present
         else "0"
     )
+    pred, site_cols = stats_predicate("v", scope)
+    trim = site_cols is not None
+    site = f", {site_cols}" if trim else ""
     sql = (
-        f"SELECT chrom, {count_expr()}, "
-        "sum(CASE WHEN info_AF IS NOT NULL THEN 1 ELSE 0 END), "
-        f"{labelled} "
-        f"FROM variants v WHERE ingest_id = {sql_quote_str(ingest_id)} GROUP BY chrom"
+        f"SELECT v.chrom, {count_expr()}, "
+        "sum(CASE WHEN v.info_AF IS NOT NULL THEN 1 ELSE 0 END), "
+        f"{labelled}{site} "
+        f"FROM variants v WHERE v.ingest_id = {sql_quote_str(ingest_id)}"
+        + (f" AND {pred}" if pred else "")
+        + f" GROUP BY v.chrom{site}"
     )
+    return sql, trim
+
+
+def collect_variant_stats(
+    sess, ingest_id: str, *, filter_present: bool = True, scope=None
+) -> VariantStats:
+    """One pass over the cohort's variants: how many, how many carry INFO/AF,
+    how many carry a FILTER label other than PASS, and how many sit on each
+    chromosome. With a scope (cli/scope.Scope), only the variants inside it,
+    exactly in every mode: the INFO/AF and FILTER gates can act only there."""
+    sql, trim = variant_stats_sql(ingest_id, filter_present=filter_present, scope=scope)
     data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    if trim:
+        from cli.scope import site_in_scope
+
+        data = [r[:4] for r in data if site_in_scope(scope, r[4], r[5])]
+    merged: dict[str, list[int]] = {}
+    for c, n, w, x in data:  # a chromosome split over edge-bucket rows
+        m = merged.setdefault(c, [0, 0, 0])
+        m[0] += int(n or 0)
+        m[1] += int(w or 0)
+        m[2] += int(x or 0)
+    data = [(c, *m) for c, m in merged.items()]
     per = sorted(((c, int(n or 0)) for c, n, _, _ in data), key=lambda t: (-t[1], t[0]))
     return VariantStats(
         sum(n for _, n in per),
         sum(int(w or 0) for _, _, w, _ in data),
         tuple(per),
         sum(int(x or 0) for _, _, _, x in data),
+        scope is not None,
     )
 
 
@@ -553,33 +605,44 @@ class GnomadProbe:
         return self.found / self.sampled if self.sampled else None
 
 
-def sample_cohort_keys(sess, ingest_id: str, n: int) -> list[tuple[str, int, str, str]]:
+def sample_cohort_keys(
+    sess, ingest_id: str, n: int, scope=None
+) -> list[tuple[str, int, str, str]]:
     """About GNOMAD_PROBE_SIZE of the cohort's `n` variants as (chrom, pos, ref,
     alt), spread over the whole genome: every stride-th position (the same on
     both engines, and the same sample on every run). A cohort of at most
-    GNOMAD_PROBE_SIZE variants is taken whole."""
+    GNOMAD_PROBE_SIZE variants is taken whole. With a scope, `n` is the count
+    inside it and only variants inside it are sampled."""
+    from cli.scope import filter_rows, stats_predicate
     from storage import sql_quote_str
 
     stride = max(1, -(-n // GNOMAD_PROBE_SIZE))
-    where = f"ingest_id = {sql_quote_str(ingest_id)}"
+    where = f"v.ingest_id = {sql_quote_str(ingest_id)}"
     if stride > 1:
-        where += f" AND pos % {stride} = 0"
+        where += f" AND v.pos % {stride} = 0"
+    pred, _ = stats_predicate("v", scope)
+    if pred:
+        where += f" AND {pred}"
     sql = (
-        f"SELECT chrom, pos, ref, alt FROM variants WHERE {where} "
+        f"SELECT v.chrom, v.pos, v.ref, v.alt FROM variants v WHERE {where} "
         f"LIMIT {2 * GNOMAD_PROBE_SIZE}"
     )
     data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
-    return [(c, int(p), r, a) for c, p, r, a in data]
+    # the bucket superset's edge buckets hold variants outside the scope
+    return [(c, int(p), r, a) for c, p, r, a in filter_rows(data, scope)]
 
 
-def collect_gnomad_probe(sess, ingest_id: str, variants: VariantStats) -> GnomadProbe:
+def collect_gnomad_probe(
+    sess, ingest_id: str, variants: VariantStats, scope=None
+) -> GnomadProbe:
     """Look the cohort's sampled variants up in the loaded gnomAD data, exactly as
     the `--gnomad-max-af` filter will (an exact chrom / pos / ref / alt join), and
     count the ones it can judge. A load that holds one row, a slice of one gene or
-    another genome build finds almost none, whatever chromosomes it has rows on."""
+    another genome build finds almost none, whatever chromosomes it has rows on.
+    With a scope, the sample is drawn from the variants inside it."""
     from annotations import gnomad_af_many
 
-    keys = sample_cohort_keys(sess, ingest_id, variants.n) if variants.n else []
+    keys = sample_cohort_keys(sess, ingest_id, variants.n, scope) if variants.n else []
     unique = list(dict.fromkeys(keys))
     found = gnomad_af_many(unique)
     judged = sum(1 for g in found.values() if g.popmax is not None)
@@ -1032,7 +1095,7 @@ def build_report(
                 warning(
                     "pass_only_no_labels",
                     "pass_only",
-                    "pass_only removes nothing: no variant in this database "
+                    f"pass_only removes nothing: no variant {variants.where} "
                     "carries a FILTER label other than PASS or unset",
                 )
             )
@@ -1043,6 +1106,9 @@ def build_report(
     af_run = gates.af_gate != AF_GATE_SKIPPED and gates.max_af < 1
     af_share = variants.af_fraction
     af_ok = af_run and af_share is not None and af_share >= ENFORCEABLE_MIN
+    of_variants = (
+        "of the variants inside the run's scope" if variants.scoped else "of variants"
+    )
     if af_run:
         bound["max_af"] = af_ok
         if af_ok and af_share < 1.0:
@@ -1052,15 +1118,19 @@ def build_report(
                 warning(
                     "gate_partial",
                     "max_af",
-                    f"max_af={gates.max_af:g} enforced on {pct(af_share)} of "
-                    "variants (a variant with no INFO/AF passes)",
+                    f"max_af={gates.max_af:g} enforced on {pct(af_share)} "
+                    f"{of_variants} (a variant with no INFO/AF passes)",
                 )
             )
         if not af_ok:
             have = (
-                "no variants"
+                (
+                    "no variants inside the run's scope"
+                    if variants.scoped
+                    else "no variants"
+                )
                 if af_share is None
-                else f"only {pct(af_share)} of variants carry INFO/AF"
+                else f"only {pct(af_share)} {of_variants} carry INFO/AF"
             )
             warnings.append(
                 warning(
@@ -1223,7 +1293,11 @@ def _gnomad_coverage(
     the cohort has no variants to judge it by."""
     if not variants.n or not variants.chroms:
         return None, []
-    covered = sum(n for chrom, n in variants.chroms if chrom in gnomad_chroms)
+    from storage.contigs import canonical_chrom
+
+    # the lookups match a contig under any spelling, so the coverage does too
+    held = {canonical_chrom(c) for c in gnomad_chroms}
+    covered = sum(n for chrom, n in variants.chroms if canonical_chrom(chrom) in held)
     return covered / variants.n, [c for c, _ in variants.chroms]
 
 
@@ -1500,6 +1574,14 @@ def _effective_scope_sql(trio: Trio, gates: Gates, scope) -> list:
     out.append(
         (sample_stats_sql(trio.ingest_id, samples, scope)[0], "stats", "genotypes")
     )
+    out.append((variant_stats_sql(trio.ingest_id, scope=scope)[0], "stats", "v"))
+    from cli.xlinked import candidate_presence_sql as x_presence_sql
+
+    if trio.father and trio.mother:
+        for sex in ("male", "female"):
+            out.append(
+                (x_presence_sql(trio, gates, sex, "GRCh38", scope=scope), "stats", "t")
+            )
     return out
 
 

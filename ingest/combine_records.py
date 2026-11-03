@@ -149,7 +149,7 @@ def _ad_token(arr, i: int, alt_index: int | None = None) -> str | None:
     return ",".join(str(x) for x in vals)
 
 
-def _sample_cell(gt: str, variant, fmt_arrs: dict, i: int, alt_index=None) -> dict:
+def _sample_cell(gt: str, fmt_arrs: dict, i: int, alt_index=None) -> dict:
     """Build sample i's output cell from the source record: its GT plus
     the GQ/DP/AD tokens, so passed-through quality travels with the
     genotype it describes. `alt_index` subsets AD when a record was split."""

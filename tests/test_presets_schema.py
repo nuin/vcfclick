@@ -61,6 +61,13 @@ def test_bad_names(name):
     assert ps.name_problem(name)
 
 
+@pytest.mark.parametrize("name", ["rare-recessive\n", "a\n", "p1\r\n", "a\nb"])
+def test_a_line_break_is_never_part_of_a_name(name):
+    """`$` matches before a trailing newline: `rare-recessive\n` must not pass
+    as a name, or it is written as a file and listed as a second built-in."""
+    assert ps.name_problem(name)
+
+
 # ───────────────────────────────── parsing ─────────────────────────────────
 
 
@@ -161,7 +168,6 @@ def test_a_minimal_preset_is_valid_and_normalised():
         (envelope(meta=[]), "bad_type"),
         (envelope(meta={"locked": "yes"}), "bad_type"),
         (envelope(meta={"approved_by": 3}), "bad_type"),
-        (envelope({"min_ab": 0.8, "max_ab": 0.2}), "inconsistent"),
     ],
 )
 def test_every_error_code(doc, code):
@@ -228,6 +234,25 @@ def test_a_preset_carries_no_identity_at_the_top_level_or_in_meta(extra, key):
     assert key.split(".")[-1] in problem.message
     assert not any(k in checked.doc for k in extra if k != "meta")
     assert "meta" not in extra or key.split(".")[-1] not in checked.doc.get("meta", {})
+
+
+def test_a_never_preset_key_in_the_extension_namespace_is_still_refused():
+    """`x_guard` is a safety check: the `x_` prefix must not wave it through."""
+    from cli import filter_registry as fr
+
+    keys = [k for k in fr.NEVER_PRESET if k.startswith(ps.EXTENSION_PREFIX)]
+    assert keys  # x_guard at least
+    for key in keys:
+        checked = ps.validate_document(envelope({key: False}))
+        assert [p.code for p in checked.errors] == ["never_presettable"], key
+        assert fr.NEVER_PRESET[key] in checked.errors[0].message
+        assert ps.filter_identity_problem(key)
+
+
+def test_min_ab_above_max_ab_in_a_file_is_left_to_the_resolved_values():
+    """A flag can repair the band at run time, so the file alone is not refused."""
+    checked = ps.validate_document(envelope({"min_ab": 0.9, "max_ab": 0.8}))
+    assert checked.ok and "inconsistent" not in [p.code for p in checked.problems]
 
 
 def test_the_envelopes_own_keys_and_other_unknown_ones_are_not_identity():

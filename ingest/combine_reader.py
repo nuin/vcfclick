@@ -163,9 +163,7 @@ class CombinedInputs:
                     else _remap_gt(genotypes[sample_idx], alt_index)
                 )
                 if gt is not None:
-                    gts[sample] = _sample_cell(
-                        gt, variant, fmt_arrs, sample_idx, alt_index
-                    )
+                    gts[sample] = _sample_cell(gt, fmt_arrs, sample_idx, alt_index)
 
     def add_presence(self, key, idx, record_pass):
         union = self.union

@@ -92,17 +92,17 @@ _TX_COLS = (
 
 def transcripts_for_gene(symbol: str) -> list[Transcript]:
     """All transcripts of a gene, canonical first."""
-    from annotations.db import get_connection
+    from annotations.db import read_connection
 
-    rows = (
-        get_connection()
-        .execute(
+    conn = read_connection()
+    try:
+        rows = conn.execute(
             f"SELECT {_TX_COLS} FROM transcripts WHERE gene_symbol = ? "
             "ORDER BY is_canonical DESC, transcript_id",
             [symbol],
-        )
-        .fetchall()
-    )
+        ).fetchall()
+    finally:
+        conn.close()
     return [Transcript(*r) for r in rows]
 
 
@@ -111,17 +111,17 @@ def canonical_transcript(symbol: str) -> Transcript | None:
 
     Using it avoids spurious hits on rare isoforms.
     """
-    from annotations.db import get_connection
+    from annotations.db import read_connection
 
-    row = (
-        get_connection()
-        .execute(
+    conn = read_connection()
+    try:
+        row = conn.execute(
             f"SELECT {_TX_COLS} FROM transcripts "
             "WHERE gene_symbol = ? AND is_canonical ORDER BY transcript_id LIMIT 1",
             [symbol],
-        )
-        .fetchone()
-    )
+        ).fetchone()
+    finally:
+        conn.close()
     return Transcript(*row) if row else None
 
 
@@ -133,23 +133,26 @@ def cds_regions_for_gene(symbol: str) -> list[tuple[str, int, int]]:
     the canonical transcript when one is defined, else every transcript;
     overlapping ranges are merged.
     """
-    from annotations.db import get_connection
+    from annotations.db import read_connection
 
-    conn = get_connection()
     canon = canonical_transcript(symbol)
-    if canon is not None:
-        rows = conn.execute(
-            "SELECT chrom, start_pos, end_pos FROM cds WHERE transcript_id = ? "
-            "ORDER BY chrom, start_pos",
-            [canon.transcript_id],
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            "SELECT c.chrom, c.start_pos, c.end_pos FROM cds c "
-            "JOIN transcripts t ON c.transcript_id = t.transcript_id "
-            "WHERE t.gene_symbol = ? ORDER BY c.chrom, c.start_pos",
-            [symbol],
-        ).fetchall()
+    conn = read_connection()
+    try:
+        if canon is not None:
+            rows = conn.execute(
+                "SELECT chrom, start_pos, end_pos FROM cds WHERE transcript_id = ? "
+                "ORDER BY chrom, start_pos",
+                [canon.transcript_id],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT c.chrom, c.start_pos, c.end_pos FROM cds c "
+                "JOIN transcripts t ON c.transcript_id = t.transcript_id "
+                "WHERE t.gene_symbol = ? ORDER BY c.chrom, c.start_pos",
+                [symbol],
+            ).fetchall()
+    finally:
+        conn.close()
 
     merged: list[tuple[str, int, int]] = []
     for chrom, start, end in rows:
@@ -162,18 +165,18 @@ def cds_regions_for_gene(symbol: str) -> list[tuple[str, int, int]]:
 
 def exon_at(chrom: str, pos: int) -> list[tuple[str, int]]:
     """All (transcript_id, exon_number) pairs whose exon contains `pos`."""
-    from annotations.db import get_connection
+    from annotations.db import read_connection
 
-    rows = (
-        get_connection()
-        .execute(
+    conn = read_connection()
+    try:
+        rows = conn.execute(
             "SELECT transcript_id, exon_number FROM exons "
             "WHERE chrom = ? AND ? BETWEEN start_pos AND end_pos "
             "ORDER BY transcript_id, exon_number",
             [chrom, pos],
-        )
-        .fetchall()
-    )
+        ).fetchall()
+    finally:
+        conn.close()
     return [(t, int(n)) for t, n in rows]
 
 
@@ -184,15 +187,15 @@ def splice_site_distance(chrom: str, pos: int) -> int | None:
     Needed for any consequence prediction: a variant a couple of bases from a
     boundary is a candidate splice variant even when it looks intronic.
     """
-    from annotations.db import get_connection
+    from annotations.db import read_connection
 
-    row = (
-        get_connection()
-        .execute(
+    conn = read_connection()
+    try:
+        row = conn.execute(
             "SELECT min(least(abs(? - start_pos), abs(? - end_pos))) FROM exons "
             "WHERE chrom = ?",
             [pos, pos, chrom],
-        )
-        .fetchone()
-    )
+        ).fetchone()
+    finally:
+        conn.close()
     return None if row is None or row[0] is None else int(row[0])

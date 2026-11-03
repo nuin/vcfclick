@@ -83,6 +83,32 @@ def test_guard_blocks_writes_and_bypasses(sql):
     assert is_read_only(sql) is False
 
 
+# A read that leaves the cohort tables (a local file, a URL, the server's
+# own state) is refused before any session is touched.
+@pytest.mark.parametrize(
+    "sql",
+    [
+        "SELECT * FROM file('/etc/hosts', 'LineAsString')",
+        "SELECT content FROM read_text('/etc/hosts')",
+        "SELECT * FROM read_csv('/etc/hosts')",
+        "SELECT * FROM '/etc/hosts'",
+        "SELECT * FROM url('http://169.254.169.254/', CSV)",
+        "SELECT * FROM system.processes",
+        "SELECT 1 SETTINGS readonly = 0",
+    ],
+)
+def test_query_refuses_reads_outside_the_cohort(sql, monkeypatch):
+    import vcfclick_web.app as web
+
+    def boom():
+        raise AssertionError("no session for a refused statement")
+
+    monkeypatch.setattr(web, "get_session", boom)
+    r = client.post("/api/query", json={"sql": sql})
+    assert r.status_code == 200
+    assert "read-only" in r.json()["error"].lower()
+
+
 @pytest.mark.parametrize(
     "sql",
     [

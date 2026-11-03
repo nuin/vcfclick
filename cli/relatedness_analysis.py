@@ -311,10 +311,9 @@ def _load(
 
     Refuses a cohort above _MAX_SAMPLES before anything is allocated.
     """
-    from cli.db_diff import _quote_str
-    from storage.sql import to_int64
+    from storage.sql import sql_quote_str, to_int64
 
-    q = _quote_str(ingest_id)
+    q = sql_quote_str(ingest_id)
     samples = [
         r[0]
         for r in _rows(
@@ -351,14 +350,14 @@ def _load(
 
 def _pedigree(sess, ingest_id: str) -> list[tuple[str, str, str]]:
     """(child, parent, role) for every declared parent in the pedigree."""
-    from cli.db_diff import _quote_str
     from storage import table_exists
+    from storage.sql import sql_quote_str
 
     if not table_exists("pedigree"):
         return []
     rows = _rows(
         sess,
-        f"SELECT sample_id, father_id, mother_id FROM pedigree WHERE ingest_id = {_quote_str(ingest_id)}",
+        f"SELECT sample_id, father_id, mother_id FROM pedigree WHERE ingest_id = {sql_quote_str(ingest_id)}",
     )
     out = []
     for child, father, mother in rows:

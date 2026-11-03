@@ -141,6 +141,10 @@ class Gates(NamedTuple):
     max_af_x: float = DEFAULTS["max_af_x"]
     min_hemi_ab: float = DEFAULTS["min_hemi_ab"]
     max_parent_alt_reads: int = DEFAULTS["max_parent_alt_reads"]
+    # The X model's rarity gate state (cli/xlinked.x_af_gate). None: the same
+    # as af_gate. Set when --max-af-x was typed while af_gate skipped --max-af:
+    # an explicit threshold is always honoured.
+    af_gate_x: str | None = None
 
     def strict_for(self, key: str) -> bool:
         """Does strict_missing apply to the gate `key`?"""
@@ -190,13 +194,19 @@ def _quality_gate(
 
 
 def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
-    # Allele balance for a het call: ad_alt / (ad_ref + ad_alt) should sit
-    # near 0.5. Applies only to het rows (gt=1) with AD present.
-    denom = f"({alias}.ad_ref + {alias}.ad_alt)"
-    frac = f"({alias}.ad_alt * 1.0 / {denom})"
+    """Allele balance of a het call, ad_alt / (ad_ref + ad_alt), inside the
+    band. Applies only to het rows (gt = 1) with AD present. The depths are
+    16-bit unsigned columns; allele_fraction_sql widens both before adding
+    them, since DuckDB raises on a UInt16 sum above 65535 (chDB promotes).
+    The zero test widens the same way, as cli.xlinked._fraction does."""
+    from storage.sql import allele_fraction_sql, to_int64
+
+    alt, ref = f"{alias}.ad_alt", f"{alias}.ad_ref"
+    zero = f"({to_int64(alt)} + {to_int64(ref)}) = 0"
+    frac = allele_fraction_sql(alt, ref)
     return (
-        f"({alias}.gt != 1 OR {alias}.ad_ref IS NULL OR {alias}.ad_alt IS NULL "
-        f"OR {denom} = 0 OR {frac} BETWEEN {min_ab} AND {max_ab})"
+        f"({alias}.gt != 1 OR {ref} IS NULL OR {alt} IS NULL "
+        f"OR {zero} OR {frac} BETWEEN {min_ab} AND {max_ab})"
     )
 
 
@@ -869,11 +879,9 @@ class TrioAnalysis:
         if category not in MODEL_PREDICATES:
             return 0
         guard = self.x_guard_sql()
-        grouped = (
-            category == "comphet"
-            and self.scope is not None
-            and self.scope.include is not None
-        )
+        # compound het counts only the dropped variants in a gene its report
+        # can show, whatever form the scope takes (none, exclusions, inclusions)
+        grouped = category == "comphet"
         if self._count_in_sql() and not grouped:
             sql = strict_dropped_sql(
                 category, self.trio, gates, count_only=True, x_guard=guard,
@@ -900,17 +908,22 @@ class TrioAnalysis:
         return len(_gnomad_filter(rows, self.gnomad_max_af))
 
     def _comphet_dropped_by_strict(self, rows: list) -> int:
-        """With an include scope: of the compound-het variants strict_missing
+        """Of the compound-het variants strict_missing
         dropped (`rows`, exclusions applied), those in a gene the compound-het
         rule keeps in the same run without strict_missing, so the count is
         about the genes the report can show."""
-        from cli.scope import genes_in_scope
+        from cli.scope import drop_excluded, genes_in_scope
 
         tolerant = self.gates._replace(strict_exempt=STRICT_GATE_KEYS)
         sql = _comphet_sql(
             self.trio, tolerant, x_guard=self.x_guard_sql(), scope=self.scope
         )
-        kept, _ = genes_in_scope(self._comphet_rows(sql), self.scope)
+        # Not self._comphet_rows: its gnomAD pass records into self.stats,
+        # which would count variants only the tolerant gates let through.
+        candidates = drop_excluded(self._query(sql), self.scope)
+        if self.gnomad_max_af is not None:
+            candidates = _gnomad_filter(candidates, self.gnomad_max_af)
+        kept, _ = genes_in_scope(_comphet_genes(candidates), self.scope)
         shown = {
             (c, int(p), r, a)
             for e in kept.values()

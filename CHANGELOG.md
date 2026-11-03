@@ -55,7 +55,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `starting point, not validated`), or your own. A flag typed next to
   `--preset` wins over it, and `--preset-ignore KEY` switches one key off for
   one run. `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, also for a
-  path) fails the run if the preset's content is not the pinned one;
+  path) fails the run if the preset's stored filter values are not the pinned
+  ones (a pin does not cover what `all` expands to or a default it leaves out);
   `--preset-skip-unavailable` applies the keys this version knows and reports
   the rest. A preset is a JSON file in `$VCFCLICK_HOME/presets`, in a read-only
   directory on `VCFCLICK_PRESET_PATH`, or built in; it holds filter values and
@@ -240,6 +241,62 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   integer arithmetic; the float arithmetic it replaces kept the site before
   at a few exact-integer boundaries. Output on `tests/fixtures/related.vcf`
   is unchanged.
+- `db trio --category xlinked`: the effective-gate report judges the X
+  model's GQ / DP / AD gates on its own candidate rows (non-PAR chrX
+  sites matching its patterns for the proband's sex, after the rarity and
+  FILTER gates), as it does for the other models. They were judged on
+  the sample's rows genome-wide, so a caller that left GQ off chrX could
+  report `min_gq` bound while `--strict-missing` dropped every X
+  candidate. Values only: no key changes.
+- `db trio` with a scope (`--genes`, `--region`, a preset's lists): the
+  effective-gate report counts the variant-level gates over the variants
+  inside the scope. `effective.info_af.bound` (the `INFO/AF` share),
+  `effective.filter_column.non_pass_variants` (behind
+  `pass_only_no_labels`) and the gnomAD coverage and probe were counted
+  over the whole cohort, so a region with no `INFO/AF` and no `FILTER`
+  label could report both gates bound and pass `--require-bound-gates`.
+  Values only: no key changes; the messages say "inside the run's scope".
+- A preset file with `min_ab` above `max_ab` is no longer refused by
+  `preset validate`, `import` or `save`: the band is checked on the
+  resolved values at run time, so `--min-ab` or `--max-ab` can repair
+  it, as the docs said. `preset save` and `preset set` warn when the
+  pair, against the defaults, would refuse a plain run (`preset set p
+  min_ab=0.9` against the default `max_ab` 0.75).
+- **`db export` writes recorded no-calls as `./.` (behaviour change).** A
+  sample with a `missing_genotypes` row at a site (written at ingest unless
+  `--no-record-missing`) was `./.` in the source VCF and is now exported as
+  `./.`; before, it was written `0/0` like every other absent genotype, so a
+  round trip invented hom-ref calls and raised the call rate. The
+  `--absent-as` rule still applies to samples with no row in either table,
+  and the `##vcfclick_note` header says whether no-calls were recorded.
+- **`db query --format JSON` on DuckDB (output shape change).** `data` holds
+  one object per row where it held one array per row, and each `meta` entry
+  gains `type`, as on chDB. A format DuckDB does not render now fails with
+  `Format X is not supported on the DuckDB backend` where it printed a box
+  table. Details under Fixed.
+- **Web SQL and MCP `run_sql` read the cohort tables only.** The read-only
+  guard (`storage.sql_guard`) accepted any `SELECT`, so `file()`, `url()`,
+  `s3()`, `remote()`, `executable()`, `read_csv()`, `read_text()`,
+  `read_parquet()`, `glob()`, a string-literal path as a `FROM` source,
+  `numbers(1e12)` / `range(1e12)`, the scalar `file()` / `getenv()`,
+  `system.*` tables, `SHOW PROCESSLIST` / `SHOW TABLES FROM system` and a
+  `SETTINGS` clause (`SETTINGS readonly = 0`) all ran. A page that reaches the
+  localhost web server, or an LLM prompt-injected through a VCF field, could
+  read any file the user can read and probe local network addresses. Every
+  `FROM` / `JOIN` source must now be a plain table name (optionally
+  `main.` / `default.`): the cohort tables and CTEs. Table functions,
+  literal paths, other catalogs, `information_schema`, the functions above,
+  `SETTINGS` and system introspection are refused with the same `read-only`
+  error as a write. Plain `SELECT`, `WITH`, `JOIN`, subqueries,
+  `SHOW TABLES`, `SHOW CREATE TABLE`, `DESCRIBE` and `EXPLAIN` of the cohort
+  tables are unchanged. `db query` on the command line is not affected.
+- The web server and the MCP server lock the database session they query
+  at the engine level before the first caller statement
+  (`storage.get_readonly_session`): DuckDB `enable_external_access = false`
+  with `lock_configuration = true`, chDB `readonly = 1`. The lock holds for
+  the life of the process, so a statement the parser misreads still cannot
+  open a file, fetch a URL, write, or change a setting. `db query`, ingest
+  and the TUI keep the unlocked session.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only
@@ -330,6 +387,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   preset this is the same test; with one, a preset's `max_af` is never typed, so it
   cannot defeat the cohort-derived-AF skip. The `--help` text of the gate options
   is longer.
+- A partially missing reference call (`./0`, `0/.`) is no longer stored as
+  `gt = 0` under `--keep-reference`. cyvcf2 reports it as hom-ref, so a
+  half-called parent read as a proven `0/0` and `db trio --category denovo`
+  could report a de novo on it. Such a call now gets no `genotypes` row, as a
+  `./.` does; `./1` is still stored as a het (`gt = 1`). `n_called`,
+  `an_called` and `ac_called` are unchanged. Re-ingest to apply the rule to an
+  existing database. See docs/SCHEMA.md (partial calls).
 
 ### Fixed
 
@@ -340,6 +404,188 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `ZeroDivisionError` traceback, a negative value kept no sites and reported
   "no related pairs", and above 2^24 sites the float32 pair counts are no
   longer exact. Out-of-range values are now a usage error (exit 2).
+- A typed `--max-af-x` was ignored when a cohort-derived `INFO/AF`
+  skipped `--max-af` (only `--max-af` counted as typed), so the X model
+  ran with no rarity gate while `gates.max_af_x` reported the cap. The
+  X model now applies the typed `--max-af-x`, says so in a note, and
+  `db trio --format json` gains `gates.af_gate_x` (additive, after
+  `max_parent_alt_reads`): the X cap's own state.
+- A preset's `regions_build` was applied only with the preset's
+  `regions`, so a preset that set only `exclude_regions` on a database
+  of another build reported `scope.regions_build: null`, gave no
+  `scope_build_mismatch` warning and removed the wrong loci. It now
+  follows either region list, in `db trio` and in
+  `preset save --from-result`.
+- The `strict_missing_dropped` count for `comphet` counted every
+  dominant-pattern het strict_missing dropped unless the run had an
+  include scope, so a run with no scope or with exclusions only warned
+  about hets in genes that form no compound het ("`--no-strict-missing`
+  lists them" when it does not). It now counts, in every scope form,
+  only the dropped variants in a gene the report shows without
+  strict_missing. The listed candidates were right; the warning count
+  was inflated.
+- Preset names and keys. `name_problem` accepted a name with a trailing
+  line break (`rare-recessive\n`), so `preset save` wrote a file with a
+  line break in its name that `preset list` showed as a second
+  `rare-recessive`; such a name is now refused. `filters.x_guard` passed
+  as an `x_` extension key; it is now refused as a safety check. A stored
+  file whose declared `name` is not a valid name (`"Old Name"`) was
+  unavailable; it now takes its file name with a `name_mismatch`
+  warning, as a file with any other declared name does. `preset set`
+  read every text, gene and region value as JSON, so `genes=TP53` said
+  "is not a number" and `category=[recessive` crashed with a traceback;
+  a bare value is now the text itself, and bad JSON is an error naming
+  the key.
+- The annotation store opens read-only for every lookup and runs no DDL,
+  so two `db trio` runs, the web UI and the MCP server read it at once,
+  and a mode-444 store answers. A store another process is writing used
+  to read as "nothing loaded" in `db trio` (exit 0, empty `genes`,
+  `clinvar` and `gnomad_popmax`) and as a raw DuckDB traceback in
+  `db trio --genes`. Every command now stops with exit 1 and
+  `the annotation store PATH cannot be opened for reading: another
+  process (PID n) has it open for writing`. Loaders keep the writer.
+- Annotation loaders (`annotations load`, `load-transcripts`,
+  `load-clinvar`, `load-gnomad`, `load-hgnc`) parse the input first and
+  swap the rows in one transaction. `annotations load` with a truncated
+  GFF, or one with no `gene` rows, used to empty `refseq_genes` before it
+  failed; the old rows now stay. `load-transcripts` also accepts a GFF
+  with no CDS rows.
+- `annotations load-gnomad` reads the group-max AF from `AF_grpmax` (v4)
+  or `AF_popmax` (v2.1.1, v3.x). A v3 or v2 file used to store no
+  group-max AF, so popmax fell back to the overall AF and
+  `--gnomad-max-af` kept variants common in one ancestry. The loader
+  warns with the count of records that carry neither key. It also
+  streams the VCF in batches of 1,000,000 records through a scratch
+  DuckDB file and reads only the AF keys from INFO, so a full
+  per-chromosome sites VCF no longer has to fit in memory twice.
+- ClinVar and gnomAD lookups match a contig however the cohort spells it,
+  as gene lookups already did. A cohort with bare contigs (`17`, `X`,
+  `MT`) found no ClinVar or gnomAD record, so `db trio` showed a blank
+  `clinvar` column and `--gnomad-max-af` kept every candidate as absent;
+  `benchmark` stratification called every variant novel. `clinvar_lookup`,
+  `gnomad_af`, `clinvar_many` and `gnomad_af_many` (and the MCP tools)
+  now try every alias and answer under the caller's spelling. The ClinVar
+  and gnomAD loaders store the canonical `chr` name (`load-gnomad` used to
+  keep the file's spelling), and the gate report's gnomAD coverage check
+  compares canonical names.
+- `annotations load-clinvar` without `--vcf` reused its first download
+  forever, although its docstring said the cache was replaced, so ClinVar
+  never refreshed. The cache is now fetched again when older than 7 days.
+  The ClinVar and GENCODE downloads write a `.part` file with a 60 s
+  socket timeout, check the size against `Content-Length`, and rename it
+  into place only when complete: an interrupted download used to leave a
+  truncated cache that every later run failed on.
+- `db trio --genes NEWSYM` resolves a gene HGNC renamed after the GENCODE
+  release in the store, which still holds it as OLDSYM: the current symbol
+  now follows HGNC's previous-symbol row to the stored gene (`resolved_by`
+  counts it as `previous`). Before, an approved symbol absent from the
+  store was unresolved, and the default strict mode refused the run.
+- `db export --gene`, `db popgen --gene`, `db gene`, the TUI and the MCP
+  `position_for_gene` tool take the tokens `db trio --genes` takes. A
+  token that is no stored symbol now resolves as an Ensembl gene id and,
+  after `annotations load-hgnc`, a previous symbol, alias, HGNC or Entrez
+  id; it used to be "not found". A stored symbol answers as before.
+- `annotations load` keeps both copies of a pseudo-autosomal gene (SHOX,
+  XG: GENCODE lists a chrX row and a `_PAR_Y` chrY row). It kept the first
+  row of a symbol, so the chrY copy was dropped: chrY PAR variants had no
+  gene label and `--genes SHOX` built only the chrX interval. `refseq_genes`
+  is now keyed on `(gene_symbol, chrom)`; a replacing load rebuilds an
+  older table. A symbol listed twice on one contig keeps its first locus,
+  and the loader logs how many rows it dropped. `scope.genes.genes` still
+  counts SHOX as one gene, and the "matched on chrX only" note appears only
+  for a store loaded before this change.
+- `db export` sizes its windows by genotype rows: 1,000,000 rows divided
+  by the sample count, between 200 and 50,000 variants. Windows are cut at
+  every Nth selected variant in position order, so a clustered exome no
+  longer lands in one window. With `--where`, `--pass-only` or a region,
+  the genotype query reads only the selected variants' calls; before, it
+  read every call in the window's position range.
+- `db export` writes a String INFO value as stored. A value with a dot
+  (`AA=.`, the unknown ancestral allele, or `AA=G.T`) was parsed as a
+  number and the export stopped with `could not convert string to float`.
+- `db export` writes Float INFO and QUAL values with the fewest digits that
+  read back as the stored value (up to 9 for Float32, `repr` for Float64).
+  Six digits lost one: `AF=0.123456789` came back `0.123457` and
+  `QUAL=1234567.5` came back `1.23457e+06`, so a re-ingest changed them.
+- `db query --format` on DuckDB prints what chDB prints. `JSON` came out
+  as arrays with no column types (the desktop apps read `meta[].type` and
+  one object per row), `CSVWithNames` and `TSVWithNames` dropped the
+  header, `JSONEachRow` and `TSVWithNames` fell through to a box table,
+  every float went through six significant digits (`1234567.25` printed
+  as `1.23457e+06`), CSV left strings unquoted, TSV escaped no tab,
+  newline or backslash, and an unknown format name printed a box table.
+  Now `JSON`, `JSONCompact`, `JSONEachRow`, `TSV`, `TSVWithNames`, `CSV`
+  and `CSVWithNames` match chDB byte for byte, except that a type name has
+  no `Nullable(...)` / `LowCardinality(...)` wrapper and `statistics`
+  holds `elapsed` only. A format DuckDB does not render raises
+  `Format X is not supported on the DuckDB backend`. Code that parses
+  DuckDB's `JSONCompact` now reads a REAL as its Float32 text (`0.33`, not
+  `0.33000001311302185`) and an integral float as an integer, as on chDB.
+  So `db trio` on DuckDB prints `"af": 0.05` and `AF=0.05`, as chDB
+  does, where it printed `0.05000000074505806`; the DuckDB trio goldens
+  are now identical to the chDB ones.
+- One string-literal quoting rule per backend. `sql_quote_str` doubled
+  backslashes on DuckDB too, where a backslash is a plain character, so a
+  sample id or cohort such as `DOM\kid` quoted to a literal that never
+  equalled the stored value: the sample vanished from `db trio`, the
+  pivot and join queries, and `db export --samples` wrote `0/0` at every
+  site. DuckDB now gets quote-doubling only. `db diff`, `db export` and
+  `db gene` quoted with private helpers of their own (one left
+  backslashes unescaped, so chDB read `c\ne` as an escape and `db diff`
+  called the cohort unknown; one wrote `\'`, which DuckDB cannot parse);
+  all three now use `storage.sql.sql_quote_str`, and `db diff` reads the
+  cohort names back as JSON, so a name with a backslash is matched.
+- `db stats` on DuckDB counts a cohort's samples as distinct
+  `(ingest_id, sample_id)` tuples, as chDB does. It concatenated the pair
+  with no separator, under which the samples `('a', 'bc')` and
+  `('ab', 'c')` were one string and counted once.
+- `db dump` quotes its staging path. The path sits in the output directory
+  the user named, so `--out "O'Brien"` was a SQL syntax error on both
+  backends.
+- `db trio` on DuckDB no longer dies on a het call with more than 65535
+  reads. The allele-balance gate added `ad_ref + ad_alt` as 16-bit
+  unsigned columns, which DuckDB refuses to overflow (`AD=30000,40000`
+  raised `Overflow in addition of UINT16` and killed every model of the
+  run); both are widened to 64 bits first, as `allele_fraction_sql` and
+  the X-linked models already did. The pinned trio SQL text changes in
+  that one clause.
+- `vcfclick web` on DuckDB returned another request's rows, or an empty
+  result, when two requests ran at once (the UI fires `/api/meta` and
+  `/api/query` together). The one cached DuckDB session ran every statement
+  on the connection's shared cursor from the server's threadpool; 4 threads
+  running 200 queries each got 451 of 800 results wrong. Each query now runs
+  on a cursor of its own (a duplicate connection to the same database), and
+  the session cache opens one session per database under concurrent first
+  calls.
+- Parallel `db ingest` (the default) lands the same rows as `--serial`.
+  Four shapes lost or duplicated rows while exiting 0:
+  - a small or sparse VCF whose records share one BGZF block gave every
+    16 kb tabix window a byte delta of 0, and those windows were skipped,
+    so the planned region was the last 100 kb bucket alone (150 variants
+    20 kb apart on one contig stored 5);
+  - the last tabix window of a contig was credited to the 100 kb bucket of
+    its first base only, so when it straddled a bucket boundary the
+    variants past the boundary were never read (20,000 sites at POS
+    1000..200990 stored 19,901);
+  - a region query returns every record that overlaps the region, so a
+    deletion starting before a region boundary was staged by two workers
+    and stored twice;
+  - on the cyvcf2 pre-pass path (no `.tbi`), a contig whose first record
+    sits at an exact multiple of 100,000 fell outside every region.
+  After staging, the ingest now compares the staged variant count against
+  the record count from the tabix index's pseudo-bins (or from the pre-pass)
+  and fails with both numbers, before any database write, when they differ;
+  a stale `.tbi` is the usual cause. Re-ingesting a header-only VCF under an
+  id that held data recorded 0 variants on the serial path but raised on
+  the parallel path after the prior rows were gone; it records 0 now. A
+  failed parallel ingest removes its staging directory (the library's
+  `keep_staging=True` keeps it) instead of leaving the staged Parquet
+  under the database.
+- `ingest_parallel(staging_dir=...)` (library API; the CLI does not expose
+  it) stages into a fresh `<ingest_id>.*` subdirectory of the given
+  directory and removes only that subdirectory. It used to glob stale
+  `variants_*.parquet` files already in the directory into the import and
+  then delete the whole directory, with whatever else it held.
 - The published wheel ships `vcfclick_web` again. The sdist include list
   omitted the package, and `uv build` builds the wheel from the sdist, so
   `pip install vcfclick[web]` followed by `vcfclick web NAME` failed with
@@ -376,6 +622,38 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `-1` "hemizygous" code that the encoder has never written. A haploid ALT
   call (male non-PAR chrX/chrY, chrM) is stored as `gt = 2` with
   `phased = 1`; `gt` is never negative.
+- A numeric `FORMAT` field routed to `format_extra` (Mutect2 `F1R2`/`F2R1`/
+  `SB`, DRAGEN fields, `MIN_DP`, ...) was stored as the numpy repr
+  (`'[5]'`, `'[1 2 3 4]'`, `'[-2147483648]'` for a missing value). It is now
+  spelt as the VCF spells it: `'5'`, `'1,2,3,4'`, `'.'` for missing, with
+  end-of-vector padding dropped, so `CAST(format_extra['MIN_DP'] AS INT)`
+  works. Databases ingested earlier keep the old strings until re-ingested.
+- An INFO field that is routed to a scalar column but carries several values
+  (GATK's `SB` declared `Number=4`, or `AC=1,0` under `Number=.`) aborted the
+  whole ingest with a raw `ArrowInvalid`. The values now go to `info_extra`
+  (`'1,2,3,4'`) and the column stays NULL.
+- A `FORMAT` integer above a column's range (`DP=70000` on a mitochondrial or
+  amplicon call; the `gq`, `dp`, `ad_*`, `pl_*`, `mq` and `pq` columns are
+  UInt16) aborted the ingest with `Value 70000 too large to fit in C integer
+  type`. The value is now clamped to the column maximum (65535), and the
+  ingest logs how many values it clamped (a parallel ingest sums its
+  workers' counts, so the total reaches the terminal). `ps` is UInt32 and keeps a phase set's full value.
+- A VCF with samples but no `GT` in `FORMAT` (or one record without it)
+  crashed with cyvcf2's `error parsing genotypes`. Such a record now stores
+  its variant row with the called counts "not recorded" (NULL) and no
+  genotype rows, as `called_counts` already reported it.
+- A record with no ALT allele (`ALT` is `.`, as `bcftools mpileup` without
+  `-v` writes) was reported as `Multi-allelic site ... (0 ALTs)` with a
+  `bcftools norm -m -` remedy that leaves the record in place. Serial and
+  parallel ingests now say the record has no ALT allele and name
+  `bcftools view -e 'ALT="."'` to drop such records.
+- A serial ingest staged its Parquet batches in `<home>/dbs/vcfclick_ingest_*`,
+  beside the databases, so `db list` showed a phantom database while it ran
+  and for good after a killed run. It now stages under the database's own
+  `staging/serial-<ingest_id>` directory, as the parallel path stages under
+  `staging/<ingest_id>`; the next ingest under that id removes a directory a
+  killed run left behind. `db list` skips a leftover `vcfclick_ingest_*`
+  directory and any name no database can have.
 
 ## [0.14.3]
 

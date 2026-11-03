@@ -153,3 +153,19 @@ def test_stratify_by_regions_merges_overlapping_same_stratum(tmp_path):
     }
     assert out["lowcomplex"]["truth_tp"] == 1  # counted once, not twice
     assert out["lowcomplex"]["query_tp"] == 1
+
+
+def test_stratify_matches_bare_contigs(tmp_path):
+    """A truth set that says `1` joins the store's `chr1`: same strata as
+    the `chr1` frame, not every variant 'novel'."""
+    ann = _ann_store(tmp_path / "ann.duckdb")
+    chr_frame = _conc()
+    bare = chr_frame.set_column(
+        chr_frame.schema.get_field_index("chrom"),
+        "chrom",
+        pa.array(
+            [c.removeprefix("chr") for c in chr_frame.column("chrom").to_pylist()]
+        ),
+    )
+    for fn in (stratify_by_gnomad, stratify_by_clinvar, stratify_by_gene):
+        assert fn(bare, ann) == fn(chr_frame, ann)

@@ -25,7 +25,7 @@ import gzip
 import logging
 from pathlib import Path
 
-from annotations.db import get_connection
+from annotations.loaders import store_transaction
 
 log = logging.getLogger(__name__)
 
@@ -75,15 +75,12 @@ def load(path: Path, replace: bool = True) -> dict[str, int]:
     rows = list(dict.fromkeys(iter_aliases(path)))
     if not rows:
         raise ValueError(f"{path.name}: no approved genes found")
-    conn = get_connection()
-    try:
+    with store_transaction() as conn:
         if replace:
             conn.execute("DELETE FROM gene_aliases")
         conn.executemany(
             "INSERT INTO gene_aliases (alias, kind, symbol) VALUES (?, ?, ?)", rows
         )
-    finally:
-        conn.close()
     counts: dict[str, int] = {}
     for _, kind, _ in rows:
         counts[kind] = counts.get(kind, 0) + 1

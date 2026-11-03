@@ -15,7 +15,7 @@ import gzip
 import logging
 from pathlib import Path
 
-from annotations.db import get_connection
+from annotations.loaders import store_transaction
 
 log = logging.getLogger(__name__)
 
@@ -108,17 +108,13 @@ def load(gff_path: Path | None = None, replace: bool = True) -> dict[str, int]:
     """Populate transcripts/exons/cds from a GENCODE GFF3.
 
     Returns `{"transcripts": n, "exons": n, "cds": n}`. Pass `replace=False`
-    to keep prior rows.
+    to keep prior rows. The file is parsed first and the three tables swapped
+    in one transaction, so a bad file leaves them as they were.
     """
     if gff_path is None:
         from annotations.loaders.gencode_genes import download_gencode
 
         gff_path = download_gencode()
-
-    conn = get_connection()
-    if replace:
-        for t in ("cds", "exons", "transcripts"):
-            conn.execute(f"DELETE FROM {t}")
 
     batches: dict[str, list[tuple]] = {"transcript": [], "exon": [], "cds": []}
     for kind, row in iter_features(Path(gff_path)):
@@ -127,22 +123,30 @@ def load(gff_path: Path | None = None, replace: bool = True) -> dict[str, int]:
     if not batches["transcript"]:
         raise RuntimeError(f"No transcript features parsed from {gff_path}")
 
-    conn.executemany(
-        "INSERT INTO transcripts (transcript_id, gene_symbol, chrom, start_pos, "
-        "end_pos, strand, biotype, is_canonical, is_mane_plus) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        batches["transcript"],
-    )
-    conn.executemany(
-        "INSERT INTO exons (transcript_id, exon_number, chrom, start_pos, end_pos) "
-        "VALUES (?, ?, ?, ?, ?)",
-        batches["exon"],
-    )
-    conn.executemany(
-        "INSERT INTO cds (transcript_id, exon_number, chrom, start_pos, end_pos, "
-        "phase) VALUES (?, ?, ?, ?, ?, ?)",
-        batches["cds"],
-    )
+    with store_transaction() as conn:
+        if replace:
+            for t in ("cds", "exons", "transcripts"):
+                conn.execute(f"DELETE FROM {t}")
+        for sql, rows in (
+            (
+                "INSERT INTO transcripts (transcript_id, gene_symbol, chrom, "
+                "start_pos, end_pos, strand, biotype, is_canonical, is_mane_plus) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                batches["transcript"],
+            ),
+            (
+                "INSERT INTO exons (transcript_id, exon_number, chrom, start_pos, "
+                "end_pos) VALUES (?, ?, ?, ?, ?)",
+                batches["exon"],
+            ),
+            (
+                "INSERT INTO cds (transcript_id, exon_number, chrom, start_pos, "
+                "end_pos, phase) VALUES (?, ?, ?, ?, ?, ?)",
+                batches["cds"],
+            ),
+        ):
+            if rows:  # executemany refuses an empty list
+                conn.executemany(sql, rows)
     counts = {
         "transcripts": len(batches["transcript"]),
         "exons": len(batches["exon"]),

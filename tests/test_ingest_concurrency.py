@@ -81,13 +81,14 @@ def test_sql_quote_str_classic_injection_payload():
     assert quoted == "''' OR 1=1 --'"
 
 
-def test_sql_quote_str_handles_backslash_escape_bypass():
+def test_sql_quote_str_handles_backslash_escape_bypass(monkeypatch):
     r"""ClickHouse parses \' as a single-quote escape, so plain
     quote-doubling isn't enough. A payload like \'; DROP TABLE …
     has to escape the backslash too — otherwise the engine reads
     \' as the escaped quote and the next ' as the string
     terminator, opening injection. Codex round 9 caught this.
     """
+    monkeypatch.setenv("VCFCLICK_BACKEND", "chdb")
     from storage import sql_quote_str
 
     # The body between the outer quotes must contain no UNESCAPED
@@ -102,6 +103,23 @@ def test_sql_quote_str_handles_backslash_escape_bypass():
     assert "'" not in cleaned and "\\" not in cleaned, (
         f"backslash or quote survived escaping: {quoted!r}"
     )
+
+
+def test_sql_quote_str_on_duckdb_doubles_quotes_only(monkeypatch):
+    r"""DuckDB has no backslash escape inside a literal: `\` is a
+    character like any other, so `\'` is a backslash followed by the
+    string terminator and only `''` is a quote. The payload above is
+    contained by quote-doubling alone, and its backslash stays single so
+    the literal equals the stored value."""
+    monkeypatch.setenv("VCFCLICK_BACKEND", "duckdb")
+    from storage import sql_quote_str
+
+    payload = "\\'; DROP TABLE variants; --"
+    quoted = sql_quote_str(payload)
+    assert quoted == "'\\''; DROP TABLE variants; --'"
+    body = quoted[1:-1]
+    assert "'" not in body.replace("''", "")
+    assert sql_quote_str("DOM\\kid") == "'DOM\\kid'"
 
 
 _QUOTE_ROUNDTRIP = """
