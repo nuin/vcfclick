@@ -25,7 +25,7 @@ from pathlib import Path
 import pyarrow as pa
 from cyvcf2 import VCF
 
-from annotations.db import get_connection
+from annotations.loaders import store_transaction
 
 log = logging.getLogger(__name__)
 
@@ -153,31 +153,29 @@ def load(vcf_path: Path | None = None, replace: bool = True) -> int:
     if not rows:
         raise RuntimeError(f"No ClinVar variants parsed from {vcf_path}")
 
-    conn = get_connection()
-    if replace:
-        conn.execute("DELETE FROM clinvar_variants")
-
     # Bulk-insert via pyarrow → DuckDB. ~3M rows takes a few seconds vs.
-    # minutes with executemany.
+    # minutes with executemany. The DELETE and the INSERT are one transaction.
     arrow_table = _to_arrow(rows)
-    conn.register("clinvar_arrow", arrow_table)
-    try:
-        conn.execute(
-            "INSERT INTO clinvar_variants "
-            "(chrom, pos, ref, alt, clin_sig, review_status, clinvar_id, condition) "
-            "SELECT chrom, pos, ref, alt, clin_sig, review_status, clinvar_id, condition "
-            "FROM clinvar_arrow"
-        )
-    finally:
-        conn.unregister("clinvar_arrow")
+    with store_transaction() as conn:
+        if replace:
+            conn.execute("DELETE FROM clinvar_variants")
+        conn.register("clinvar_arrow", arrow_table)
+        try:
+            conn.execute(
+                "INSERT INTO clinvar_variants "
+                "(chrom, pos, ref, alt, clin_sig, review_status, clinvar_id, "
+                "condition) SELECT chrom, pos, ref, alt, clin_sig, review_status, "
+                "clinvar_id, condition FROM clinvar_arrow"
+            )
+        finally:
+            conn.unregister("clinvar_arrow")
+        # Quick verification — anything pathogenic should be reachable.
+        pathogenic = conn.execute(
+            "SELECT count() FROM clinvar_variants WHERE clin_sig LIKE '%athogenic%'"
+        ).fetchone()
 
     n = len(rows)
     log.info("[clinvar] loaded %s variants into clinvar_variants", f"{n:,}")
-
-    # Quick verification — anything pathogenic should be reachable.
-    pathogenic = conn.execute(
-        "SELECT count() FROM clinvar_variants WHERE clin_sig LIKE '%athogenic%'"
-    ).fetchone()
     if pathogenic and pathogenic[0]:
         log.info("[clinvar] %s pathogenic-class variants indexed", f"{pathogenic[0]:,}")
 

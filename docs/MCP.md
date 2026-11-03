@@ -98,6 +98,9 @@ still answers. A loader is the one writer. While a load runs, DuckDB
 keeps readers out: a command that needs the store then stops with
 `the annotation store ... cannot be opened for reading: another process
 (PID n) has it open for writing`, and a retry after the load succeeds.
+A loader parses its whole input before it touches the store and swaps
+the rows in one transaction, so a truncated download or a file with no
+usable rows raises and leaves the old rows in place.
 
 ## Start The MCP Server
 

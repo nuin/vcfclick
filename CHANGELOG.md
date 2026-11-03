@@ -310,6 +310,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `db trio --genes`. Every command now stops with exit 1 and
   `the annotation store PATH cannot be opened for reading: another
   process (PID n) has it open for writing`. Loaders keep the writer.
+- Annotation loaders (`annotations load`, `load-transcripts`,
+  `load-clinvar`, `load-gnomad`, `load-hgnc`) parse the input first and
+  swap the rows in one transaction. `annotations load` with a truncated
+  GFF, or one with no `gene` rows, used to empty `refseq_genes` before it
+  failed; the old rows now stay. `load-transcripts` also accepts a GFF
+  with no CDS rows.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

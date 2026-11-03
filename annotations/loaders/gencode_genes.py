@@ -24,7 +24,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-from annotations.db import get_connection
+from annotations.loaders import store_transaction
 
 log = logging.getLogger(__name__)
 
@@ -115,31 +115,32 @@ def load(gff_path: Path | None = None, replace: bool = True) -> int:
     """Populate the refseq_genes DuckDB table from a GENCODE GFF3 file.
 
     Returns the number of gene rows written. Pass `replace=False` to
-    keep prior rows (DuckDB will error on duplicate primary keys).
+    keep prior rows (DuckDB will error on duplicate primary keys). The file
+    is parsed first and the rows swapped in one transaction, so a file that
+    fails to parse, or holds no genes, leaves the table as it was.
     """
     if gff_path is None:
         gff_path = download_gencode()
-
-    conn = get_connection()
-    if replace:
-        conn.execute("DELETE FROM refseq_genes")
 
     rows = list(iter_genes(gff_path))
     if not rows:
         raise RuntimeError(f"No gene features parsed from {gff_path}")
 
-    conn.executemany(
-        "INSERT INTO refseq_genes "
-        "(gene_symbol, chrom, start_pos, end_pos, strand, refseq_id, description) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?)",
-        rows,
-    )
+    with store_transaction() as conn:
+        if replace:
+            conn.execute("DELETE FROM refseq_genes")
+        conn.executemany(
+            "INSERT INTO refseq_genes "
+            "(gene_symbol, chrom, start_pos, end_pos, strand, refseq_id, description) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            rows,
+        )
+        # Quick verification — the demo gene should be reachable.
+        brca1 = conn.execute(
+            "SELECT chrom, start_pos, end_pos FROM refseq_genes "
+            "WHERE gene_symbol = 'BRCA1'"
+        ).fetchone()
     log.info("[gencode] loaded %s genes into refseq_genes", f"{len(rows):,}")
-
-    # Quick verification — the demo gene should be reachable.
-    brca1 = conn.execute(
-        "SELECT chrom, start_pos, end_pos FROM refseq_genes WHERE gene_symbol = 'BRCA1'"
-    ).fetchone()
     if brca1:
         log.info("[gencode] BRCA1 → %s:%s-%s", brca1[0], brca1[1], brca1[2])
     else:
