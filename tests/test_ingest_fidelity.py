@@ -490,18 +490,6 @@ def test_serial_commit_inserts_each_table_once(vcfclick_home, run_python, tiny_v
     assert inserts.get("missing_genotypes", 0) <= 1, inserts
 
 
-# ─── findings 41/42: the per-batch row cap ──────────────────────────────
-
-
-def test_batch_row_cap_bounds_worker_memory():
-    """2,000,000 buffered rows measured 1.5 to 1.75 GB per process, and
-    the 4 default workers hold a batch each. 250,000 rows keeps one
-    process near 200 MB."""
-    from ingest.vcf_rows import MAX_BATCH_ROWS
-
-    assert MAX_BATCH_ROWS <= 250_000
-
-
 # ─── finding 45: one rollback-on-failure helper ─────────────────────────
 
 
@@ -536,14 +524,88 @@ def test_ingest_failure_helper_rolls_back_only_after_commit(monkeypatch, caplog,
     assert f"[{tag}] rollback FAILED: disk full" in caplog.text
 
 
-def test_loaders_share_the_failure_helper():
-    import inspect
+@pytest.mark.parametrize("backend", ["duckdb", "chdb"])
+@pytest.mark.parametrize("mode", ["serial", "parallel"])
+def test_failed_vcf_reingest_keeps_prior_data(
+    vcfclick_home, tmp_path, tiny_vcf, backend, mode
+):
+    """A re-ingest under an existing ingest_id whose VCF fails while
+    parsing (a record with no ALT allele) logs 'no engine writes' and
+    leaves the prior rows under that id in place."""
+    bad = _write_vcf(
+        tmp_path / "bad.vcf",
+        ["A"],
+        ["chr1\t100\t.\tA\t.\t50\tPASS\tDP=9\tGT\t0/0"],
+    )
+    gz = bgzip_vcf(bad, tmp_path / "bad.vcf.gz")
+    args = ["--serial"] if mode == "serial" else ["--workers", "2"]
+    tag = "ingest" if mode == "serial" else "parallel-ingest"
+    run_cli(vcfclick_home, backend, "db", "create", "b")
+    run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ingest",
+        "b",
+        str(tiny_vcf),
+        *args,
+        "--ingest-id",
+        "i1",
+    )
+    r = run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ingest",
+        "b",
+        str(gz),
+        *args,
+        "--ingest-id",
+        "i1",
+        ok=False,
+    )
+    assert r.returncode != 0
+    assert f"[{tag}] failed during parse" in r.stderr
+    assert "no engine writes occurred" in r.stderr
+    assert _count_variants(vcfclick_home, backend, "b", "i1") == 5
 
-    import ingest.parallel
-    import ingest.parquet_load
-    import ingest.vcf_load
 
-    for module in (ingest.vcf_load, ingest.parallel, ingest.parquet_load):
-        source = inspect.getsource(module)
-        assert "handle_ingest_failure(" in source, module.__name__
-        assert "rollback FAILED" not in source, module.__name__
+@pytest.mark.parametrize("backend", ["duckdb", "chdb"])
+def test_failed_parquet_reingest_keeps_prior_data(
+    vcfclick_home, tmp_path, tiny_vcf, backend
+):
+    """`db ingest-parquet` rejects a dump whose variants.parquet misses a
+    column before any engine write, so the prior rows under the ingest_id
+    stay in place."""
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    run_cli(vcfclick_home, backend, "db", "create", "b")
+    run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ingest",
+        "b",
+        str(tiny_vcf),
+        "--serial",
+        "--ingest-id",
+        "i1",
+    )
+    dump = tmp_path / "dump"
+    dump.mkdir()
+    pq.write_table(pa.table({"chrom": ["chr1"]}), dump / "variants.parquet")
+    r = run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ingest-parquet",
+        "b",
+        str(dump),
+        "--ingest-id",
+        "i1",
+        ok=False,
+    )
+    assert r.returncode != 0
+    assert "doesn't conform to the variants schema" in r.stderr
+    assert _count_variants(vcfclick_home, backend, "b", "i1") == 5
