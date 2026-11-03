@@ -17,10 +17,11 @@ Genotypes come from the sparse `genotypes` table, so how an absent row is
 read matters:
 - ingested with --keep-reference: 0/0 calls are stored, so absent means a
   no-call and the site is skipped for that pair;
-- otherwise only non-reference calls are stored and absent is read as 0/0
-  (a no-call cannot be told apart). Missing calls then look like hom-ref,
-  which slightly lowers kinship. Joint-called VCFs have few, so the
-  estimate is still reliable for relationship checks.
+- otherwise only non-reference calls are stored and absent is read as 0/0,
+  except the full no-calls the ingest recorded in `missing_genotypes`
+  (the default), which are skipped as above. An ingest made with
+  --no-record-missing has no such rows, so its no-calls read as hom-ref,
+  which lowers kinship and adds IBS0 next to a hom-alt call.
 
 The computation is dense matrix products (numpy), one ingestion at a time,
 since only samples genotyped together share a site list.
@@ -149,7 +150,8 @@ def _print_table(res: dict, include_all: bool) -> None:
         click.echo(f"  WARNING: {res['warning']}")
     if res["mode"] == "sparse":
         click.echo(
-            "  absent genotypes read as 0/0 (this ingestion stored only non-reference calls)"
+            "  absent genotypes read as 0/0, recorded no-calls skipped "
+            "(this ingestion stored only non-reference calls)"
         )
     if not res["pairs"]:
         click.echo("  no related pairs" if not include_all else "  no pairs")

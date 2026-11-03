@@ -209,6 +209,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db relatedness` skips recorded no-calls (behaviour change on sparse
+  ingests).** Without `--keep-reference` an absent genotype was read as
+  `0/0`, including the full no-calls `db ingest` records in
+  `missing_genotypes`. A no-call next to a hom-alt call added an IBS0 and
+  lowered kinship, enough to turn a parent/child pair into full siblings
+  and a pedigree check into `mismatch`. Those no-calls are now skipped for
+  the pair, so a sparse and a `--keep-reference` ingest of the same VCF give
+  the same pairs; on `tests/fixtures/related.vcf` only pairs with U2 (3%
+  no-calls) change. JSON keys are unchanged.
 - `db relatedness` thins SNVs to `--max-sites` in SQL and fetches genotype
   rows only for the kept sites, as Arrow, so memory follows `--max-sites`
   instead of the cohort's whole genotype table. The 20,000-sample limit is

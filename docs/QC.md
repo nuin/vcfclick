@@ -75,9 +75,12 @@ Two limits come from the data:
   are left unclassified with a warning (`--force` classifies anyway).
 - **No-calls.** For ingestions made with `--keep-reference`, an absent
   genotype is a real no-call and is skipped for that pair. Otherwise only
-  non-reference calls were stored, so absent is read as `0/0`; missing
-  calls then look hom-ref and pull kinship slightly down. Joint-called VCFs
-  have few, so relationship calls remain reliable.
+  non-reference calls were stored, so absent is read as `0/0`, except the
+  full no-calls (`./.`) that `db ingest` records in `missing_genotypes` by
+  default: those are skipped too, so both modes give the same kinship. An
+  ingestion made with `--no-record-missing` has no such record; its
+  no-calls look hom-ref, which pulls kinship down and adds IBS0 next to a
+  hom-alt call.
 
 Kinship is computed with dense matrix products, one ingestion at a time,
 and SNVs are thinned evenly to `--max-sites` (default 200,000) to bound

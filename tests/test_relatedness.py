@@ -359,6 +359,44 @@ except click.ClickException as e:
 """
 
 
+def test_sparse_mode_skips_recorded_no_calls(vcfclick_home):
+    """A sparse ingest records full no-calls in missing_genotypes, so U2's
+    ./. calls are skipped as with --keep-reference: both modes give the same
+    pairs, site counts and kinship."""
+    _setup(vcfclick_home, ped=False)
+    sparse = _run(vcfclick_home)
+    home2 = vcfclick_home / "kr"
+    home2.mkdir()
+    _setup(home2, keep_reference=True, ped=False)
+    kept = _run(home2)
+    assert sparse["mode"] == "sparse" and kept["mode"] == "keep-reference"
+    assert sparse["pairs"] == kept["pairs"]
+    assert _pair(sparse, "U2", "M")["n_sites"] < _pair(sparse, "F", "M")["n_sites"]
+
+
+def test_no_call_next_to_hom_alt_is_not_ibs0(vcfclick_home, tmp_path):
+    """A at 1:200 is 1/1 and C is ./.: the pair has one jointly called site
+    and no opposite homozygotes. Read as 0/0, C gave A,C an IBS0 of 0.5."""
+    vcf = tmp_path / "nc.vcf"
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "##contig=<ID=1,length=1000>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+        "1\t100\t.\tC\tT\t50\tPASS\t.\tGT\t0/1\t0/1\t0/1\n"
+        "1\t200\t.\tG\tA\t50\tPASS\t.\tGT\t1/1\t0/1\t./.\n"
+    )
+    _vc(vcfclick_home, "db", "create", "t")
+    _vc(vcfclick_home, "db", "ingest", "t", str(vcf), "--ingest-id", "i1", "--serial")
+    out = _vc(
+        vcfclick_home, "db", "relatedness", "t", "--all", "--force", "--format", "json"
+    ).stdout
+    res = json.loads(out)[0]
+    ac = _pair(res, "A", "C")
+    assert ac["n_sites"] == 1 and ac["ibs0"] == 0.0, ac
+    assert _pair(res, "A", "B")["n_sites"] == 2
+
+
 @pytest.mark.parametrize("bad", ["0", "-3", "16000001"])
 def test_max_sites_out_of_range_is_a_usage_error(vcfclick_home, bad):
     """--max-sites 0 divided by zero; a negative value kept no sites; above

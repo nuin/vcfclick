@@ -253,7 +253,30 @@ def _genotype_matrix(
         samples,
         None,
     )
+    if not keep_ref:
+        _mark_no_calls(sess, q, cte, g, samples)
     return g
+
+
+def _mark_no_calls(sess, q: str, cte: str, g: np.ndarray, samples: list[str]) -> None:
+    """Sparse mode reads an absent genotype as 0/0; the full no-calls an
+    ingest recorded in missing_genotypes are set to -1 so they are skipped
+    for every pair. An ingest made with --no-record-missing has none."""
+    from storage import table_exists
+
+    if not table_exists("missing_genotypes"):
+        return
+    _fill(
+        g,
+        _arrow(
+            sess,
+            f"{cte}SELECT kept.i AS i, m.sample_id AS sample_id "
+            f"FROM missing_genotypes m INNER JOIN kept ON {_kept_join('m')} "
+            f"WHERE m.ingest_id = {q}",
+        ),
+        samples,
+        -1,
+    )
 
 
 def _load(
