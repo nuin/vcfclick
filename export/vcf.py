@@ -8,12 +8,9 @@ Genotypes live in a sparse table, so reconstructing a VCF needs one rule
 for samples with no row at a site:
 - ingestion made with --keep-reference: 0/0 calls are stored, so absent
   means a no-call and is written ./.;
-- otherwise a sample with a `missing_genotypes` row at the site was ./.
-  in the source and is written ./.; every other absent sample is written
-  0/0 by default (--absent-as nocall writes ./. instead). An ingestion
-  without `missing_genotypes` rows (--no-record-missing, or a database
-  from before that table) cannot tell a no-call from a hom-ref call, and
-  the header says which case applies.
+- otherwise only non-reference calls were stored and a hom-ref call cannot
+  be told apart from a no-call. Absent is written 0/0 by default
+  (--absent-as nocall writes ./. instead), and the header says so.
 
 Exported per genotype: GT, GQ, DP, AD, FT. Phase is not preserved: the
 store keeps a phased flag but not which haplotype carries the ALT, so all

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import struct
 from datetime import datetime, timezone
 from typing import Any
 
@@ -46,37 +45,11 @@ _FORMAT_SPEC = {
 _GT = {0: "0/0", 1: "0/1", 2: "1/1", -1: "./1"}
 
 
-def _num(v, sql_type: str) -> str:
-    """Render one typed INFO or QUAL value as the VCF text.
-
-    A String column is written as stored (`AA=.`, `AA=G.T`). A float column
-    is written with the fewest digits that read back as the stored value:
-    Float32 (`qual`, `info_AF`, DuckDB `REAL`) at up to 9 significant
-    digits, Float64 with `repr`. Six digits, the old rule, lost one digit
-    of a Float32 (0.123456789 came back 0.123457).
-    """
-    t = sql_type.lower()
-    if "float" not in t and "double" not in t and "real" not in t:
-        return str(v)
-    f = float(v)
-    if f.is_integer():
-        return str(int(f))
-    if "float64" in t or "double" in t:
-        return repr(f)
-    return _shortest_float32(f)
-
-
-def _shortest_float32(f: float) -> str:
-    target = _as_float32(f)
-    for digits in range(6, 10):
-        text = f"{f:.{digits}g}"
-        if _as_float32(float(text)) == target:
-            return text
-    return f"{f:.9g}"
-
-
-def _as_float32(f: float) -> float:
-    return struct.unpack("<f", struct.pack("<f", f))[0]
+def _num(v) -> str:
+    if isinstance(v, float) or (isinstance(v, str) and "." in v):
+        f = float(v)
+        return str(int(f)) if f.is_integer() else f"{f:.6g}"
+    return str(v)
 
 
 def _map_items(v) -> list[tuple[str, str]]:
@@ -110,10 +83,10 @@ def record(rec: dict[str, Any], site_calls: SiteCalls, context: ExportContext) -
             continue
         if v is None:
             continue
-        info.append(f"{key}={_num(v, typ)}")
+        info.append(f"{key}={_num(v)}")
         context.used_info[key] = typ
     if ad_ref is not None and ad_alt is not None:
-        info.append(f"AD={int(ad_ref)},{int(ad_alt)}")
+        info.append(f"AD={_num(ad_ref)},{_num(ad_alt)}")
         context.used_info["AD"] = "Integer"
     if context.has_extra:
         for k, v in _map_items(rec.get("info_extra")):
@@ -124,7 +97,7 @@ def record(rec: dict[str, Any], site_calls: SiteCalls, context: ExportContext) -
     if filt not in ("PASS", "."):
         for f in filt.split(";"):
             context.used_filters.add(f)
-    qual = "." if rec.get("qual") is None else _num(rec["qual"], context.qual_type)
+    qual = "." if rec.get("qual") is None else _num(rec["qual"])
     fields = [
         rec["chrom"],
         str(int(rec["pos"])),
@@ -144,14 +117,10 @@ def record(rec: dict[str, Any], site_calls: SiteCalls, context: ExportContext) -
 
 def _genotypes(site_calls: SiteCalls, context: ExportContext) -> list[str]:
     cols = [context.absent_gt] * len(context.samples)
-    for sid, values in site_calls.items():
+    for sid, (gt, gq, dp, adr, ada, ft) in site_calls.items():
         j = context.sample_index.get(sid)
         if j is None:
             continue
-        if values is None:  # a recorded no-call
-            cols[j] = "./."
-            continue
-        gt, gq, dp, adr, ada, ft = values
         parts = {
             "GT": _GT.get(int(gt), "./."),
             "GQ": ".",
@@ -192,17 +161,10 @@ def header(context: ExportContext, used_fmt: list[str]) -> str:
                 '##vcfclick_note="Ingested with --keep-reference: stored 0/0 calls are written 0/0; '
                 'absent genotypes are no-calls, written ./."'
             )
-        elif context.missing_recorded:
-            lines.append(
-                '##vcfclick_note="Only non-reference genotypes and no-calls were stored at ingest: '
-                "recorded no-calls are written ./. and every other absent genotype is written "
-                f'{context.absent_gt}. Phase is not preserved (all calls unphased)."'
-            )
         else:
             lines.append(
-                '##vcfclick_note="Only non-reference genotypes were stored at ingest and no no-calls '
-                "were recorded (none in the source, or --no-record-missing), so a hom-ref call "
-                f"cannot be told from a no-call: absent genotypes are written {context.absent_gt}. "
+                f'##vcfclick_note="Only non-reference genotypes were stored at ingest, so a hom-ref '
+                f"call cannot be told from a no-call: absent genotypes are written {context.absent_gt}. "
                 'Phase is not preserved (all calls unphased)."'
             )
     lines.append(

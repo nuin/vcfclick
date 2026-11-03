@@ -209,13 +209,6 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- **`db export` writes recorded no-calls as `./.` (behaviour change).** A
-  sample with a `missing_genotypes` row at a site (written at ingest unless
-  `--no-record-missing`) was `./.` in the source VCF and is now exported as
-  `./.`; before, it was written `0/0` like every other absent genotype, so a
-  round trip invented hom-ref calls and raised the call rate. The
-  `--absent-as` rule still applies to samples with no row in either table,
-  and the `##vcfclick_note` header says whether no-calls were recorded.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only

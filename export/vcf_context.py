@@ -7,7 +7,7 @@ from typing import Any
 
 Region = tuple[str, int | None, int | None]
 InfoColumn = tuple[str, str, int]
-SiteCalls = dict[str, list[Any] | None]  # None: a recorded no-call
+SiteCalls = dict[str, list[Any]]
 FORMAT_PLACEHOLDER = "\x00FMT\x00"
 FORMAT_FIELDS = ("GT", "GQ", "DP", "AD", "FT")
 
@@ -49,9 +49,6 @@ class ExportContext:
     info_cols: list[InfoColumn]
     has_extra: bool
     chrom_stats: list[list[Any]]
-    qual_type: str = "Float32"
-    missing_recorded: bool = False
-    selective: bool = False  # --where, --pass-only or regions narrow the variants
     sample_index: dict[str, int] = field(init=False)
     used_info: dict[str, str] = field(default_factory=dict)
     used_extra: set[str] = field(default_factory=set)
