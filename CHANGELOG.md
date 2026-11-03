@@ -346,6 +346,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   now follows HGNC's previous-symbol row to the stored gene (`resolved_by`
   counts it as `previous`). Before, an approved symbol absent from the
   store was unresolved, and the default strict mode refused the run.
+- `db export --gene`, `db popgen --gene`, `db gene`, the TUI and the MCP
+  `position_for_gene` tool take the tokens `db trio --genes` takes. A
+  token that is no stored symbol now resolves as an Ensembl gene id and,
+  after `annotations load-hgnc`, a previous symbol, alias, HGNC or Entrez
+  id; it used to be "not found". A stored symbol answers as before.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

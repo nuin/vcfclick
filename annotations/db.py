@@ -238,6 +238,11 @@ def position_for_gene(symbol: str) -> GeneRange | None:
     (the GENCODE loader stores a symbol as HGNC spells it, so `C9orf72` is
     stored with its lower-case letters); a symbol stored in exactly the
     spelling asked for wins over one that differs only in case.
+
+    A token that is no stored symbol resolves as a `db trio --genes` token
+    does (`resolve_gene_tokens`): an Ensembl gene id and, after `annotations
+    load-hgnc`, a previous symbol, an alias, an HGNC or Entrez id. A token
+    whose best match names two genes is None.
     """
     conn = read_connection()
     try:
@@ -251,9 +256,16 @@ def position_for_gene(symbol: str) -> GeneRange | None:
             """,
             [symbol, symbol],
         ).fetchone()
+        if row:
+            return GeneRange(*row)
+        matches = resolve_gene_tokens([symbol], conn=conn).get(gene_token_key(symbol))
     finally:
         conn.close()
-    return GeneRange(*row) if row else None
+    if not matches:
+        return None
+    best = matches[0][0]
+    genes = {g.gene_symbol: g for kind, g in matches if kind == best}
+    return next(iter(genes.values())) if len(genes) == 1 else None
 
 
 def gene_at(chrom: str, pos: int) -> list[GeneRange]:

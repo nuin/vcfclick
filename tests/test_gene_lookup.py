@@ -199,3 +199,22 @@ def test_db_gene_uses_the_same_alias_groups():
     assert gene_query_aliases("chrX") == ["chrX", "X", "chr23", "23"]
     assert gene_query_aliases("chr17") == ["17", "chr17"]
     assert set(gene_query_aliases("chrM")) >= {"chrM", "M", "MT"}
+
+
+def test_position_for_gene_takes_the_tokens_genes_takes(isolated_annotation_db):
+    """`db export --gene`, `db popgen --gene`, `db gene`, the TUI and the MCP
+    tool resolve what `db trio --genes` resolves: an Ensembl id (version
+    ignored) and, with HGNC loaded, a previous symbol."""
+    from annotations.db import get_connection, position_for_gene
+
+    _seed()
+    assert position_for_gene("ENSG00000012048").gene_symbol == "BRCA1"
+    assert position_for_gene("ENSG00000012048.7").gene_symbol == "BRCA1"
+    assert position_for_gene("RNF53") is None
+    conn = get_connection()
+    conn.execute(
+        "INSERT INTO gene_aliases VALUES ('BRCA1', 'approved', 'BRCA1'), "
+        "('RNF53', 'alias', 'BRCA1')"
+    )
+    conn.close()
+    assert position_for_gene("RNF53").gene_symbol == "BRCA1"
