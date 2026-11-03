@@ -77,7 +77,7 @@ class RelatednessOptions:
 )
 @click.option(
     "--max-sites",
-    type=int,
+    type=click.IntRange(1, 16_000_000),
     default=200000,
     show_default=True,
     help="Thin to at most this many SNVs (evenly spread) to bound memory.",

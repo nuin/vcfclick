@@ -359,6 +359,16 @@ except click.ClickException as e:
 """
 
 
+@pytest.mark.parametrize("bad", ["0", "-3", "16000001"])
+def test_max_sites_out_of_range_is_a_usage_error(vcfclick_home, bad):
+    """--max-sites 0 divided by zero; a negative value kept no sites; above
+    2^24 the float32 counts in king_robust are no longer exact."""
+    _setup(vcfclick_home, ped=False)
+    r = _vc(vcfclick_home, "db", "relatedness", "r", "--max-sites", bad, ok=False)
+    assert r.returncode == 2, r.stderr
+    assert "Traceback" not in r.stderr and "--max-sites" in r.stderr
+
+
 def test_sample_cap_is_checked_before_the_matrix_is_built(vcfclick_home, run_python):
     _setup(vcfclick_home, ped=False)
     out = run_python(vcfclick_home, _SAMPLE_GUARD, VCFCLICK_DB_NAME="r")

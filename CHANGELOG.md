@@ -311,6 +311,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db relatedness --max-sites` takes 1 to 16,000,000. `--max-sites 0` was a
+  `ZeroDivisionError` traceback, a negative value kept no sites and reported
+  "no related pairs", and above 2^24 sites the float32 pair counts are no
+  longer exact. Out-of-range values are now a usage error (exit 2).
 - The published wheel ships `vcfclick_web` again. The sdist include list
   omitted the package, and `uv build` builds the wheel from the sdist, so
   `pip install vcfclick[web]` followed by `vcfclick web NAME` failed with
