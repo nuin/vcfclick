@@ -5,10 +5,10 @@ homozygous-alt counts and their ratio, the transition/transversion ratio
 (SNVs only), and a chromosome-X heterozygosity sex check that is flagged
 against the pedigree's declared sex when one is loaded.
 
-The genotypes table is sparse (only non-reference calls), so genotype
-*missingness* / call rate is not computable here — those need the no-call
-information a sparse store discards. The metrics below are exactly the
-ones the stored non-reference calls support honestly.
+The counts come from the stored non-reference calls. Full no-calls are
+recorded per sample in `missing_genotypes` (by default; absent on older
+DBs and on ingests made with --no-record-missing), but this command does
+not read them yet, so it reports no call rate.
 """
 
 from __future__ import annotations
@@ -52,7 +52,10 @@ def _qc_sql(x_builds: dict[str, str] | None = None) -> str:
     """The per-sample counts. `x_builds` ({ingest_id: build}, `--x-nonpar`)
     restricts each ingestion's chrX counts to sure non-PAR X of its own build;
     None counts the whole X."""
-    snv = "length(ref) = 1 AND length(alt) = 1"
+    # A '*' ALT (spanning deletion) or an N base is one character long but
+    # neither a transition nor a transversion.
+    bases = "'A', 'C', 'G', 'T'"
+    snv = f"ref IN ({bases}) AND alt IN ({bases})"
     ti = f"{snv} AND {_transition()}"
     tv = f"{snv} AND NOT {_transition()}"
     if x_builds is None:
@@ -129,7 +132,10 @@ def _qc_builds(sess, option: str) -> dict[str, tuple[str, str]]:
 
 
 def _ratio(num: int, denom: int) -> str:
-    return "inf" if denom == 0 else f"{num / denom:.2f}"
+    """Two decimals as a string (a stable JSON type); 'NA' for 0/0."""
+    if denom == 0:
+        return "NA" if num == 0 else "inf"
+    return f"{num / denom:.2f}"
 
 
 @db.command(name="qc")

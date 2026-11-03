@@ -94,3 +94,27 @@ def test_qc_without_pedigree_has_no_declared_sex(vcfclick_home):
     assert qc["M1"]["inferred_sex"] == "male"
     assert qc["M1"]["pedigree_sex"] is None
     assert all(not s["sex_mismatch"] for s in qc.values())
+
+
+def test_qc_titv_counts_only_acgt_snvs(vcfclick_home, tmp_path):
+    """A '*' ALT and an N base are one character long but neither a
+    transition nor a transversion; they no longer count as Ti/Tv. A sample
+    with no SNV calls has Ti/Tv 'NA' (0/0), not 'inf'."""
+    vcf = tmp_path / "titv.vcf"
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n"
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "##contig=<ID=1,length=1000>\n"
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1\tS2\n"
+        "1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t0/0\n"
+        "1\t200\t.\tA\tC\t50\tPASS\t.\tGT\t0/1\t0/0\n"
+        "1\t300\t.\tA\t*\t50\tPASS\t.\tGT\t0/1\t0/0\n"
+        "1\t400\t.\tN\tA\t50\tPASS\t.\tGT\t0/1\t0/0\n"
+        "1\t500\t.\tAT\tA\t50\tPASS\t.\tGT\t0/0\t0/1\n"
+    )
+    _vc(vcfclick_home, "db", "create", "q")
+    _vc(vcfclick_home, "db", "ingest", "q", str(vcf), "--ingest-id", "i1", "--serial")
+    qc = _qc(vcfclick_home)
+    assert qc["S1"]["variants"] == 4
+    assert qc["S1"]["ti_tv"] == "1.00"
+    assert qc["S2"]["ti_tv"] == "NA"

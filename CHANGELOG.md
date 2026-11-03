@@ -209,6 +209,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db qc` Ti/Tv over A/C/G/T SNVs only (behaviour change).** Any
+  one-base ALT that was not a transition counted as a transversion,
+  including a `*` spanning deletion from `bcftools norm -m -` and N bases,
+  which lowered `ti_tv`. Both REF and ALT must now be A, C, G or T. A ratio
+  of 0/0 (`ti_tv` of a sample with no SNV calls, `het_hom_ratio` likewise)
+  is `"NA"` instead of `"inf"`; values stay strings in `--format json`.
 - **`db relatedness` counts autosomes only (behaviour change on data with
   sex chromosomes or chrM).** Every SNV counted, so a male's haploid chrX,
   chrY and chrM calls (stored as `1/1`, or absent and read as `0/0`) added

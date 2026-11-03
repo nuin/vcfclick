@@ -14,7 +14,7 @@ vcfclick db qc my-cohort --format json   # for pipelines
 | `variants` | stored non-reference calls for the sample |
 | `het` / `hom` | heterozygous (`gt=1`) / homozygous-alt (`gt=2`) counts |
 | `het/hom` | het-to-hom-alt ratio (a standard genotyping sanity check) |
-| `ti/tv` | transition/transversion ratio over SNVs (≈2.0–2.1 for WGS, ≈3 for exomes; low values suggest false positives) |
+| `ti/tv` | transition/transversion ratio over SNVs with A/C/G/T REF and ALT (≈2.0–2.1 for WGS, ≈3 for exomes; low values suggest false positives); `NA` for a sample with neither, `inf` with no transversions |
 | `chrX-het` | heterozygous fraction on chromosome X |
 | `sex` | sex inferred from chrX heterozygosity (`male` if low, `female` if high), `*` when it disagrees with the pedigree |
 
@@ -99,7 +99,7 @@ To cross-check relatedness and the sex call against somalier, see
 
 ## What it does not report
 
-The genotypes table is **sparse** — only non-reference calls are stored,
-so a sample's `0/0` and `./.` are indistinguishable by absence. Genotype
-*missingness* / call rate therefore cannot be computed here; QC reports
-only the metrics the stored non-reference calls support honestly.
+QC counts the stored non-reference calls. Full no-calls (`./.`) are
+recorded per sample in `missing_genotypes` by default (not on older
+databases or ingests made with `--no-record-missing`), but `db qc` does not
+read that table yet, so it reports no call rate.
