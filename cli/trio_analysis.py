@@ -589,16 +589,10 @@ def _children(sess, ingest_id: str) -> list[tuple[str, str, str]]:
 
 
 def _has_reference_rows(sess) -> bool:
-    from storage import count_expr
+    """Any stored 0/0 row anywhere in the database (storage.has_reference_rows)."""
+    from storage import has_reference_rows
 
-    raw = (
-        sess.query(
-            f"SELECT {count_expr()} FROM genotypes WHERE gt = 0 FORMAT JSONCompact"
-        )
-        .bytes()
-        .decode()
-    )
-    return int(json.loads(raw)["data"][0][0]) > 0
+    return has_reference_rows(sess)
 
 
 def _gnomad_filter(rows: list, max_af: float, stats: dict | None = None) -> list:

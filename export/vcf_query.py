@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .vcf_context import ExportContext, ExportError, ExportRequest, Region, SiteCalls
-from storage import query_json
+from storage import has_reference_rows, query_json
 
 _WINDOW_VARIANTS = 50_000
 _REGION_RE = re.compile(r"^([^:\s]+)(?::([\d,]+)(?:-([\d,]+))?)?$")
@@ -130,15 +130,7 @@ def prepare_export(sess, request: ExportRequest) -> ExportContext:
 
     ingest_id = _select_ingestion(sess, request)
     samples = _select_samples(sess, ingest_id, request)
-    keep_ref = (
-        int(
-            _rows(
-                sess,
-                f"SELECT count(*) FROM genotypes WHERE ingest_id = {_q(ingest_id)} AND gt = 0",
-            )[1][0][0]
-        )
-        > 0
-    )
+    keep_ref = has_reference_rows(sess, ingest_id)
     absent_gt = "./." if (keep_ref or request.absent_as == "nocall") else "0/0"
     variant_where = _variant_where(ingest_id, request)
     typed = _rows(sess, typed_columns_sql("variants"))[1]

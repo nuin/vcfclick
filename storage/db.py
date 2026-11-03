@@ -510,6 +510,17 @@ def query_rows(sess, sql: str) -> list[list]:
     return query_json(sess, sql)["data"]
 
 
+def has_reference_rows(sess, ingest_id: str | None = None) -> bool:
+    """Does `genotypes` hold any stored hom-reference (gt = 0) row, in the
+    whole database or under `ingest_id`? Only a --keep-reference ingest
+    writes them. `LIMIT 1` lets a keep-reference store answer at the first
+    such row; a count would read all of them."""
+    where = "gt = 0"
+    if ingest_id is not None:
+        where = f"ingest_id = {sql_quote_str(ingest_id)} AND {where}"
+    return bool(query_rows(sess, f"SELECT 1 FROM genotypes WHERE {where} LIMIT 1"))
+
+
 def query_arrow(sql: str) -> pa.Table:
     """Run a SELECT and return the result as a pyarrow Table.
 

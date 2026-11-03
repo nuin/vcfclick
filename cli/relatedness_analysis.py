@@ -4,7 +4,7 @@ from functools import partial
 
 import click
 import numpy as np
-from storage import query_rows
+from storage import has_reference_rows, query_rows
 
 # KING kinship thresholds (powers of 2 between the expected values).
 _DUPLICATE = 0.354
@@ -172,14 +172,7 @@ def _load(
             f"SELECT DISTINCT sample_id FROM samples WHERE ingest_id = {q} ORDER BY sample_id",
         )
     ]
-    keep_ref = (
-        int(
-            query_rows(
-                sess, f"SELECT count(*) FROM genotypes WHERE ingest_id = {q} AND gt = 0"
-            )[0][0]
-        )
-        > 0
-    )
+    keep_ref = has_reference_rows(sess, ingest_id)
     snv = "length(ref) = 1 AND length(alt) = 1"
     sites = query_rows(
         sess,
