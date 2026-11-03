@@ -323,7 +323,20 @@ def test_flank_widens_each_gene(genes_loaded):
     assert scope.contains("chr7", 20500) and scope.echo["genes"]["flank"] == 500
 
 
-def test_a_par_gene_says_it_has_one_locus(genes_loaded):
+def test_a_par_gene_is_both_its_loci(genes_loaded):
+    scope = _scope(genes=["XG"])
+    assert scope.contains("chrX", 2_750_000) and scope.contains("chrY", 2_750_000)
+    assert scope.echo["genes"]["genes"] == 1
+    assert not any("pseudo-autosomal" in n for n in scope.notes)
+
+
+def test_a_par_gene_stored_once_says_so(genes_loaded):
+    """A store loaded before both copies were kept has XG on chrX alone."""
+    from annotations.db import get_connection
+
+    conn = get_connection()
+    conn.execute("DELETE FROM refseq_genes WHERE gene_symbol = 'XG' AND chrom = 'chrY'")
+    conn.close()
     scope = _scope(genes=["XG"])
     assert scope.contains("chrX", 2_750_000) and not scope.contains("chrY", 2_750_000)
     assert any("pseudo-autosomal" in n and "chrX only" in n for n in scope.notes)

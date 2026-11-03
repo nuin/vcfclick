@@ -148,3 +148,68 @@ def test_loaders_release_the_store(tmp_path, isolated_annotation_db, run_python)
         "import annotations.db as a; print(a.position_for_gene('GENE7').start_pos)",
     )
     assert out.strip() == "71"
+
+
+PAR_GFF = (
+    "##gff-version 3\n"
+    "chrX\tHAVANA\tgene\t624344\t659411\t.\t+\t.\tgene_id=ENSG00000185960.14;"
+    "gene_name=SHOX;gene_type=protein_coding\n"
+    "chrY\tHAVANA\tgene\t624344\t659411\t.\t+\t.\tgene_id=ENSG00000185960.14_PAR_Y;"
+    "gene_name=SHOX;gene_type=protein_coding\n"
+    "chr1\tHAVANA\tgene\t100\t200\t.\t+\t.\tgene_id=ENSG1.1;gene_name=TWICE;"
+    "gene_type=lncRNA\n"
+    "chr1\tHAVANA\tgene\t500\t600\t.\t+\t.\tgene_id=ENSG2.1;gene_name=TWICE;"
+    "gene_type=lncRNA\n"
+)
+
+
+def test_a_par_gene_keeps_both_loci(tmp_path, isolated_annotation_db, caplog):
+    """SHOX is listed on chrX and on chrY (its `_PAR_Y` copy): both loci are
+    stored. A symbol repeated on one contig keeps its first locus, and the
+    loader says how many it dropped."""
+    from annotations.db import gene_at
+    from annotations.loaders.gencode_genes import load
+
+    with caplog.at_level("INFO", logger="annotations.loaders.gencode_genes"):
+        assert load(_gff(tmp_path, "par.gff3.gz", PAR_GFF)) == 3
+    assert [g.chrom for g in gene_at("chrY", 630_000)] == ["chrY"]
+    assert [g.chrom for g in gene_at("chrX", 630_000)] == ["chrX"]
+    assert [g.start_pos for g in gene_at("chr1", 150)] == [100]
+    assert gene_at("chr1", 550) == []
+    assert "1 gene row" in caplog.text and "TWICE" in caplog.text
+
+
+def test_a_store_keyed_by_symbol_alone_is_rebuilt(tmp_path, isolated_annotation_db):
+    """A store made before the key included the contig: a replacing load
+    rebuilds the table, so the chrY copy fits."""
+    import duckdb
+
+    from annotations.loaders.gencode_genes import load
+
+    conn = duckdb.connect(str(isolated_annotation_db))
+    conn.execute(
+        "CREATE TABLE refseq_genes (gene_symbol VARCHAR PRIMARY KEY, chrom VARCHAR "
+        "NOT NULL, start_pos UINTEGER NOT NULL, end_pos UINTEGER NOT NULL, strand "
+        "VARCHAR, refseq_id VARCHAR, description VARCHAR)"
+    )
+    conn.execute("INSERT INTO refseq_genes VALUES ('OLD','chr2',1,5,'+','E','pc')")
+    conn.close()
+    assert load(_gff(tmp_path, "par.gff3.gz", PAR_GFF)) == 3
+    assert _count("refseq_genes") == 3
+
+
+def test_genes_scope_takes_every_locus_of_a_symbol(tmp_path, isolated_annotation_db):
+    from annotations.db import resolve_gene_tokens
+    from annotations.loaders.gencode_genes import load
+    from cli import scope as sc
+
+    load(_gff(tmp_path, "par.gff3.gz", PAR_GFF))
+    found = resolve_gene_tokens(["SHOX", "ENSG00000185960"])
+    assert sorted(g.chrom for _, g in found["SHOX"]) == ["chrX", "chrY"]
+    assert sorted(g.chrom for _, g in found["ENSG00000185960"]) == ["chrX", "chrY"]
+    scope = sc.build_scope(
+        sc.ScopeRequest.from_values({"genes": ["SHOX"]}), build="GRCh38"
+    )
+    assert scope.contains("chrX", 630_000) and scope.contains("chrY", 630_000)
+    assert scope.echo["genes"]["genes"] == 1
+    assert not any("chrX only" in n for n in scope.notes)

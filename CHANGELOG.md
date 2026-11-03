@@ -351,6 +351,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   token that is no stored symbol now resolves as an Ensembl gene id and,
   after `annotations load-hgnc`, a previous symbol, alias, HGNC or Entrez
   id; it used to be "not found". A stored symbol answers as before.
+- `annotations load` keeps both copies of a pseudo-autosomal gene (SHOX,
+  XG: GENCODE lists a chrX row and a `_PAR_Y` chrY row). It kept the first
+  row of a symbol, so the chrY copy was dropped: chrY PAR variants had no
+  gene label and `--genes SHOX` built only the chrX interval. `refseq_genes`
+  is now keyed on `(gene_symbol, chrom)`; a replacing load rebuilds an
+  older table. A symbol listed twice on one contig keeps its first locus,
+  and the loader logs how many rows it dropped. `scope.genes.genes` still
+  counts SHOX as one gene, and the "matched on chrX only" note appears only
+  for a store loaded before this change.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

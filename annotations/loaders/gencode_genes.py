@@ -64,17 +64,17 @@ PRIMARY_CONTIGS = frozenset(
 )
 
 
-def iter_genes(gff_path: Path):
+def iter_genes(gff_path: Path, dropped: list[str] | None = None):
     """Stream a GFF3 file, yielding (gene_symbol, chrom, start, end, strand,
     refseq_id, description) tuples for each gene on a primary contig.
 
-    Duplicate gene_symbols on the same primary contig are also possible
-    (rare; usually PAR genes like XG that appear on both chrX and chrY).
-    We keep the first occurrence and drop the rest; PAR resolution is a
-    Phase 2 concern.
+    A symbol listed on two contigs keeps both loci: a pseudo-autosomal gene
+    (SHOX, XG) has a chrX row and a `_PAR_Y` chrY row. A symbol listed twice
+    on one contig (rare) keeps its first locus in file order; the symbol of
+    each dropped row is appended to `dropped` when given.
     """
     opener = gzip.open if gff_path.suffix == ".gz" else open
-    seen: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     with opener(gff_path, "rt") as f:
         for line in f:
             if line.startswith("#"):
@@ -89,9 +89,13 @@ def iter_genes(gff_path: Path):
             # gene_name is the HGNC symbol (e.g. 'BRCA1'). gene_id is the
             # Ensembl ID (e.g. 'ENSG00000012048.24'). We prefer the name.
             symbol = attrs.get("gene_name")
-            if not symbol or symbol in seen:
+            if not symbol:
                 continue
-            seen.add(symbol)
+            if (symbol, chrom) in seen:
+                if dropped is not None:
+                    dropped.append(symbol)
+                continue
+            seen.add((symbol, chrom))
             yield (
                 symbol,
                 chrom,
@@ -103,24 +107,40 @@ def iter_genes(gff_path: Path):
             )
 
 
+def _rebuild_table(conn) -> None:
+    """Drop refseq_genes and create it from the current DDL, so a store keyed
+    by gene_symbol alone gains the (gene_symbol, chrom) key."""
+    from annotations.db import _table_ddl
+
+    conn.execute("DROP TABLE IF EXISTS refseq_genes")
+    conn.execute(_table_ddl()["refseq_genes"])
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_genes_range "
+        "ON refseq_genes (chrom, start_pos, end_pos)"
+    )
+
+
 def load(gff_path: Path | None = None, replace: bool = True) -> int:
     """Populate the refseq_genes DuckDB table from a GENCODE GFF3 file.
 
     Returns the number of gene rows written. Pass `replace=False` to
-    keep prior rows (DuckDB will error on duplicate primary keys). The file
+    keep prior rows (DuckDB will error on duplicate primary keys). A replacing
+    load rebuilds the table, so an older store keyed by symbol alone gains the
+    (symbol, contig) key. The file
     is parsed first and the rows swapped in one transaction, so a file that
     fails to parse, or holds no genes, leaves the table as it was.
     """
     if gff_path is None:
         gff_path = download_gencode()
 
-    rows = list(iter_genes(gff_path))
+    dropped: list[str] = []
+    rows = list(iter_genes(gff_path, dropped))
     if not rows:
         raise RuntimeError(f"No gene features parsed from {gff_path}")
 
     with store_transaction() as conn:
         if replace:
-            conn.execute("DELETE FROM refseq_genes")
+            _rebuild_table(conn)
         conn.executemany(
             "INSERT INTO refseq_genes "
             "(gene_symbol, chrom, start_pos, end_pos, strand, refseq_id, description) "
@@ -133,6 +153,14 @@ def load(gff_path: Path | None = None, replace: bool = True) -> int:
             "WHERE gene_symbol = 'BRCA1'"
         ).fetchone()
     log.info("[gencode] loaded %s genes into refseq_genes", f"{len(rows):,}")
+    if dropped:
+        shown = ", ".join(sorted(set(dropped))[:10])
+        log.info(
+            "[gencode] dropped %s gene row(s) whose symbol was already on that "
+            "contig (first locus kept): %s",
+            f"{len(dropped):,}",
+            shown + (", ..." if len(set(dropped)) > 10 else ""),
+        )
     if brca1:
         log.info("[gencode] BRCA1 → %s:%s-%s", brca1[0], brca1[1], brca1[2])
     else:

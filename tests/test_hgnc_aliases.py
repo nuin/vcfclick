@@ -148,10 +148,12 @@ def test_load_hgnc_cli(genes_loaded):
     assert "loaded   19 gene aliases" in r.output
 
 
-def test_par_gene_keeps_the_first_copy(genes_loaded):
+def test_par_gene_keeps_both_copies(genes_loaded):
     found = _resolve(["XG"])
-    [(kind, gene)] = found["XG"]
-    assert (kind, gene.chrom) == ("symbol", "chrX")
+    assert [(kind, gene.chrom) for kind, gene in found["XG"]] == [
+        ("symbol", "chrX"),
+        ("symbol", "chrY"),
+    ]
 
 
 def test_an_approved_symbol_the_store_lacks_does_not_resolve_as_previous(genes_loaded):

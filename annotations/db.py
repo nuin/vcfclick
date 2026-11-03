@@ -47,13 +47,17 @@ def _store_path() -> Path:
 
 SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS refseq_genes (
-    gene_symbol  VARCHAR PRIMARY KEY,    -- HGNC symbol, e.g. 'BRCA1'
+    gene_symbol  VARCHAR NOT NULL,       -- HGNC symbol, e.g. 'BRCA1'
     chrom        VARCHAR NOT NULL,       -- 'chr17' style
     start_pos    UINTEGER NOT NULL,      -- 1-based, inclusive
     end_pos      UINTEGER NOT NULL,      -- 1-based, inclusive
     strand       VARCHAR,                -- '+' or '-'
-    refseq_id    VARCHAR,                -- NCBI Gene ID
-    description  VARCHAR
+    refseq_id    VARCHAR,                -- Ensembl gene id (GENCODE gene_id)
+    description  VARCHAR,
+    -- one locus per symbol and contig: a pseudo-autosomal gene (SHOX) has a
+    -- chrX row and a chrY row. Stores made before this key have
+    -- gene_symbol alone, and a replacing `annotations load` rebuilds them.
+    PRIMARY KEY (gene_symbol, chrom)
 );
 
 CREATE INDEX IF NOT EXISTS idx_genes_range
@@ -251,7 +255,7 @@ def position_for_gene(symbol: str) -> GeneRange | None:
             SELECT gene_symbol, chrom, start_pos, end_pos, strand
             FROM refseq_genes
             WHERE upper(gene_symbol) = upper(?)
-            ORDER BY (gene_symbol = ?) DESC, gene_symbol
+            ORDER BY (gene_symbol = ?) DESC, gene_symbol, chrom
             LIMIT 1
             """,
             [symbol, symbol],
@@ -264,7 +268,10 @@ def position_for_gene(symbol: str) -> GeneRange | None:
     if not matches:
         return None
     best = matches[0][0]
-    genes = {g.gene_symbol: g for kind, g in matches if kind == best}
+    genes = {}
+    for kind, g in matches:
+        if kind == best:
+            genes.setdefault(g.gene_symbol, g)  # the first locus of each
     return next(iter(genes.values())) if len(genes) == 1 else None
 
 
@@ -560,8 +567,9 @@ def resolve_gene_tokens(
     A token matches a current symbol without regard to case, or an Ensembl
     gene id (the refseq_id column, version ignored), and, when `annotations
     load-hgnc` has filled `gene_aliases`, a previous symbol, an alias, an HGNC
-    id (`HGNC:1234`) or an Entrez id. The caller decides what an ambiguous
-    token means (one previous symbol of two genes)."""
+    id (`HGNC:1234`) or an Entrez id. A gene with loci on two contigs (a
+    pseudo-autosomal gene on chrX and chrY) is one entry per locus. The caller
+    decides what an ambiguous token means (one previous symbol of two genes)."""
     keys = list(dict.fromkeys(gene_token_key(t) for t in tokens if t.strip()))
     if not keys:
         return {}
@@ -615,8 +623,12 @@ def resolve_gene_tokens(
     found: dict[str, list[tuple[str, GeneRange]]] = {}
     for tok, kind, *gene in rows:
         matches = found.setdefault(tok, [])
-        if all(g.gene_symbol != gene[0] or k != kind for k, g in matches):
+        if all(
+            (g.gene_symbol, g.chrom, k) != (gene[0], gene[1], kind) for k, g in matches
+        ):
             matches.append((kind, GeneRange(*gene)))
     for matches in found.values():
-        matches.sort(key=lambda m: (rank.get(m[0], len(rank)), m[1].gene_symbol))
+        matches.sort(
+            key=lambda m: (rank.get(m[0], len(rank)), m[1].gene_symbol, m[1].chrom)
+        )
     return found
