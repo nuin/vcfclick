@@ -657,6 +657,9 @@ class TrioAnalysis:
     scope: Any = None
     # Answers computed once per analysis (the X context, its rows), private.
     _cache: dict = field(default_factory=dict, compare=False, repr=False)
+    # Answers that depend on the ingest only (cli/xlinked.build_context), one
+    # dict shared by every trio of a run so a multi-trio run asks them once.
+    cohort_cache: dict = field(default_factory=dict, compare=False, repr=False)
 
     def _gnomad(self, rows: list) -> list:
         if self.gnomad_max_af is None:
@@ -717,7 +720,9 @@ class TrioAnalysis:
             if self.trio.father is None or self.trio.mother is None:
                 ctx = XContext(has_x=False, blocked_reason="needs_parents")
             else:
-                ctx = build_context(self.session, self.trio, self.build)
+                ctx = build_context(
+                    self.session, self.trio, self.build, self.cohort_cache
+                )
             self._cache["x_context"] = ctx
         return self._cache["x_context"]
 

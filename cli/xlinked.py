@@ -413,12 +413,26 @@ def _max_x_pos(session, ingest_id: str) -> int | None:
     return None if not data or data[0][0] is None else int(data[0][0])
 
 
-def _pedigree(session, trio) -> dict[str, tuple[str | None, str | None]]:
+def _once(cohort: dict | None, key: tuple, compute):
+    """`compute()`, kept in `cohort` (a dict shared by the trios of one run)
+    under `key`; computed afresh without one."""
+    if cohort is None:
+        return compute()
+    if key not in cohort:
+        cohort[key] = compute()
+    return cohort[key]
+
+
+def _pedigree(
+    session, trio, cohort: dict | None = None
+) -> dict[str, tuple[str | None, str | None]]:
     """{sample: (sex, affected)} from the pedigree for the trio's members."""
     from storage import table_exists
     from storage.sql import sql_quote_str, str_list
 
-    if not table_exists("pedigree"):
+    if not _once(
+        cohort, ("table_exists", "pedigree"), lambda: table_exists("pedigree")
+    ):
         return {}
     sql = (
         "SELECT sample_id, sex, affected FROM pedigree "
@@ -428,11 +442,21 @@ def _pedigree(session, trio) -> dict[str, tuple[str | None, str | None]]:
     return {s: (sex, aff) for s, sex, aff in query_rows(session, sql)}
 
 
-def build_context(session, trio, build_option: str = "auto") -> XContext:
-    """Resolve the build and the sexes of one trio (both parents declared)."""
+def build_context(
+    session, trio, build_option: str = "auto", cohort: dict | None = None
+) -> XContext:
+    """Resolve the build and the sexes of one trio (both parents declared).
+    `cohort`, a dict shared by the trios of one run, keeps the lookups that
+    depend on the ingest only (its chrX extent, its other sex contigs,
+    whether a pedigree table exists), so a 300-trio run asks them once."""
+    ingest_id = trio.ingest_id
     if not _has_x(session, trio):
         ctx = XContext(has_x=False, blocked_reason="no_x_data")
-        others = _unsupported_contigs(session, trio.ingest_id)
+        others = _once(
+            cohort,
+            ("unsupported_contigs", ingest_id),
+            lambda: _unsupported_contigs(session, ingest_id),
+        )
         if others:
             ctx.warnings.append(
                 warning(
@@ -443,12 +467,13 @@ def build_context(session, trio, build_option: str = "auto") -> XContext:
                 )
             )
         return ctx
-    build, source, conflict = resolve_build(
-        build_option, _max_x_pos(session, trio.ingest_id)
+    max_x_pos = _once(
+        cohort, ("max_x_pos", ingest_id), lambda: _max_x_pos(session, ingest_id)
     )
+    build, source, conflict = resolve_build(build_option, max_x_pos)
     ctx = XContext(has_x=True, build=build, build_source=source)
     ctx.region_build = UNKNOWN if conflict else build
-    ped = _pedigree(session, trio)
+    ped = _pedigree(session, trio, cohort)
     members = (trio.proband, trio.father, trio.mother)
     counts = chrx_counts(session, trio.ingest_id, members, ctx.region_build)
     evidence = {}
