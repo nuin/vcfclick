@@ -33,12 +33,11 @@ ALIAS_TABLE = [
 
 @pytest.mark.parametrize("name,x,y,par,mito", ALIAS_TABLE)
 def test_alias_sets(name, x, y, par, mito):
-    assert contigs.is_x(name) is x
-    assert contigs.is_y(name) is y
-    assert contigs.is_par_label(name) is par
-    assert contigs.is_mito(name) is mito
+    assert (name in contigs.X_NAMES) is x
+    assert (name in contigs.Y_NAMES) is y
+    assert (name in contigs.PAR_NAMES) is par
+    assert (name in contigs.MITO_NAMES) is mito
     # every alias is non-autosomal, and exactly one class claims it
-    assert contigs.is_sex_or_mt(name)
     assert not contigs.is_autosome(name)
     assert sum([x, y, par, mito]) == 1
     assert name in contigs.NON_AUTOSOMAL
@@ -65,8 +64,7 @@ def test_table_covers_every_declared_alias():
 )
 def test_autosomes(name):
     assert contigs.is_autosome(name)
-    assert not contigs.is_sex_or_mt(name)
-    assert name in contigs.autosome_names()
+    assert name not in contigs.NON_AUTOSOMAL
 
 
 @pytest.mark.parametrize(
@@ -83,11 +81,4 @@ def test_not_autosomes_and_not_aliases(name):
     """Unplaced/alt/decoy contigs and mis-cased names match nothing: they
     are not autosomes, and they are not X, Y, PAR or mitochondrial either."""
     assert not contigs.is_autosome(name)
-    assert not contigs.is_sex_or_mt(name)
-
-
-def test_autosome_names_for_sql():
-    names = contigs.autosome_names()
-    assert len(names) == 44 and len(set(names)) == 44
-    assert names[:2] == ("1", "2") and names[22] == "chr1" and names[-1] == "chr22"
-    assert all(contigs.is_autosome(n) for n in names)
+    assert name not in contigs.NON_AUTOSOMAL

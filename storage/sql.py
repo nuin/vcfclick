@@ -138,14 +138,6 @@ def str_list(values) -> str:
     return ", ".join(sql_quote_str(v) for v in values)
 
 
-def autosome_filter(col: str = "chrom") -> str:
-    """`chrom IN (<every autosome spelling>)`. The names come from
-    storage.contigs, the one definition of the contig alias sets."""
-    from storage.contigs import autosome_names
-
-    return f"{_ident(col)} IN ({str_list(autosome_names())})"
-
-
 def sample_join(
     alias: str, sample_id: str, *, base: str = "g", table: str = "genotypes"
 ) -> str:

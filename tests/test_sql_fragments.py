@@ -16,14 +16,6 @@ def test_str_list_quotes_every_value():
     assert sql.str_list(iter(("x",))) == "'x'"
 
 
-def test_autosome_filter_lists_every_spelling():
-    f = sql.autosome_filter("g.chrom")
-    assert f.startswith("g.chrom IN ('1', '2', ")
-    assert "'chr22'" in f and "'chrX'" not in f and "'X'" not in f
-    with pytest.raises(ValueError):
-        sql.autosome_filter("chrom; DROP TABLE x")
-
-
 def test_sample_join_is_an_inner_join_keyed_on_the_site():
     j = sql.sample_join("f", "DAD")
     assert j == (
