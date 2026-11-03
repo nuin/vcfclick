@@ -88,6 +88,11 @@ vcfclick annotations load-gnomad cftr.gnomad.vcf.gz
 `load-gnomad` appends by default, so per-chromosome slices load
 incrementally; pass `--replace` to start fresh.
 
+The popmax is `AF_grpmax` (gnomAD v4) or `AF_popmax` (v2.1.1, v3.x). A
+record with neither falls back to its overall `AF`, and the loader logs
+how many records did. The VCF is read in batches of 1,000,000 records
+into a scratch file, so a whole chromosome loads in flat memory.
+
 The annotation store is separate from cohort databases. Loading
 annotations does not modify any `variants` or `genotypes` table.
 

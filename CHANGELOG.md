@@ -316,6 +316,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   GFF, or one with no `gene` rows, used to empty `refseq_genes` before it
   failed; the old rows now stay. `load-transcripts` also accepts a GFF
   with no CDS rows.
+- `annotations load-gnomad` reads the group-max AF from `AF_grpmax` (v4)
+  or `AF_popmax` (v2.1.1, v3.x). A v3 or v2 file used to store no
+  group-max AF, so popmax fell back to the overall AF and
+  `--gnomad-max-af` kept variants common in one ancestry. The loader
+  warns with the count of records that carry neither key. It also
+  streams the VCF in batches of 1,000,000 records through a scratch
+  DuckDB file and reads only the AF keys from INFO, so a full
+  per-chromosome sites VCF no longer has to fit in memory twice.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
