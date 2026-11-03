@@ -209,6 +209,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db query --format JSON` on DuckDB (output shape change).** `data` holds
+  one object per row where it held one array per row, and each `meta` entry
+  gains `type`, as on chDB. A format DuckDB does not render now fails with
+  `Format X is not supported on the DuckDB backend` where it printed a box
+  table. Details under Fixed.
 - **Web SQL and MCP `run_sql` read the cohort tables only.** The read-only
   guard (`storage.sql_guard`) accepted any `SELECT`, so `file()`, `url()`,
   `s3()`, `remote()`, `executable()`, `read_csv()`, `read_text()`,
@@ -325,6 +330,48 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db query --format` on DuckDB prints what chDB prints. `JSON` came out
+  as arrays with no column types (the desktop apps read `meta[].type` and
+  one object per row), `CSVWithNames` and `TSVWithNames` dropped the
+  header, `JSONEachRow` and `TSVWithNames` fell through to a box table,
+  every float went through six significant digits (`1234567.25` printed
+  as `1.23457e+06`), CSV left strings unquoted, TSV escaped no tab,
+  newline or backslash, and an unknown format name printed a box table.
+  Now `JSON`, `JSONCompact`, `JSONEachRow`, `TSV`, `TSVWithNames`, `CSV`
+  and `CSVWithNames` match chDB byte for byte, except that a type name has
+  no `Nullable(...)` / `LowCardinality(...)` wrapper and `statistics`
+  holds `elapsed` only. A format DuckDB does not render raises
+  `Format X is not supported on the DuckDB backend`. Code that parses
+  DuckDB's `JSONCompact` now reads a REAL as its Float32 text (`0.33`, not
+  `0.33000001311302185`) and an integral float as an integer, as on chDB.
+  So `db trio` on DuckDB prints `"af": 0.05` and `AF=0.05`, as chDB
+  does, where it printed `0.05000000074505806`; the DuckDB trio goldens
+  are now identical to the chDB ones.
+- One string-literal quoting rule per backend. `sql_quote_str` doubled
+  backslashes on DuckDB too, where a backslash is a plain character, so a
+  sample id or cohort such as `DOM\kid` quoted to a literal that never
+  equalled the stored value: the sample vanished from `db trio`, the
+  pivot and join queries, and `db export --samples` wrote `0/0` at every
+  site. DuckDB now gets quote-doubling only. `db diff`, `db export` and
+  `db gene` quoted with private helpers of their own (one left
+  backslashes unescaped, so chDB read `c\ne` as an escape and `db diff`
+  called the cohort unknown; one wrote `\'`, which DuckDB cannot parse);
+  all three now use `storage.sql.sql_quote_str`, and `db diff` reads the
+  cohort names back as JSON, so a name with a backslash is matched.
+- `db stats` on DuckDB counts a cohort's samples as distinct
+  `(ingest_id, sample_id)` tuples, as chDB does. It concatenated the pair
+  with no separator, under which the samples `('a', 'bc')` and
+  `('ab', 'c')` were one string and counted once.
+- `db dump` quotes its staging path. The path sits in the output directory
+  the user named, so `--out "O'Brien"` was a SQL syntax error on both
+  backends.
+- `db trio` on DuckDB no longer dies on a het call with more than 65535
+  reads. The allele-balance gate added `ad_ref + ad_alt` as 16-bit
+  unsigned columns, which DuckDB refuses to overflow (`AD=30000,40000`
+  raised `Overflow in addition of UINT16` and killed every model of the
+  run); both are widened to 64 bits first, as `allele_fraction_sql` and
+  the X-linked models already did. The pinned trio SQL text changes in
+  that one clause.
 - `vcfclick web` on DuckDB returned another request's rows, or an empty
   result, when two requests ran at once (the UI fires `/api/meta` and
   `/api/query` together). The one cached DuckDB session ran every statement

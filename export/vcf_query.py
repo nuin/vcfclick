@@ -8,6 +8,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from storage.sql import sql_quote_str as _q
+
 from .vcf_context import ExportContext, ExportError, ExportRequest, Region, SiteCalls
 
 _WINDOW_VARIANTS = 50_000
@@ -39,10 +41,6 @@ def read_bed(path: str) -> list[tuple[str, int, int]]:
             raise ExportError(f"{path}: BED line needs chrom, start, end: {line!r}")
         out.append((f[0], int(f[1]) + 1, int(f[2])))
     return out
-
-
-def _q(s: str) -> str:
-    return "'" + str(s).replace("\\", "\\\\").replace("'", "\\'") + "'"
 
 
 def _region_sql(regions: list[tuple[str, int | None, int | None]]) -> str:

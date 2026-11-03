@@ -33,7 +33,7 @@
           "proband_gt": 1,
           "father_gt": 0,
           "mother_gt": 0,
-          "af": 0.009999999776482582,
+          "af": 0.01,
           "genes": [
             "GENEX"
           ],
