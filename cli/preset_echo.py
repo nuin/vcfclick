@@ -1,8 +1,9 @@
 """What a preset run says about itself: the `preset` object, the text header.
 
 Pure functions, so the same echo can be built for `db trio` today and for the
-other commands that take a preset later, and so the web and MCP resolvers can
-produce the identical `preset` object from the same inputs.
+other commands that take a preset later, and so the planned web and MCP
+resolvers (not built yet) can produce the identical `preset` object from the
+same inputs.
 
 The JSON policy (docs/TRIO.md) is additive only: `preset` and `effective` are
 top-level keys present only when a preset (or a strictness flag) is in use, so

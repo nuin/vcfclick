@@ -81,7 +81,10 @@ yours, and the result records it (`from: "flag"`).
 - `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, which also works with a
   path) makes the run fail if the preset's content is not the one you pinned. For
   a built-in whose revision has moved on, the message says which revision had that
-  fingerprint.
+  fingerprint. The fingerprint covers the values stored in the preset, nothing
+  else: what `category: ["all"]` expands to (`broad-first-pass` revisions 1 and 2
+  share `cd3726cc3853`, and revision 2 runs `xlinked` too) and the registry
+  default of a key the preset leaves out can change while a pin still passes.
 - A key in the preset that this vcfclick does not know (a preset written by a
   newer version, stored with `preset import --allow-unknown-keys`) is an error;
   `--preset-skip-unavailable` applies the rest and says, in the output, that
@@ -178,7 +181,7 @@ preset: broad-first-pass (builtin, rev 2, cd3726cc3853, starting point)
 | `gnomad_no_coverage` | gnomAD is loaded but cannot judge the cohort: it has records on chromosomes that hold under 90% of the cohort's variants (another chromosome naming, a slice elsewhere), or a record for under 10% of a sample of the cohort's own variants (a one-row test load, a slice of one gene, another genome build) |
 | `gnomad_no_record` | after the run: the gnomAD filter found a record for none of the candidates, so all are kept as rare. When the pre-run probe found gnomAD judges the cohort (a record for at least 10% of the sample) the text says how much of it gnomAD reaches and that the candidates are probably novel, which is what de novo candidates are; when it reached under 10% (a run that insists would have refused, a warn-only one carries `gnomad_no_coverage` too) or the probe did not run, it says to check the genome build and chromosome naming instead |
 | `no_population_frequency_filter` | neither an `INFO/AF` gate nor gnomAD narrows by frequency |
-| `strict_missing_dropped` | after a `strict_missing` run: candidates that pass every other gate (the gnomAD filter too) were dropped only because a GQ, DP or allele depth they are judged on is missing, counted with one query per model (the rows a run without `strict_missing` lists beyond this one). A gate that binds has its field on 90% of its rows, and the other 10% are what this counts. Variants, for `comphet` as for the rest, and said once for `dominant` and `comphet` together. A `WARNING:` line after the listing and an entry in `effective.warnings`; `--no-strict-missing` lists them |
+| `strict_missing_dropped` | after a `strict_missing` run: candidates that pass every other gate (the gnomAD filter too) were dropped only because a GQ, DP or allele depth they are judged on is missing, counted with one query per model (the rows a run without `strict_missing` lists beyond this one). A gate that binds has its field on 90% of its rows, and the other 10% are what this counts. Variants, for `comphet` as for the rest, and said once for `dominant` and `comphet` together; for `comphet` only the variants in a gene the compound-het report shows without `strict_missing` count, whatever form the scope takes (none, exclusions only, or inclusions). A `WARNING:` line after the listing and an entry in `effective.warnings`; `--no-strict-missing` lists them |
 | `model_blocked` | a model the run selected cannot run on this database: it has no stored hom-reference calls (`denovo`, `dominant` and `comphet` need `--keep-reference`) or no gene table is loaded (`comphet`). The model's count is 0 because of the database, not the genome. Named per model, in the text and in `effective.warnings`. A run limited to the gates it typed reports it only for the model the typed gate is about: `--parent-alt-screen` on a database without stored 0/0 calls says `denovo cannot run`, because the screen has no candidate to act on |
 | `skipped_widening` | a preset key was skipped and skipping widens the search |
 | `preset_max_af_not_applied` | the preset's `max_af` was skipped as cohort-derived (`info`) |
@@ -300,7 +303,7 @@ flags ([TRIO.md](TRIO.md#genes-and-regions)):
 | `gene_flank` | `--gene-flank` | base pairs added to each side of every gene (default 0) |
 | `regions` | `--region`, `--region-file` | `chrN:FROM-TO`, 1-based inclusive |
 | `exclude_regions` | `--exclude-region` | regions to leave out |
-| `regions_build` | `preset save --regions-build` | `GRCh37` or `GRCh38`: the regions' assembly, checked against the database's when known |
+| `regions_build` | `preset save --regions-build` | `GRCh37` or `GRCh38`: the assembly of the preset's `regions` and `exclude_regions`, checked against the database's when known; applied when either list comes from the preset |
 
 ```bash
 vcfclick preset save id-panel --from-preset rare-recessive \
@@ -341,8 +344,9 @@ values that came from the preset or a flag), and says so when a built-in it used
 has changed revision since. `--from-json FILE|-` reads `{"filters": {...}}`.
 
 Presets live in `$VCFCLICK_HOME/presets/NAME.json`. Names are lowercase letters,
-digits, `.`, `_` and `-` (up to 63), and may not end in `.json`, be a Windows
-device name or a built-in's name. Writes are atomic. A file an export wrote
+digits, `.`, `_` and `-` (up to 63, nothing else: a trailing line break is
+refused too), and may not end in `.json`, be a Windows device name or a
+built-in's name. Writes are atomic. A file an export wrote
 (`NAME.vcfclick-preset.json`) dropped into that directory is the same preset as
 `NAME.json`: `save`, `import` and `rename` refuse to shadow it without `--force`,
 and `--force` replaces that file rather than adding a second one beside it.
@@ -351,7 +355,8 @@ The file name is what a stored preset is called. A colleague's `q1.json` copied 
 as `lab-q.json` still says `"name": "q1"` inside: it is listed with a
 `name_mismatch` warning and used as `lab-q`, and `set`, `edit`, `rename` and
 `export` all write `lab-q`, so an export imports back as `lab-q` and `edit` is not
-asked to rename it. (A file with no `name` at all gets the same treatment.)
+asked to rename it. (A file with no `name` at all gets the same treatment, and so
+does one whose declared name is not a valid name, such as `"Old Name"`.)
 
 ### The file
 
@@ -376,10 +381,13 @@ asked to rename it. (A file with no `name` at all gets the same treatment.)
   `pass_only`, `parent_alt_screen`, `max_parent_alt_frac`, `require_bound`. A key
   not in that list is an error with a did-you-mean (and the vcfclick version
   recorded in `meta.created_with`, if different); `x_...` keys are kept and
-  ignored. A `null`, a boolean where a number goes, `NaN`, an infinity (or a
+  ignored, except a never-presettable key that starts with `x_` (`x_guard`), which
+  is refused like the others. A `null`, a boolean where a number goes, `NaN`, an infinity (or a
   number too large for a float, anywhere in the file, `x_` keys included) or an
-  out-of-range number is an error. `min_ab` above `max_ab` is checked on the resolved values, so
-  a flag can repair it.
+  out-of-range number is an error. `min_ab` above `max_ab` is checked on the resolved values only, so
+  a flag can repair it: `preset validate` and `import` accept such a file, and
+  `preset save` and `preset set` store it with a warning when the pair, with the
+  defaults for a key the preset leaves out, would refuse a plain run.
 - **Never in a preset** (an error with the reason): which sample or family is
   analysed, output control (`format`, `limit`), paths and environment, safety
   checks (`parentage`, the X guard) and attestations. This holds for any key of

@@ -368,6 +368,24 @@ def test_explicit_max_af_is_always_honoured(backend, vcfclick_home, tmp_path):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
+def test_a_typed_max_af_x_is_honoured_when_max_af_is_skipped(
+    backend, vcfclick_home, tmp_path
+):
+    """--max-af-x typed alone: --max-af stays skipped for the autosomal models,
+    and the X model applies the typed cap (gates.af_gate_x)."""
+    _trio_store(vcfclick_home, backend, tmp_path, af="cohort")
+    doc, err = _trio_json(vcfclick_home, backend, "--max-af-x", "0.0001")
+    gates = doc["gates"]
+    assert gates["af_gate"] == "skipped_cohort_derived"
+    assert gates["af_gate_x"] == "cohort_derived_suspected"
+    assert gates["max_af_x"] == 0.0001
+    assert doc["models"]["denovo"]["count"] == 30  # --max-af is still skipped
+    assert "--max-af-x 0.0001 is applied" in err
+    plain, _ = _trio_json(vcfclick_home, backend)
+    assert plain["gates"]["af_gate_x"] == "skipped_cohort_derived"
+
+
+@pytest.mark.parametrize("backend", BACKENDS)
 def test_a_population_style_af_is_applied(backend, vcfclick_home, tmp_path):
     """Hand-set, population-like frequencies (0.0005 / 0.002): not the
     cohort's own, so the default gate runs and passes them."""

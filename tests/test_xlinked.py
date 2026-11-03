@@ -712,3 +712,38 @@ def test_inferred_sexes_agree_with_bcftools_guess_ploidy(world, tmp_path):
     ours = {s["sample_id"]: s["inferred_sex"] for s in json.loads(out)}
     for sample in ("XDAD", "XMUM", "XSON", "XDAU", "YDAD", "YMUM", "YSON"):
         assert {"M": "male", "F": "female"}[theirs[sample]] == ours[sample], sample
+
+
+# ───────────────────── an explicit --max-af-x and a skipped --max-af ─────────────────────
+
+
+def test_a_typed_max_af_x_applies_when_the_cohort_af_gate_is_skipped():
+    """INFO/AF that is the cohort's own skips --max-af unless it was typed; a
+    typed --max-af-x is a threshold too, so the X model applies it alone (the
+    skipped --max-af default does not join it), and the gates say so."""
+    from cli.trio_analysis import AF_GATE_SKIPPED, Gates
+    from cli.trio_output import _gates_json
+    from cli.xlinked import gate_sql, x_af_gate, x_max_af
+    from storage.sql import af_gate_sql
+
+    base = Gates(20, 10, 0.01, 0.25, 0.75, af_gate=AF_GATE_SKIPPED, max_af_x=0.0001)
+    skipped = gate_sql("male", base)
+    assert not any("info_AF" in p for p in skipped)  # nothing typed: skipped
+    assert x_af_gate(base) == AF_GATE_SKIPPED
+
+    typed = base._replace(af_gate_x="cohort_derived_suspected")
+    assert af_gate_sql("v.info_AF", 0.0001) in gate_sql("male", typed)
+    assert x_max_af(typed) == 0.0001 and x_af_gate(typed) == "cohort_derived_suspected"
+    # a typed cap above the default max_af is applied as typed, not min()-ed
+    loose = typed._replace(max_af_x=0.2)
+    assert af_gate_sql("v.info_AF", 0.2) in gate_sql("female", loose)
+
+    class A:
+        gates, gnomad_max_af = typed, None
+
+    out = _gates_json(A())
+    assert out["af_gate"] == AF_GATE_SKIPPED
+    assert out["af_gate_x"] == "cohort_derived_suspected"
+    assert out["max_af_x"] == 0.0001
+    # when the gates agree, af_gate_x repeats af_gate
+    assert x_af_gate(Gates(20, 10, 0.01, 0.25, 0.75)) == "applied"

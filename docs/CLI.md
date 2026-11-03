@@ -1278,6 +1278,12 @@ Options:
 Change a preset of yours. Built-in and shared presets are read-only, and a
 preset with `meta.locked` refuses these without `--force`.
 
+`set` reads a number as JSON (`min_gq=25`, `max_af=0.002`) and a text, gene,
+region or model value as the bare text (`genes=TP53,BRCA1`,
+`genes_label=Panel`, `category=recessive,comphet`). A value that starts with
+`[` or `"` is read as JSON (`genes=["TP53"]`), and JSON that does not parse is
+an error naming the key.
+
 ```bash
 vcfclick preset set id-panel max_af=0.002 strict_missing=true
 vcfclick preset unset id-panel gnomad_max_af

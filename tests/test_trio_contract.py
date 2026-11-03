@@ -31,7 +31,11 @@ TOP_LEVEL = ["trio", "keep_reference", "gates", "annotations", "models", "x_guar
 GATE_KEYS = ["min_gq", "min_dp", "max_af", "min_ab", "max_ab", "gnomad_max_af"]
 # the X-linked model's gates, always reported after af_gate, as the values it
 # applies (min_male_x_dp half of min_dp unless given, max_af_x capped by max_af)
-X_GATE_KEYS = ["min_male_x_dp", "max_af_x", "min_hemi_ab", "max_parent_alt_reads"]
+# af_gate_x (additive, last): the X cap's own state, af_gate unless a typed
+# --max-af-x is honoured while --max-af is skipped
+X_GATE_KEYS = [
+    "min_male_x_dp", "max_af_x", "min_hemi_ab", "max_parent_alt_reads", "af_gate_x",
+]  # fmt: skip
 # reported after af_gate, in this order, and only for a gate that is on
 # (strict_exempt: the strict_missing gates a `--no-require-bound-gates` run did
 # not apply it to, only with strict_missing)
@@ -169,6 +173,7 @@ def assert_trio_document(doc: dict) -> None:
     assert x_gates == X_GATE_KEYS
     assert _is_int(gates["min_male_x_dp"]) and _is_int(gates["max_parent_alt_reads"])
     assert _is_num(gates["max_af_x"]) and gates["max_af_x"] <= gates["max_af"]
+    assert gates["af_gate_x"] in AF_GATE_VALUES
     opt_in = list(gates)[len(GATE_KEYS) + 1 + len(X_GATE_KEYS) :]
     assert opt_in == [k for k in OPT_IN_GATE_KEYS if k in gates], opt_in
     assert all(
@@ -278,6 +283,7 @@ def test_contract_checker_rejects_what_would_blank_an_app():
             "max_af_x": 0.001,
             "min_hemi_ab": 0.75,
             "max_parent_alt_reads": 1,
+            "af_gate_x": "applied",
         },  # fmt: skip
         "annotations": {"genes": False},
         "models": {

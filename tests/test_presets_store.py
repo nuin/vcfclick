@@ -96,7 +96,6 @@ def test_save_takes_only_the_flags_typed(run, vcfclick_home):
         (["Upper"], "lowercase"),
         (["broad-first-pass"], "built-in"),
         (["ok", "--min-gq", "500"], "min_gq"),
-        (["ok", "--min-ab", "0.9", "--max-ab", "0.1"], "min_ab"),
         (["ok", "--from-preset", "nope"], "nope"),
         (["ok", "--from-preset", "rare-dominant", "--from-json", "-"], "choose one"),
     ],
@@ -234,6 +233,65 @@ def test_a_name_that_is_a_path_never_reaches_the_file_system(
             store.user_path(name)
         with pytest.raises(ps.PresetError, match="not a preset name"):
             store.get_user_preset(name)
+
+
+def test_a_name_with_a_trailing_newline_is_refused_by_save_and_import(
+    run, vcfclick_home, tmp_path
+):
+    r = run("save", "rare-recessive\n", "--min-gq", "5", ok=False)
+    assert "preset name" in r.output
+    run("save", "p1", "--min-gq", "5")
+    exported = json.loads(run("export", "p1").output)
+    exported["name"] = "rare-recessive\n"
+    incoming = tmp_path / "in.json"
+    incoming.write_text(json.dumps(exported))
+    run("import", str(incoming), ok=False)
+    assert files(vcfclick_home) == ["p1.json"]
+    assert [p.name for p in store.list_presets("user")] == ["p1"]
+
+
+def test_set_parses_bare_text_for_list_and_text_keys_and_reports_bad_json(
+    run, vcfclick_home
+):
+    run("save", "p1", "--min-gq", "20")
+    r = run("set", "p1", "category=[recessive", ok=False)
+    assert "category" in r.output and "Traceback" not in r.output
+    assert not isinstance(r.exception, json.JSONDecodeError)
+    run("set", "p1", "genes=TP53,BRCA1", "genes_label=Panel", "regions=chr1:1-100")
+    f = saved(vcfclick_home, "p1")["filters"]
+    assert f["genes"] == ["TP53", "BRCA1"] and f["genes_label"] == "Panel"
+    assert f["regions"] == ["chr1:1-100"]
+    run("set", "p1", 'genes=["KRAS"]', 'genes_label="Lab panel"')
+    f = saved(vcfclick_home, "p1")["filters"]
+    assert f["genes"] == ["KRAS"] and f["genes_label"] == "Lab panel"
+    assert "is not an integer" in run("set", "p1", "min_gq=abc", ok=False).output
+    assert "is not a number" in run("set", "p1", "max_af=abc", ok=False).output
+
+
+def test_set_warns_when_min_ab_would_sit_above_the_default_max_ab(run, vcfclick_home):
+    run("save", "p1", "--min-gq", "20")
+    r = run("set", "p1", "min_ab=0.9")
+    assert "min_ab (0.9) is above max_ab (0.75)" in r.output
+    assert saved(vcfclick_home, "p1")["filters"]["min_ab"] == 0.9
+    assert "above max_ab" not in run("set", "p1", "max_ab=0.95").output
+    # an inverted pair is stored with the warning: `--min-ab` can repair it
+    r = run("save", "inv", "--min-ab", "0.9", "--max-ab", "0.1")
+    assert "min_ab (0.9) is above max_ab (0.1)" in r.output
+    assert "[unavailable]" not in run("list").output
+
+
+def test_a_stored_file_that_declares_an_invalid_name_takes_its_file_name(
+    run, vcfclick_home
+):
+    d = vcfclick_home / "presets"
+    run("save", "p1", "--min-gq", "21")
+    doc = json.loads((d / "p1.json").read_text())
+    doc["name"] = "Old Name"
+    (d / "copied.json").write_text(json.dumps(doc))
+    found, _ = store.find_preset("copied")
+    assert found is not None and found.doc["name"] == "copied"
+    assert [p.code for p in found.problems] == ["name_mismatch"]
+    assert "[unavailable]" not in run("list").output
 
 
 # ─────────────────────── a file the checks cannot digest ───────────────────────

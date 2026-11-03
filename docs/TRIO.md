@@ -161,7 +161,15 @@ listed one only.
 The scope goes into every model's SQL (exact up to 64 merged intervals, as a
 coarse bucket filter up to 500) and is re-applied in Python to every row, so
 no model can ignore it. With a preset, the effective-gate report judges the
-gates on the rows inside the scope only, exactly in every mode. The text output gains a
+gates on the rows inside the scope only, exactly in every mode. That includes
+the variant-level gates: the `INFO/AF` share behind `info_af.bound` and
+`gate_partial`, `filter_column.non_pass_variants` behind `pass_only_no_labels`,
+and the gnomAD chromosome coverage and probe are counted over the variants
+inside the scope, so a region with no `INFO/AF` and no `FILTER` label reports
+both gates unbound however the rest of the cohort looks. One gap remains: the
+compound-het pool holds the candidate rows inside the scope, so a partner the
+run keeps just outside a listed region (`in_scope: false`) is shown but its
+GQ / DP / AD are not in the rows the gates are judged on. The text output gains a
 `  scope: 3 genes; gene spans only ...` line under `trio:`; the JSON a
 `scope` object (see [Machine-readable output](#machine-readable-output)). A
 preset can carry `genes`, `genes_label`, `exclude_genes`, `gene_flank`,
@@ -279,11 +287,15 @@ The X model applies the quality gates only to the roles a pattern reads:
   `--pass-only` apply as for the other models. gnomAD hemizygote counts are not
   in the annotation store, so this is a stand-in, not a prevalence-derived cap.
 
-The effective-gate report of a preset run judges the X model on the roles
-its gates read: the proband, the father (hemizygous 0 or 2) and the mother,
-whose het calls are held to the allele-balance band. It does not know the
-proband's sex at that point, so a son's father is judged too, which can only
-make the report stricter. A `--strict-missing` run counts what it dropped
+The effective-gate report of a preset run judges the X model on its own
+candidate rows: the non-PAR chrX sites that match its patterns for the
+proband's sex and pass its rarity and FILTER gates, before any quality gate
+(one grouped count over the same pivot the model runs). Of those rows it reads
+the roles its gates read: the proband, the father (hemizygous 0 or 2) and the
+mother, whose het calls are held to the allele-balance band. A son's father is
+judged too, which can only make the report stricter. A blocked X model (no
+chrX data, unknown sex, a build conflict) has no pool, and its gates fall back
+to the sample's stored rows, as for any model with no candidate rows. A `--strict-missing` run counts what it dropped
 from `xlinked` after the run, as for the other models. The female compound
 het uses the X model's gates (the father at the male DP floor).
 
@@ -406,7 +418,11 @@ population frequency such as 0.0001 must not be mistaken for it. Then:
   `note:` on stderr says so (and points at `--gnomad-max-af`, which is a real
   population frequency);
 - with `--max-af` given explicitly, the gate is **applied as asked** and the
-  note says it may remove real candidates.
+  note says it may remove real candidates;
+- with `--max-af-x` given explicitly and `--max-af` not, the X model applies
+  the typed `--max-af-x` alone (the skipped `--max-af` default does not join
+  it), a note says so, and `gates.af_gate_x` is `cohort_derived_suspected`
+  while `gates.af_gate` stays `skipped_cohort_derived`.
 
 The outcome is reported as `gates.af_gate` in the JSON (see below):
 `applied`, `cohort_derived_suspected` (looks cohort-derived, applied because
@@ -772,7 +788,10 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   took effect after a preset and the flags were merged.
 - `gates` always reports the X model's gates after `af_gate`, as the values it
   applies: `min_male_x_dp` (half of `min_dp` unless given), `max_af_x`
-  (min(`max_af`, `--max-af-x`)), `min_hemi_ab` and `max_parent_alt_reads`.
+  (min(`max_af`, `--max-af-x`); the typed `--max-af-x` alone when `--max-af`
+  is skipped), `min_hemi_ab`, `max_parent_alt_reads` and `af_gate_x` (the X
+  cap's own state, one of the `af_gate` values: `af_gate`, unless a typed
+  `--max-af-x` is applied while `--max-af` is skipped).
 - With a preset (`--preset`) the document ends with a `preset` object (what ran:
   name, source, revision, fingerprint, the filters requested and the value each
   filter took with where it came from, what a flag overrode, what was skipped)

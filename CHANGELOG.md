@@ -55,7 +55,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `starting point, not validated`), or your own. A flag typed next to
   `--preset` wins over it, and `--preset-ignore KEY` switches one key off for
   one run. `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, also for a
-  path) fails the run if the preset's content is not the pinned one;
+  path) fails the run if the preset's stored filter values are not the pinned
+  ones (a pin does not cover what `all` expands to or a default it leaves out);
   `--preset-skip-unavailable` applies the keys this version knows and reports
   the rest. A preset is a JSON file in `$VCFCLICK_HOME/presets`, in a read-only
   directory on `VCFCLICK_PRESET_PATH`, or built in; it holds filter values and
@@ -209,6 +210,27 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `db trio --category xlinked`: the effective-gate report judges the X
+  model's GQ / DP / AD gates on its own candidate rows (non-PAR chrX
+  sites matching its patterns for the proband's sex, after the rarity and
+  FILTER gates), as it does for the other models. They were judged on
+  the sample's rows genome-wide, so a caller that left GQ off chrX could
+  report `min_gq` bound while `--strict-missing` dropped every X
+  candidate. Values only: no key changes.
+- `db trio` with a scope (`--genes`, `--region`, a preset's lists): the
+  effective-gate report counts the variant-level gates over the variants
+  inside the scope. `effective.info_af.bound` (the `INFO/AF` share),
+  `effective.filter_column.non_pass_variants` (behind
+  `pass_only_no_labels`) and the gnomAD coverage and probe were counted
+  over the whole cohort, so a region with no `INFO/AF` and no `FILTER`
+  label could report both gates bound and pass `--require-bound-gates`.
+  Values only: no key changes; the messages say "inside the run's scope".
+- A preset file with `min_ab` above `max_ab` is no longer refused by
+  `preset validate`, `import` or `save`: the band is checked on the
+  resolved values at run time, so `--min-ab` or `--max-ab` can repair
+  it, as the docs said. `preset save` and `preset set` warn when the
+  pair, against the defaults, would refuse a plain run (`preset set p
+  min_ab=0.9` against the default `max_ab` 0.75).
 - **`db export` writes recorded no-calls as `./.` (behaviour change).** A
   sample with a `missing_genotypes` row at a site (written at ingest unless
   `--no-record-missing`) was `./.` in the source VCF and is now exported as
@@ -344,6 +366,38 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A typed `--max-af-x` was ignored when a cohort-derived `INFO/AF`
+  skipped `--max-af` (only `--max-af` counted as typed), so the X model
+  ran with no rarity gate while `gates.max_af_x` reported the cap. The
+  X model now applies the typed `--max-af-x`, says so in a note, and
+  `db trio --format json` gains `gates.af_gate_x` (additive, after
+  `max_parent_alt_reads`): the X cap's own state.
+- A preset's `regions_build` was applied only with the preset's
+  `regions`, so a preset that set only `exclude_regions` on a database
+  of another build reported `scope.regions_build: null`, gave no
+  `scope_build_mismatch` warning and removed the wrong loci. It now
+  follows either region list, in `db trio` and in
+  `preset save --from-result`.
+- The `strict_missing_dropped` count for `comphet` counted every
+  dominant-pattern het strict_missing dropped unless the run had an
+  include scope, so a run with no scope or with exclusions only warned
+  about hets in genes that form no compound het ("`--no-strict-missing`
+  lists them" when it does not). It now counts, in every scope form,
+  only the dropped variants in a gene the report shows without
+  strict_missing. The listed candidates were right; the warning count
+  was inflated.
+- Preset names and keys. `name_problem` accepted a name with a trailing
+  line break (`rare-recessive\n`), so `preset save` wrote a file with a
+  line break in its name that `preset list` showed as a second
+  `rare-recessive`; such a name is now refused. `filters.x_guard` passed
+  as an `x_` extension key; it is now refused as a safety check. A stored
+  file whose declared `name` is not a valid name (`"Old Name"`) was
+  unavailable; it now takes its file name with a `name_mismatch`
+  warning, as a file with any other declared name does. `preset set`
+  read every text, gene and region value as JSON, so `genes=TP53` said
+  "is not a number" and `category=[recessive` crashed with a traceback;
+  a bare value is now the text itself, and bad JSON is an error naming
+  the key.
 - The annotation store opens read-only for every lookup and runs no DDL,
   so two `db trio` runs, the web UI and the MCP server read it at once,
   and a mode-444 store answers. A store another process is writing used

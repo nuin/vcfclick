@@ -18,7 +18,7 @@ did-you-mean, never a silent no-op.
 
 Pure: no click, no SQL, no file system. `resolve_filters_from_values` is the
 precedence rule (flag over preset over default) for a caller that has no
-Click context (the web route, the MCP tools, `preset save`).
+Click context (`preset save`; the planned web and MCP preset endpoints).
 """
 
 from __future__ import annotations
@@ -815,6 +815,14 @@ def _default(key: FilterKey) -> Resolved:
     if key.default is DERIVED:
         return Resolved(None, FROM_DERIVED)
     return Resolved(normalise_value(key, key.default), FROM_DEFAULT)
+
+
+# a descriptive (META) scope key and the lists it describes: it is applied
+# from a preset when any of those lists came from the preset
+SCOPE_COMPANIONS: dict[str, tuple[str, ...]] = {
+    "genes_label": ("genes",),
+    "regions_build": ("regions", "exclude_regions"),
+}
 
 
 def cross_key_problems(values: Mapping[str, Any]) -> list[str]:
