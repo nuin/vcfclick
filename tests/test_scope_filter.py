@@ -333,8 +333,8 @@ def test_two_thousand_symbols_open_one_connection(genes_loaded, monkeypatch):
     import annotations.db as adb
 
     opened = []
-    real = adb.get_connection
-    monkeypatch.setattr(adb, "get_connection", lambda: opened.append(1) or real())
+    real = adb.read_connection
+    monkeypatch.setattr(adb, "read_connection", lambda: opened.append(1) or real())
     tokens = [f"NOPE{i}" for i in range(1997)] + PANEL
     scope = sc.build_scope(
         sc.ScopeRequest(genes=tuple(tokens), allow_unresolved=True), build="GRCh38"

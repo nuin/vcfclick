@@ -104,14 +104,14 @@ def test_position_for_gene_closes_its_connection(isolated_annotation_db, monkeyp
 
     _seed()
     opened = []
-    real = adb.get_connection
+    real = adb.read_connection
 
     def tracking():
         conn = real()
         opened.append(conn)
         return conn
 
-    monkeypatch.setattr(adb, "get_connection", tracking)
+    monkeypatch.setattr(adb, "read_connection", tracking)
     adb.position_for_gene("BRCA1")
     adb.position_for_gene("NOPE")
     assert len(opened) == 2

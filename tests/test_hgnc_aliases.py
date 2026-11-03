@@ -113,7 +113,7 @@ def test_two_thousand_tokens_are_one_query_on_one_connection(genes_loaded, monke
     import annotations.db as adb
 
     statements = []
-    real = adb.get_connection
+    real = adb.read_connection
     opened = []
 
     class Spy:
@@ -131,7 +131,7 @@ def test_two_thousand_tokens_are_one_query_on_one_connection(genes_loaded, monke
         opened.append(1)
         return Spy(real())
 
-    monkeypatch.setattr(adb, "get_connection", spying)
+    monkeypatch.setattr(adb, "read_connection", spying)
     tokens = [f"NOPE{i}" for i in range(1990)] + ["C9orf72"] * 10
     found = adb.resolve_gene_tokens(tokens)
     assert len(opened) == 1
