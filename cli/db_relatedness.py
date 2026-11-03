@@ -5,7 +5,8 @@ coefficient (Manichaikul et al. 2010, Bioinformatics 26:2867):
 
     phi_ij = (N_het,het - 2 * N_ibs0) / (N_het_i + N_het_j)
 
-counted over biallelic SNVs where both samples are called. N_ibs0 is the
+counted over biallelic autosomal SNVs where both samples are called
+(--pass-only: FILTER PASS or unset). N_ibs0 is the
 number of sites where one sample is hom-ref and the other hom-alt; it is
 ~0 for parent/child and clearly non-zero for full siblings, which is how
 the two first-degree relationships are told apart.
@@ -52,6 +53,7 @@ class RelatednessOptions:
     min_kinship: float
     include_all: bool
     max_sites: int
+    pass_only: bool
     force: bool
     out_format: str
 
@@ -82,6 +84,11 @@ class RelatednessOptions:
     default=200000,
     show_default=True,
     help="Thin to at most this many SNVs (evenly spread) to bound memory.",
+)
+@click.option(
+    "--pass-only",
+    is_flag=True,
+    help="Count only sites whose FILTER is PASS or missing.",
 )
 @click.option(
     "--force",
@@ -125,6 +132,7 @@ def db_relatedness(options: RelatednessOptions) -> None:
             include_all=options.include_all,
             min_kinship=options.min_kinship,
             force=options.force,
+            pass_only=options.pass_only,
         )
         for i in ingests
     ]

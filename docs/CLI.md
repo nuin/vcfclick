@@ -1041,6 +1041,7 @@ Options:
   --all                      Report every pair, including unrelated ones.
   --max-sites INTEGER RANGE  Thin to at most this many SNVs (evenly spread) to
                              bound memory.  [default: 200000; 1<=x<=16000000]
+  --pass-only                Count only sites whose FILTER is PASS or missing.
   --force                    Classify pairs even when the data covers too
                              small a region.
   --format [table|json]      [default: table]

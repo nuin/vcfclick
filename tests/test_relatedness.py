@@ -420,6 +420,54 @@ def test_no_call_next_to_hom_alt_is_not_ibs0(vcfclick_home, tmp_path):
     assert _pair(res, "A", "B")["n_sites"] == 2
 
 
+def _with_extra_contigs(tmp_path: Path) -> Path:
+    """related.vcf plus 40 chrX, 10 chrY, 5 chrM and 20 FILTER-failed chr2
+    SNVs on which F (a man) is hemizygous ALT and M is 0/0."""
+    lines = REL_VCF.read_text().splitlines()
+    header = [ln for ln in lines if ln.startswith("##")]
+    header += [
+        "##contig=<ID=chr2,length=242193529>",
+        "##contig=<ID=chrX,length=156040895>",
+        "##contig=<ID=chrY,length=57227415>",
+        "##contig=<ID=chrM,length=16569>",
+        '##FILTER=<ID=LowQual,Description="low quality">',
+    ]
+    body = [ln for ln in lines if not ln.startswith("##")]
+    gts = "\t".join(["1/1", "0/0", "0/1", "0/1", "0/1", "0/0", "1/1"])
+    extra = []
+    for chrom, n, filt in (
+        ("chr2", 20, "LowQual"),
+        ("chrX", 40, "PASS"),
+        ("chrY", 10, "PASS"),
+        ("chrM", 5, "PASS"),
+    ):
+        for k in range(n):
+            extra.append(
+                f"{chrom}\t{1000 + 100 * k}\t.\tA\tG\t50\t{filt}\t.\tGT\t{gts}"
+            )
+    out = tmp_path / "related_contigs.vcf"
+    out.write_text("\n".join(header + body + extra) + "\n")
+    return out
+
+
+def test_kinship_uses_autosomes_and_optionally_pass_sites(vcfclick_home, tmp_path):
+    """Sex chromosomes and chrM are left out (haploid calls are stored as
+    diploid), as in db popgen; --pass-only also leaves out FILTER-failed
+    sites. On autosomal PASS sites the result is that of related.vcf."""
+    _vc(vcfclick_home, "db", "create", "r")
+    vcf = _with_extra_contigs(tmp_path)
+    _vc(vcfclick_home, "db", "ingest", "r", str(vcf), "--ingest-id", "i1", "--serial")
+    res = _run(vcfclick_home)
+    assert res["n_sites"] == 3003 + 20 and res["pass_only"] is False
+    strict = _run(vcfclick_home, "--pass-only")
+    assert strict["n_sites"] == 3003 and strict["pass_only"] is True
+
+    home2 = vcfclick_home / "plain"
+    home2.mkdir()
+    _setup(home2, ped=False)
+    assert strict["pairs"] == _run(home2)["pairs"]
+
+
 @pytest.mark.parametrize("bad", ["0", "-3", "16000001"])
 def test_max_sites_out_of_range_is_a_usage_error(vcfclick_home, bad):
     """--max-sites 0 divided by zero; a negative value kept no sites; above

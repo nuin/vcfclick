@@ -84,6 +84,12 @@ Two limits come from the data:
   no-calls look hom-ref, which pulls kinship down and adds IBS0 next to a
   hom-alt call.
 
+Only autosomal SNVs count, by the rule `db popgen` uses: chrX, chrY, chrM
+and unplaced or decoy contigs are left out, because a male's haploid calls
+there are stored as `1/1` or not at all and would read as opposite
+homozygotes. `--pass-only` also leaves out sites whose FILTER is set and
+not `PASS`; the JSON says which was used (`pass_only`).
+
 Kinship is computed with dense matrix products, one ingestion at a time,
 and SNVs are thinned evenly to `--max-sites` (default 200,000) to bound
 memory. Cohorts above 20,000 samples are refused.

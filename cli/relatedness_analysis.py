@@ -204,9 +204,9 @@ def _kept_sites_cte(where: str, total: int, max_sites: int) -> str:
     """`WITH ... kept AS (chrom, pos, ref, alt, i)`: the thinned SNV sites,
     with i their 0-based row in the genotype matrix."""
     return (
-        "WITH ranked AS (SELECT chrom, pos, ref, alt, "
-        "row_number() OVER (ORDER BY chrom, pos, ref, alt) - 1 AS k "
-        f"FROM variants WHERE {where}), "
+        "WITH ranked AS (SELECT v.chrom AS chrom, v.pos AS pos, v.ref AS ref, "
+        "v.alt AS alt, row_number() OVER (ORDER BY v.chrom, v.pos, v.ref, v.alt) "
+        f"- 1 AS k FROM variants v WHERE {where}), "
         "kept AS (SELECT chrom, pos, ref, alt, "
         "row_number() OVER (ORDER BY k) - 1 AS i "
         f"FROM ranked WHERE {_thin_sql('k', total, max_sites)}) "
@@ -283,8 +283,29 @@ def _mark_no_calls(sess, q: str, cte: str, g: np.ndarray, samples: list[str]) ->
     )
 
 
+def _site_where(sess, q: str, pass_only: bool) -> str:
+    """The SNV sites kinship is counted on, as a predicate on `variants v`:
+    autosomes only, by the rule db popgen uses (sex chromosomes and chrM
+    carry haploid calls stored as diploid), and with `pass_only` FILTER
+    PASS or unset."""
+    from cli.trio_analysis import PASS_ONLY_SQL
+    from popgen.analysis import is_autosome
+    from storage.sql import chrom_in_sql
+
+    where = f"v.ingest_id = {q} AND length(v.ref) = 1 AND length(v.alt) = 1"
+    chroms = [
+        r[0]
+        for r in _rows(sess, f"SELECT DISTINCT v.chrom FROM variants v WHERE {where}")
+    ]
+    autosomes = sorted(c for c in chroms if is_autosome(c))
+    where += " AND " + (chrom_in_sql("v.chrom", autosomes) if autosomes else "1 = 0")
+    if pass_only:
+        where += f" AND {PASS_ONLY_SQL}"
+    return where
+
+
 def _load(
-    sess, ingest_id: str, max_sites: int
+    sess, ingest_id: str, max_sites: int, pass_only: bool = False
 ) -> tuple[list[str], np.ndarray, str, int, int]:
     """Samples, (sites x samples) matrix, mode, total SNV sites, genomic span.
 
@@ -312,14 +333,14 @@ def _load(
             f"SELECT 1 FROM genotypes WHERE ingest_id = {q} AND gt = 0 LIMIT 1",
         )
     )
-    where = f"ingest_id = {q} AND length(ref) = 1 AND length(alt) = 1"
-    total = int(_rows(sess, f"SELECT count(*) FROM variants WHERE {where}")[0][0])
+    where = _site_where(sess, q, pass_only)
+    total = int(_rows(sess, f"SELECT count(*) FROM variants v WHERE {where}")[0][0])
     span = int(
         _rows(
             sess,
             f"SELECT {to_int64('coalesce(sum(s), 0)')} FROM ("
-            f"SELECT max(pos) - min(pos) AS s FROM variants WHERE {where} "
-            "GROUP BY chrom) t",
+            f"SELECT max(v.pos) - min(v.pos) AS s FROM variants v WHERE {where} "
+            "GROUP BY v.chrom) t",
         )[0][0]
     )
     n_sites = min(total, max_sites)
@@ -355,8 +376,9 @@ def relatedness(
     include_all: bool,
     min_kinship: float,
     force: bool = False,
+    pass_only: bool = False,
 ) -> dict:
-    samples, g, mode, total, span = _load(sess, ingest_id, max_sites)
+    samples, g, mode, total, span = _load(sess, ingest_id, max_sites, pass_only)
     warning = None
     if span < _MIN_SPAN_BP or total < _MIN_SITES:
         warning = (
@@ -386,6 +408,7 @@ def relatedness(
         "n_sites": total,
         "sites_used": int(g.shape[0]),
         "span_bp": span,
+        "pass_only": pass_only,
         "warning": warning,
         "pairs": pairs,
         "pedigree_checks": checks,

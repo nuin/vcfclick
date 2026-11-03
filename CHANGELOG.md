@@ -209,6 +209,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db relatedness` counts autosomes only (behaviour change on data with
+  sex chromosomes or chrM).** Every SNV counted, so a male's haploid chrX,
+  chrY and chrM calls (stored as `1/1`, or absent and read as `0/0`) added
+  opposite homozygotes and lowered kinship in mixed-sex pairs. Sites are now
+  limited to autosomes by the rule `db popgen` uses, and `n_sites` /
+  `span_bp` count only those. New `--pass-only` also drops FILTER-failed
+  sites; the JSON gains `pass_only` (additive).
 - **`db relatedness` skips recorded no-calls (behaviour change on sparse
   ingests).** Without `--keep-reference` an absent genotype was read as
   `0/0`, including the full no-calls `db ingest` records in
