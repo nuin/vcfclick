@@ -324,6 +324,16 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   streams the VCF in batches of 1,000,000 records through a scratch
   DuckDB file and reads only the AF keys from INFO, so a full
   per-chromosome sites VCF no longer has to fit in memory twice.
+- ClinVar and gnomAD lookups match a contig however the cohort spells it,
+  as gene lookups already did. A cohort with bare contigs (`17`, `X`,
+  `MT`) found no ClinVar or gnomAD record, so `db trio` showed a blank
+  `clinvar` column and `--gnomad-max-af` kept every candidate as absent;
+  `benchmark` stratification called every variant novel. `clinvar_lookup`,
+  `gnomad_af`, `clinvar_many` and `gnomad_af_many` (and the MCP tools)
+  now try every alias and answer under the caller's spelling. The ClinVar
+  and gnomAD loaders store the canonical `chr` name (`load-gnomad` used to
+  keep the file's spelling), and the gate report's gnomAD coverage check
+  compares canonical names.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

@@ -66,8 +66,11 @@ def _group_max(info) -> float | None:
 def iter_gnomad(vcf_path: Path):
     """Stream a gnomAD sites VCF, yielding (chrom, pos, ref, alt, af,
     af_grpmax). Multi-allelic records are skipped — gnomAD sites VCFs are
-    decomposed, so a multi-allelic line means a non-standard input. Only the
+    decomposed, so a multi-allelic line means a non-standard input. The
+    contig is stored under its canonical name (`7` is `chr7`). Only the
     AF keys are read from INFO (a v4 record carries hundreds)."""
+    from storage.contigs import canonical_chrom
+
     vcf = VCF(str(vcf_path))
     try:
         for rec in vcf:
@@ -75,7 +78,7 @@ def iter_gnomad(vcf_path: Path):
                 continue
             info = rec.INFO
             yield (
-                rec.CHROM,
+                canonical_chrom(rec.CHROM),
                 int(rec.POS),
                 rec.REF,
                 rec.ALT[0],

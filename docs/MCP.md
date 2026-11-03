@@ -231,5 +231,8 @@ If gene lookup returns nothing, load annotations or verify the gene
 symbol is present in the chosen GENCODE release.
 
 If ClinVar lookup returns nothing, load ClinVar and verify the allele
-uses the same normalized representation as the cohort (`chr` prefix,
-1-based position, decomposed `ref`/`alt`).
+uses the same normalized representation as the cohort (1-based position,
+decomposed `ref`/`alt`). The contig may be spelt either way: the loaders
+store `chr17`, `chrX`, `chrM`, and every ClinVar and gnomAD lookup also
+matches `17`, `X`, `23`, `MT` and the other aliases in
+`storage/contigs.py`, answering under the spelling it was asked with.

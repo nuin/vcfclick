@@ -346,46 +346,121 @@ class GeneIndex:
 # parameter instead and a lookup reads one row group, not the whole table (4.5
 # ms against 0.3 ms on 5 million rows). TRY_CAST keeps "no such position"
 # (negative, or past 2^32) a miss, not an error.
+#
+# Every allele lookup matches the contig under each of its spellings
+# (storage.contigs.chrom_aliases, the canonical `chr17` first): the loaders
+# store the canonical name, a cohort from an Ensembl-style VCF says `17`, and
+# a store loaded before the loaders canonicalised may say either. An answer
+# carries the caller's spelling, and the canonical spelling wins a tie.
+
+_CLINVAR_COLS = "chrom, pos, ref, alt, clin_sig, review_status, clinvar_id, condition"
+_GNOMAD_COLS = "chrom, pos, ref, alt, af, af_grpmax"
+
+
+def _spellings(chrom: str) -> list[str]:
+    from storage.contigs import canonical_chrom, chrom_aliases
+
+    canonical = canonical_chrom(chrom)
+    return list(dict.fromkeys([canonical, chrom, *chrom_aliases(chrom)]))
+
+
+def _point_lookup(table: str, cols: str, chrom: str, pos: int, ref: str, alt: str):
+    names = _spellings(chrom)
+    marks = ", ".join("?" for _ in names)
+    rank = " ".join(f"WHEN ? THEN {i}" for i in range(len(names)))
+    conn = read_connection()
+    try:
+        row = conn.execute(
+            f"SELECT {cols} FROM {table} WHERE chrom IN ({marks}) "
+            "AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ? "
+            f"ORDER BY CASE chrom {rank} END LIMIT 1",
+            [*names, pos, ref, alt, *names],
+        ).fetchone()
+    finally:
+        conn.close()
+    return None if row is None else (chrom, *row[1:])
+
+
+def _many_lookup(
+    table: str,
+    cols: str,
+    alleles: Iterable[tuple[str, int, str, str]],
+    conn: duckdb.DuckDBPyConnection | None,
+) -> dict[tuple[str, int, str, str], tuple]:
+    """{caller's (chrom, pos, ref, alt): row with the caller's chrom} for each
+    allele `table` holds, one join for all of them."""
+    keys = list(dict.fromkeys((c, int(p), r, a) for c, p, r, a in alleles))
+    if not keys:
+        return {}
+    own = conn is None
+    if conn is None:
+        conn = read_connection()
+    try:
+        # the common case: nothing loaded, nothing to look up
+        if conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone() is None:
+            return {}
+        import pyarrow as pa
+
+        idx, rank, chroms, poss, refs, alts = [], [], [], [], [], []
+        for i, (c, p, r, a) in enumerate(keys):
+            for n, name in enumerate(_spellings(c)):
+                idx.append(i)
+                rank.append(n)
+                chroms.append(name)
+                poss.append(p)
+                refs.append(r)
+                alts.append(a)
+        batch = pa.table(
+            {
+                "idx": pa.array(idx, pa.int64()),
+                "rank": pa.array(rank, pa.int32()),
+                "chrom": pa.array(chroms, pa.string()),
+                "pos": pa.array(poss, pa.int64()),
+                "ref": pa.array(refs, pa.string()),
+                "alt": pa.array(alts, pa.string()),
+            }
+        )
+        name = f"_vcfclick_{table}_alleles"
+        select = ", ".join(f"t.{c.strip()}" for c in cols.split(","))
+        conn.register(name, batch)
+        try:
+            rows = conn.execute(
+                f"SELECT c.idx, {select} FROM {table} t JOIN {name} c "
+                "ON t.chrom = c.chrom AND t.pos = c.pos AND t.ref = c.ref "
+                "AND t.alt = c.alt ORDER BY c.idx, c.rank"
+            ).fetchall()
+        finally:
+            conn.unregister(name)
+    finally:
+        if own:
+            conn.close()
+    found: dict[tuple[str, int, str, str], tuple] = {}
+    for i, *row in rows:
+        key = keys[i]
+        found.setdefault(key, (key[0], *row[1:]))
+    return found
 
 
 def clinvar_lookup(chrom: str, pos: int, ref: str, alt: str) -> ClinVarRecord | None:
-    """Look up ClinVar significance for a specific allele.
+    """Look up ClinVar significance for a specific allele, `chrom` in any
+    spelling of the contig.
 
     Returns None if the variant is not in ClinVar — which the caller
     should distinguish from "benign" in user-facing output.
     """
-    conn = read_connection()
-    try:
-        row = conn.execute(
-            """
-            SELECT chrom, pos, ref, alt, clin_sig, review_status,
-                   clinvar_id, condition
-            FROM clinvar_variants
-            WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?
-            """,
-            [chrom, pos, ref, alt],
-        ).fetchone()
-    finally:
-        conn.close()
+    row = _point_lookup("clinvar_variants", _CLINVAR_COLS, chrom, pos, ref, alt)
     return ClinVarRecord(*row) if row else None
 
 
 def gnomad_af(chrom: str, pos: int, ref: str, alt: str) -> GnomadAF | None:
-    """Look up the gnomAD allele frequency for a specific allele.
+    """Look up the gnomAD allele frequency for a specific allele, `chrom` in
+    any spelling of the contig.
 
     Returns None if the variant is absent from the loaded gnomAD slice —
     the caller should treat absence as "rare", not as AF 0, since the
     loaded slice may not cover the locus.
     """
-    conn = read_connection()
-    try:
-        row = conn.execute(
-            "SELECT chrom, pos, ref, alt, af, af_grpmax FROM gnomad_af "
-            "WHERE chrom = ? AND pos = TRY_CAST(? AS UINTEGER) AND ref = ? AND alt = ?",
-            [chrom, pos, ref, alt],
-        ).fetchone()
-    finally:
-        conn.close()
+    row = _point_lookup("gnomad_af", _GNOMAD_COLS, chrom, pos, ref, alt)
     return GnomadAF(*row) if row else None
 
 
@@ -395,45 +470,11 @@ def clinvar_many(
 ) -> dict[tuple[str, int, str, str], ClinVarRecord]:
     """`clinvar_lookup` for many alleles in one query, the ClinVar
     counterpart of `gnomad_af_many`: {(chrom, pos, ref, alt): ClinVarRecord}
-    for alleles present, none for those absent. When an allele has several
-    rows the first one returned wins, as in `clinvar_lookup`."""
-    keys = list(dict.fromkeys((c, int(p), r, a) for c, p, r, a in alleles))
-    if not keys:
-        return {}
-    own = conn is None
-    if conn is None:
-        conn = read_connection()
-    try:
-        if conn.execute("SELECT 1 FROM clinvar_variants LIMIT 1").fetchone() is None:
-            return {}
-        import pyarrow as pa
-
-        batch = pa.table(
-            {
-                "chrom": pa.array([k[0] for k in keys], pa.string()),
-                "pos": pa.array([k[1] for k in keys], pa.int64()),
-                "ref": pa.array([k[2] for k in keys], pa.string()),
-                "alt": pa.array([k[3] for k in keys], pa.string()),
-            }
-        )
-        name = "_vcfclick_clinvar_alleles"
-        conn.register(name, batch)
-        try:
-            rows = conn.execute(
-                "SELECT v.chrom, v.pos, v.ref, v.alt, v.clin_sig, v.review_status, "
-                "v.clinvar_id, v.condition "
-                f"FROM clinvar_variants v JOIN {name} c ON v.chrom = c.chrom "
-                "AND v.pos = c.pos AND v.ref = c.ref AND v.alt = c.alt"
-            ).fetchall()
-        finally:
-            conn.unregister(name)
-    finally:
-        if own:
-            conn.close()
-    found: dict[tuple[str, int, str, str], ClinVarRecord] = {}
-    for row in rows:
-        found.setdefault((row[0], int(row[1]), row[2], row[3]), ClinVarRecord(*row))
-    return found
+    for alleles present, none for those absent, keyed as the caller spelt
+    them. When an allele has several rows the first one returned wins, as in
+    `clinvar_lookup`."""
+    found = _many_lookup("clinvar_variants", _CLINVAR_COLS, alleles, conn)
+    return {k: ClinVarRecord(*row) for k, row in found.items()}
 
 
 def gnomad_af_many(
@@ -441,8 +482,9 @@ def gnomad_af_many(
     conn: duckdb.DuckDBPyConnection | None = None,
 ) -> dict[tuple[str, int, str, str], GnomadAF]:
     """`gnomad_af` for many alleles in one query: {(chrom, pos, ref, alt):
-    GnomadAF} for those present in the loaded slice. An allele absent from
-    the slice has no entry, exactly as `gnomad_af` returns None for it.
+    GnomadAF} for those present in the loaded slice, keyed as the caller
+    spelt them. An allele absent from the slice has no entry, exactly as
+    `gnomad_af` returns None for it.
 
     A caller that filters every candidate of a trio (thousands of alleles)
     must use this, not `gnomad_af` in a loop: a lookup costs 0.1 to 1.5 ms
@@ -451,43 +493,8 @@ def gnomad_af_many(
     alleles are joined to the table as one Arrow batch (a few ms for 9,000
     against a million-row table). `conn` is the caller's open connection; with
     none, the store is opened and closed here."""
-    keys = list(dict.fromkeys((c, int(p), r, a) for c, p, r, a in alleles))
-    if not keys:
-        return {}
-    own = conn is None
-    if conn is None:
-        conn = read_connection()
-    try:
-        # the common case: no gnomAD loaded, nothing to look up
-        if conn.execute("SELECT 1 FROM gnomad_af LIMIT 1").fetchone() is None:
-            return {}
-        import pyarrow as pa
-
-        batch = pa.table(
-            {
-                "chrom": pa.array([k[0] for k in keys], pa.string()),
-                "pos": pa.array([k[1] for k in keys], pa.int64()),
-                "ref": pa.array([k[2] for k in keys], pa.string()),
-                "alt": pa.array([k[3] for k in keys], pa.string()),
-            }
-        )
-        name = "_vcfclick_gnomad_alleles"
-        conn.register(name, batch)
-        try:
-            rows = conn.execute(
-                "SELECT g.chrom, g.pos, g.ref, g.alt, g.af, g.af_grpmax "
-                f"FROM gnomad_af g JOIN {name} c ON g.chrom = c.chrom "
-                "AND g.pos = c.pos AND g.ref = c.ref AND g.alt = c.alt"
-            ).fetchall()
-        finally:
-            conn.unregister(name)
-    finally:
-        if own:
-            conn.close()
-    found: dict[tuple[str, int, str, str], GnomadAF] = {}
-    for row in rows:
-        found.setdefault((row[0], int(row[1]), row[2], row[3]), GnomadAF(*row))
-    return found
+    found = _many_lookup("gnomad_af", _GNOMAD_COLS, alleles, conn)
+    return {k: GnomadAF(*row) for k, row in found.items()}
 
 
 # ───────────────────────────── gene resolution ─────────────────────────────

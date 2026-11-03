@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import duckdb
 
+from benchmark.stratify_db import with_store_chrom
+
 # An FN is a truth-side miss; an FP is a query-side spurious call.
 _SIDE = {"FN": "truth", "FP": "query"}
 
@@ -29,17 +31,17 @@ def annotated_errors(concordance, ann_path: str, kind: str = "FN") -> list[dict]
                g.af           AS af
         FROM conc c
         LEFT JOIN refseq_genes gn
-            ON c.chrom=gn.chrom AND c.pos BETWEEN gn.start_pos AND gn.end_pos
+            ON c.store_chrom=gn.chrom AND c.pos BETWEEN gn.start_pos AND gn.end_pos
         LEFT JOIN clinvar_variants v
-            ON c.chrom=v.chrom AND c.pos=v.pos AND c.ref=v.ref AND c.alt=v.alt
+            ON c.store_chrom=v.chrom AND c.pos=v.pos AND c.ref=v.ref AND c.alt=v.alt
         LEFT JOIN gnomad_af g
-            ON c.chrom=g.chrom AND c.pos=g.pos AND c.ref=g.ref AND c.alt=g.alt
+            ON c.store_chrom=g.chrom AND c.pos=g.pos AND c.ref=g.ref AND c.alt=g.alt
         WHERE c.side='{side}' AND c.bd='{kind}' AND c.filter_view='ALL'
         ORDER BY c.chrom, c.pos
     """
     con = duckdb.connect(ann_path, read_only=True)
     try:
-        con.register("conc", concordance)
+        con.register("conc", with_store_chrom(concordance))
         cur = con.execute(sql)
         cols = [d[0] for d in cur.description]
         rows = cur.fetchall()

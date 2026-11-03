@@ -56,12 +56,12 @@ def download_clinvar() -> Path:
 
 
 def _normalise_contig(chrom: str) -> str:
-    """ClinVar uses bare numeric contigs ('1', '17', 'X', 'MT'); our
-    sample data uses 'chr'-prefixed and 'chrM' (not chrMT). Map both."""
-    c = chrom.lstrip("chr")  # no-op if already prefixed
-    if c == "MT":
-        return "chrM"
-    return f"chr{c}"
+    """ClinVar uses bare contigs ('1', '17', 'X', 'MT'); the store uses the
+    canonical `chr`-prefixed names (storage.contigs.canonical_chrom: 'chr17',
+    'chrM'). An unplaced contig keeps its name."""
+    from storage.contigs import canonical_chrom
+
+    return canonical_chrom(chrom)
 
 
 def _clnstr(info: dict, key: str) -> str | None:

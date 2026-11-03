@@ -29,6 +29,19 @@ _AF_CASE = (
 )
 
 
+def with_store_chrom(concordance):
+    """The concordance frame plus `store_chrom`, each contig under the name
+    the annotation store uses (storage.contigs.canonical_chrom), so a truth
+    set with bare contigs (`17`, `X`) joins the store's `chr17` and `chrX`."""
+    import pyarrow as pa
+
+    from storage.contigs import canonical_chrom
+
+    names = concordance.column("chrom").to_pylist()
+    canonical = pa.array([None if c is None else canonical_chrom(c) for c in names])
+    return concordance.append_column("store_chrom", canonical)
+
+
 def _metrics_rows(rows: list[tuple]) -> list[dict[str, Any]]:
     """Turn (stratum, truth_tp, truth_fn, query_tp, query_fp) tuples into
     metric dicts, computing recall/precision in Python from integer counts."""
@@ -74,7 +87,7 @@ def _run(concordance, ann_path: str, bucket_expr: str, join_sql: str) -> list[di
     # concordance frame as a temp view on that connection.
     con = duckdb.connect(ann_path, read_only=True)
     try:
-        con.register("conc", concordance)
+        con.register("conc", with_store_chrom(concordance))
         rows = con.execute(_counts_sql(bucket_expr, join_sql)).fetchall()
     finally:
         con.close()
@@ -84,7 +97,7 @@ def _run(concordance, ann_path: str, bucket_expr: str, join_sql: str) -> list[di
 def stratify_by_gnomad(concordance, ann_path: str) -> list[dict]:
     """Recall/precision per gnomAD AF bin (novel / rare / low / common)."""
     join = (
-        "LEFT JOIN gnomad_af g ON c.chrom=g.chrom AND c.pos=g.pos "
+        "LEFT JOIN gnomad_af g ON c.store_chrom=g.chrom AND c.pos=g.pos "
         "AND c.ref=g.ref AND c.alt=g.alt"
     )
     return _run(concordance, ann_path, _AF_CASE, join)
@@ -93,7 +106,7 @@ def stratify_by_gnomad(concordance, ann_path: str) -> list[dict]:
 def stratify_by_clinvar(concordance, ann_path: str) -> list[dict]:
     """Recall/precision per ClinVar clinical significance."""
     join = (
-        "JOIN clinvar_variants v ON c.chrom=v.chrom AND c.pos=v.pos "
+        "JOIN clinvar_variants v ON c.store_chrom=v.chrom AND c.pos=v.pos "
         "AND c.ref=v.ref AND c.alt=v.alt"
     )
     return _run(concordance, ann_path, "v.clin_sig", join)
@@ -102,7 +115,7 @@ def stratify_by_clinvar(concordance, ann_path: str) -> list[dict]:
 def stratify_by_gene(concordance, ann_path: str) -> list[dict]:
     """Recall/precision per gene (variant position within a gene's range)."""
     join = (
-        "JOIN refseq_genes gn ON c.chrom=gn.chrom "
+        "JOIN refseq_genes gn ON c.store_chrom=gn.chrom "
         "AND c.pos BETWEEN gn.start_pos AND gn.end_pos"
     )
     return _run(concordance, ann_path, "gn.gene_symbol", join)

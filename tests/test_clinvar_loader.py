@@ -95,13 +95,16 @@ def test_alt_dot_record_is_skipped(isolated_annotation_db):
 
 
 def test_mt_contig_lookup(isolated_annotation_db):
-    """ClinVar's 'MT' contig must be looked up via 'chrM' (not 'chrMT')."""
+    """ClinVar's 'MT' contig is stored as 'chrM'; every mitochondrial
+    spelling a cohort may use finds it."""
     from annotations.db import clinvar_lookup
     from annotations.loaders.clinvar import load
 
     load(CLINVAR_FIXTURE)
     assert clinvar_lookup("chrM", 8993, "T", "G") is not None
-    assert clinvar_lookup("chrMT", 8993, "T", "G") is None
+    for spelling in ("MT", "chrMT", "M"):
+        hit = clinvar_lookup(spelling, 8993, "T", "G")
+        assert hit is not None and hit.chrom == spelling
 
 
 def test_replace_mode_clears_prior_rows(isolated_annotation_db):
