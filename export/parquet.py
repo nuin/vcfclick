@@ -49,7 +49,7 @@ def export_table(table: str, out_path: Path, where: str | None = None) -> None:
         callers (HTTP, etc.) without first switching to a parameterised
         query builder.
     """
-    from storage import backend
+    from storage import backend, sql_quote_str
 
     if table not in TABLES:
         raise ValueError(f"Unknown table {table}; expected one of {TABLES}")
@@ -65,14 +65,16 @@ def export_table(table: str, out_path: Path, where: str | None = None) -> None:
         select_sql = f"SELECT * FROM {table}"
         if where:
             select_sql += f" WHERE {where}"
-        # staging is from tempfile (path is controlled, no quotes).
+        # The staging file sits in out_path.parent, a directory the user
+        # named, so its path is quoted like every other literal.
+        path_lit = sql_quote_str(str(staging))
         if backend() == "duckdb":
             # COPY ... TO uses single-quoted file path; TO overwrites by default.
-            sql = f"COPY ({select_sql}) TO '{staging}' (FORMAT 'parquet')"
+            sql = f"COPY ({select_sql}) TO {path_lit} (FORMAT 'parquet')"
         else:
             # chDB: TRUNCATE lets it overwrite the empty file tempfile
             # created for us — otherwise FILE_ALREADY_EXISTS.
-            sql = f"{select_sql} INTO OUTFILE '{staging}' TRUNCATE FORMAT Parquet"
+            sql = f"{select_sql} INTO OUTFILE {path_lit} TRUNCATE FORMAT Parquet"
         sess.query(sql)
         staging.replace(out_path)
     except Exception:

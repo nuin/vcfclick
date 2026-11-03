@@ -22,7 +22,7 @@ Pre-requisite: multi-allelic sites decomposed via
 from __future__ import annotations
 
 import logging
-import tempfile
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -38,8 +38,15 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
+from ingest._rollback import handle_ingest_failure
 from ingest.routing import classify_header
-from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows
+from ingest.vcf_rows import (
+    MAX_BATCH_ROWS,
+    build_record_rows,
+    log_clamp_count,
+    require_single_alt,
+    take_clamp_count,
+)
 from storage import (
     apply_schema,
     db_path,
@@ -55,7 +62,7 @@ log = logging.getLogger(__name__)
 
 
 def _import_parquet(table: str, parquet_path: Path) -> None:
-    """Bulk-import a single Parquet file into the active backend's table."""
+    """Bulk-import a Parquet file (or a glob of them) into a table."""
     from ingest._arrow import TABLE_COLUMNS, column_list_sql
     from storage import parquet_file_expr
 
@@ -204,14 +211,10 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
     genotypes_batch: list[list] = []
     missing_batch: list[list] = []
     n_variants = 0
+    take_clamp_count()
 
     for variant in vcf:
-        if len(variant.ALT) != 1:
-            raise ValueError(
-                f"Multi-allelic site at {variant.CHROM}:{variant.POS} "
-                f"({len(variant.ALT)} ALTs). Re-normalise with: "
-                f"bcftools norm -m - {options.vcf_path} | bgzip > out.vcf.gz"
-            )
+        require_single_alt(variant, options.vcf_path)
         variant_row, genotype_rows, missing_rows = build_record_rows(
             variant,
             options.samples,
@@ -246,6 +249,7 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
     _write_stage_batch(
         staging_path, n_variants, variants_batch, genotypes_batch, missing_batch
     )
+    log_clamp_count(take_clamp_count(), "ingest")
     return n_variants
 
 
@@ -267,14 +271,16 @@ def _commit_staged_ingest(
         ],
     )
 
-    for v_path in sorted(staging_path.glob("v_*.parquet")):
-        _import_parquet("variants", v_path)
-        g_path = staging_path / v_path.name.replace("v_", "g_", 1)
-        if g_path.exists() and g_path.stat().st_size > 0:
-            _import_parquet("genotypes", g_path)
-        m_path = staging_path / v_path.name.replace("v_", "m_", 1)
-        if m_path.exists() and m_path.stat().st_size > 0:
-            _import_parquet("missing_genotypes", m_path)
+    # One INSERT per table over a glob of the staged batches, as the
+    # parallel commit does: _write_stage_batch writes all three files for
+    # every batch, so the globs match. No batch (an empty VCF) is no file.
+    for table, prefix in (
+        ("variants", "v_"),
+        ("genotypes", "g_"),
+        ("missing_genotypes", "m_"),
+    ):
+        if any(staging_path.glob(f"{prefix}*.parquet")):
+            _import_parquet(table, staging_path / f"{prefix}*.parquet")
 
     from ingest.panel import prune_stale_labels
 
@@ -294,21 +300,6 @@ def _commit_staged_ingest(
     )
 
 
-def _handle_ingest_failure(commit_started: bool, ingest_id: str) -> None:
-    if commit_started:
-        log.warning("[ingest] failed mid-commit — rolling back %s", ingest_id)
-        try:
-            rollback_ingest(ingest_id)
-        except Exception as rb_err:
-            log.error("[ingest] rollback FAILED: %s", rb_err)
-    else:
-        log.warning(
-            "[ingest] failed during parse — no chDB writes occurred, "
-            "prior data under ingest_id=%s preserved",
-            ingest_id,
-        )
-
-
 def _ingest_locked(
     vcf_path: str,
     cohort: str,
@@ -325,11 +316,18 @@ def _ingest_locked(
     commit_started = False
 
     try:
-        db_dir = db_path()
-        with tempfile.TemporaryDirectory(
-            prefix="vcfclick_ingest_", dir=str(db_dir.parent)
-        ) as staging:
-            staging_path = Path(staging)
+        # Stage inside the DB's own directory, as the parallel path does
+        # (db_path()/staging): the DB root holds one directory per DB, so
+        # a stage directory there would show in `db list`. The directory
+        # is named by ingest_id and this runs under the ingest_id lock, so
+        # a directory a SIGKILLed run left behind is wiped here: otherwise
+        # the commit's v_*/g_*/m_* globs would import its stale batches.
+        staging_path = db_path() / "staging" / f"serial-{ingest_id}"
+        if staging_path.exists():
+            log.warning("[ingest] removing stale stage directory %s", staging_path)
+            shutil.rmtree(staging_path)
+        staging_path.mkdir(parents=True)
+        try:
             n_variants = _stage_vcf(
                 vcf,
                 StageOptions(
@@ -347,8 +345,10 @@ def _ingest_locked(
             _commit_staged_ingest(
                 staging_path, vcf_path, cohort, ingest_id, samples, n_variants
             )
+        finally:
+            shutil.rmtree(staging_path, ignore_errors=True)
     except BaseException:
-        _handle_ingest_failure(commit_started, ingest_id)
+        handle_ingest_failure(commit_started, ingest_id, "ingest")
         raise
 
     elapsed = time.time() - started

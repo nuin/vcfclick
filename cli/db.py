@@ -28,9 +28,8 @@ for _module in (
     importlib.import_module(_module)
 
 
-# Compatibility re-exports for tests and any local callers that imported
-# these helpers from cli.db before the command modules were split.
+# Compatibility re-export for tests and any local callers that imported
+# this helper from cli.db before the command modules were split.
 from cli.db_batch import _derive_ingest_id  # noqa: E402,F401
-from cli.db_diff import _quote_str  # noqa: E402,F401
 
-__all__ = ["_derive_ingest_id", "_quote_str"]
+__all__ = ["_derive_ingest_id"]

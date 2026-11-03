@@ -107,8 +107,20 @@ def _query_rows(sess, sql: str) -> list[list[str]]:
     return [line.split("\t") for line in out.splitlines() if line]
 
 
+def distinct_sample_pair_expr() -> str:
+    """`count(DISTINCT (ingest_id, sample_id))`, the sample count of a cohort.
+
+    The same tuple form on both engines (`db diff` has always run it on
+    DuckDB). The DuckDB branch used to concatenate the pair with an empty
+    separator, under which ('a', 'bc') and ('ab', 'c') are one string
+    'abc' and two samples count as one; `db batch` takes ingest ids from
+    file names and `--ingest-id` takes any string, so lengths do vary.
+    """
+    return "count(DISTINCT (ingest_id, sample_id))"
+
+
 def _stats_payload(sess, top: int) -> dict:
-    from storage import backend, count_expr
+    from storage import count_expr
 
     cnt = count_expr()
     counts = {
@@ -119,18 +131,11 @@ def _stats_payload(sess, top: int) -> dict:
     }
     variants_cols = _list_typed_columns(sess, "variants")
     genotypes_cols = _list_typed_columns(sess, "genotypes")
-    # ClickHouse counts distinct tuples directly; DuckDB needs the pair
-    # concatenated into one expression.
-    distinct_pair = (
-        "count(DISTINCT (ingest_id, sample_id))"
-        if backend() != "duckdb"
-        else "count(DISTINCT (ingest_id || '' || sample_id))"
-    )
     return {
         "counts": counts,
         "cohorts": _query_rows(
             sess,
-            f"SELECT cohort, {distinct_pair} AS n "
+            f"SELECT cohort, {distinct_sample_pair_expr()} AS n "
             "FROM samples GROUP BY cohort ORDER BY n DESC, cohort",
         ),
         "contigs": _query_rows(

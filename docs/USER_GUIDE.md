@@ -37,6 +37,11 @@ bcftools norm -m - input.vcf.gz | bgzip > normalised.vcf.gz
 tabix -p vcf normalised.vcf.gz
 ```
 
+A record with no ALT allele (`ALT` is `.`, as `bcftools mpileup` without
+`-v` writes) is refused as well: vcfclick stores variant sites only.
+Drop such records with `bcftools view -e 'ALT="."' input.vcf.gz -Oz -o
+sites.vcf.gz`.
+
 The `.tbi` index is required for parallel ingestion and useful for
 range-aware splitting.
 
@@ -71,6 +76,15 @@ Important options:
 Rows are not merged across ingestions. The same variant in two
 different `ingest_id`s remains two variant rows because QC and INFO
 origin can differ.
+
+The parallel ingester plans one position range per worker from the
+`.tbi` index (or from one counting pass over the file when there is no
+index) and lands the same rows as `--serial`. Before it writes to the
+database it compares the number of variants the workers staged against
+the record count the index carries. When the two differ it stops with
+both numbers and writes nothing; the usual cause is an index older than
+the VCF, fixed by `tabix -f -p vcf FILE`. A failed parallel ingest
+removes its staging directory under the database.
 
 ## Ingest Many Per-Sample VCFs
 

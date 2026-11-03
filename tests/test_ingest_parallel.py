@@ -192,3 +192,129 @@ def test_variant_density_includes_final_linear_bucket():
     assert 1 in density, (
         f"trailing-bucket fix regressed — pos bucket 1 missing: {density}"
     )
+
+
+_UNIT_HEADER = [
+    "##fileformat=VCFv4.2",
+    "##contig=<ID=chr1,length=248956422>",
+    "##contig=<ID=chr2,length=242193529>",
+    '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">',
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tS1",
+]
+
+
+def _indexed_vcf(tmp_path: Path, name: str, body: list[str]) -> Path:
+    from tests.conftest import bgzip_vcf
+
+    plain = tmp_path / f"{name}.vcf"
+    plain.write_text("\n".join(_UNIT_HEADER + body) + "\n")
+    return bgzip_vcf(plain, tmp_path / f"{name}.vcf.gz")
+
+
+def _snv(chrom: str, pos: int) -> str:
+    return f"{chrom}\t{pos}\t.\tA\tG\t50\tPASS\t.\tGT\t0/1"
+
+
+def test_variant_density_keeps_zero_delta_windows_and_window_end_bucket():
+    """Two shapes that lost variants:
+
+    * every window shares one BGZF block (small, sparse VCF), so every
+      byte delta is 0; only the trailing placeholder survived, and the
+      planned region started at the last bucket instead of the first;
+    * the last 16Kb window (index 12: 196608..212991) crosses the
+      200000 boundary, but was credited to bucket 1 by its first base,
+      so bucket 2 and the variants past 200000 were never planned.
+    """
+    from ingest._tabix import variant_density
+
+    same_block = [(10 << 16) | i for i in range(182)]
+    density = variant_density(same_block, position_bucket_size=100_000)
+    assert min(density) == 0, density
+    assert max(density) == (181 * 16384) // 100_000, density
+
+    thirteen = [(10 << 16)] + [((10 + i) << 16) for i in range(1, 13)]
+    density = variant_density(thirteen, position_bucket_size=100_000)
+    assert sorted(density) == [0, 1, 2], density
+
+
+def test_split_via_tbi_covers_every_record(tmp_path):
+    """Every POS of the file lies inside one of the planned regions, and
+    the regions of a contig are contiguous."""
+    from ingest._tabix import split_via_tbi
+
+    positions = [1000 + i * 10 for i in range(20_000)]
+    vcf = _indexed_vcf(tmp_path, "tail", [_snv("chr1", p) for p in positions])
+
+    regions = split_via_tbi(vcf, 4)
+    spans = []
+    for r in regions:
+        _, span = r.split(":")
+        start, end = span.split("-")
+        spans.append((int(start), int(end)))
+    assert spans == sorted(spans), spans
+    for a, b in zip(spans, spans[1:]):
+        assert b[0] == a[1] + 1, spans
+    assert spans[0][0] <= positions[0], spans
+    assert spans[-1][1] >= positions[-1], spans
+
+
+def test_tbi_record_count_matches_file(tmp_path):
+    from ingest._tabix import tbi_record_count
+
+    body = [_snv("chr1", 1000 + i * 20_000) for i in range(150)]
+    body += [_snv("chr2", 500 + i) for i in range(7)]
+    vcf = _indexed_vcf(tmp_path, "small", body)
+
+    assert tbi_record_count(vcf) == 157
+    assert tbi_record_count(_indexed_vcf(tmp_path, "empty", [])) == 0
+    assert tbi_record_count(tmp_path / "missing.vcf.gz") is None
+
+
+def test_split_by_variant_count_includes_pos_at_bucket_multiple(tmp_path):
+    """POS 100000 is the first record of the contig. Bucket = POS // size
+    put it in bucket 1, whose region starts at 100001, so the record was
+    outside every region. (POS - 1) // size puts it in bucket 0."""
+    from ingest.parallel_split import plan_by_variant_count, split_by_variant_count
+
+    vcf = _indexed_vcf(
+        tmp_path,
+        "edge",
+        [_snv("chr1", p) for p in (100_000, 150_000, 199_998, 300_000)],
+    )
+
+    assert split_by_variant_count(str(vcf), 2) == ["chr1:1-300000"]
+    assert plan_by_variant_count(str(vcf), 2) == (["chr1:1-300000"], 4)
+
+
+def test_worker_keeps_only_records_whose_pos_is_in_region(tmp_path):
+    """A 9bp deletion at POS 199998 overlaps chr1:200001-300000, so the
+    region query returns it, but it belongs to the region holding its
+    POS. The worker for the later region must not stage it."""
+    import pyarrow.parquet as pq
+
+    from ingest.parallel_worker import _worker
+
+    vcf = _indexed_vcf(
+        tmp_path,
+        "del",
+        [
+            _snv("chr1", 150_000),
+            "chr1\t199998\t.\tACGTACGTA\tA\t50\tPASS\t.\tGT\t0/1",
+            _snv("chr1", 250_000),
+        ],
+    )
+
+    staged = {}
+    for region in ("chr1:100001-200000", "chr1:200001-300000"):
+        out = tmp_path / region.replace(":", "_")
+        out.mkdir()
+        _, n, _, _ = _worker((region, str(vcf), "t1", str(out), [], 1000, False, True))
+        positions = []
+        for p in sorted(out.glob("variants_*.parquet")):
+            positions.extend(pq.read_table(p).column("pos").to_pylist())
+        staged[region] = (n, sorted(positions))
+
+    assert staged == {
+        "chr1:100001-200000": (2, [150000, 199998]),
+        "chr1:200001-300000": (1, [250000]),
+    }

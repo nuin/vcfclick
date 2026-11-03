@@ -426,9 +426,10 @@ variant neither parent has," which requires the parents to be
 parent is not evidence.
 
 `--keep-reference` additionally stores confident `0/0` calls (gt=0) at
-variant sites, while still dropping no-calls. Then de-novo's join
+variant sites, while still dropping no-calls and half-calls (`./0`,
+`0/.`: a missing allele is never a proven `0/0`). Then de-novo's join
 (`f.gt = 0 AND m.gt = 0`) matches only when both parents have a stored
-reference call — a no-call parent has no row, so that site is correctly
+reference call — a no-call or half-called parent has no row, so that site is correctly
 **excluded** from de novo rather than falsely reported.
 
 Without `--keep-reference`, `db trio` still runs but de-novo and
