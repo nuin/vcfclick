@@ -140,7 +140,11 @@ def attach_gate_reports(
     from storage import table_columns
 
     filter_present = "filter" in set(table_columns("variants"))
-    variants = collect_variant_stats(sess, ingest_id, filter_present=filter_present)
+    # the variant-level gates (INFO/AF, FILTER, gnomAD) can act only on the
+    # variants inside the run's scope, so those are the ones judged
+    variants = collect_variant_stats(
+        sess, ingest_id, filter_present=filter_present, scope=first.scope
+    )
     status = _annotation_status()
     gnomad_loaded = bool(status["gnomad"])
     genes_loaded = bool(status["genes"])
@@ -162,7 +166,9 @@ def attach_gate_reports(
     looked_up = wants_gnomad and gnomad_loaded and only is None
     gnomad_chroms = _gnomad_chromosomes() if looked_up else None
     gnomad_probe = (
-        collect_gnomad_probe(sess, ingest_id, variants) if looked_up else None
+        collect_gnomad_probe(sess, ingest_id, variants, first.scope)
+        if looked_up
+        else None
     )
     subject = f"preset {state.located.preset.name!r}" if state else "this run"
     skipped = []

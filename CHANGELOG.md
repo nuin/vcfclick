@@ -209,6 +209,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `db trio` with a scope (`--genes`, `--region`, a preset's lists): the
+  effective-gate report counts the variant-level gates over the variants
+  inside the scope. `effective.info_af.bound` (the `INFO/AF` share),
+  `effective.filter_column.non_pass_variants` (behind
+  `pass_only_no_labels`) and the gnomAD coverage and probe were counted
+  over the whole cohort, so a region with no `INFO/AF` and no `FILTER`
+  label could report both gates bound and pass `--require-bound-gates`.
+  Values only: no key changes; the messages say "inside the run's scope".
 - A preset file with `min_ab` above `max_ab` is no longer refused by
   `preset validate`, `import` or `save`: the band is checked on the
   resolved values at run time, so `--min-ab` or `--max-ab` can repair

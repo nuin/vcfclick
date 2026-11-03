@@ -66,9 +66,10 @@ def _load_annotations(path: Path, *, hgnc: bool) -> None:
             hgnc_aliases.load(FIXTURES / "hgnc_aliases.tsv")
 
 
-def _edited_vcf(dest: Path, edit) -> Path:
+def _edited_vcf(dest: Path, edit, site=None) -> Path:
     """scope.vcf.gz as plain text with `edit(chrom, pos, sample_index, call)`
-    applied to every sample call (GT:AD:GQ:DP)."""
+    applied to every sample call (GT:AD:GQ:DP), and `site(fields)` (when
+    given) to the fixed columns of every record."""
     import gzip
 
     lines = []
@@ -79,6 +80,8 @@ def _edited_vcf(dest: Path, edit) -> Path:
                 continue
             f = line.rstrip("\n").split("\t")
             f[9:] = [edit(f[0], int(f[1]), i, call) for i, call in enumerate(f[9:])]
+            if site is not None:
+                f = site(f)
             lines.append("\t".join(f) + "\n")
     dest.write_text("".join(lines))
     return dest
@@ -89,6 +92,22 @@ def _no_gq_from_70kb(chrom, pos, i, call):
     region chr7:1-60000)."""
     gt, ad, gq, dp = call.split(":")
     return f"{gt}:{ad}:.:{dp}" if chrom == "chr7" and pos >= 70_000 else call
+
+
+def _keep_call(chrom, pos, i, call):
+    return call
+
+
+def _af_out_labels_out(f: list[str]) -> list[str]:
+    """INFO/AF removed inside chr7:10000-20000 (dn_c9, dom_c9), and a FILTER
+    label on three sites outside it: the INFO/AF and FILTER gates can act only
+    outside that region."""
+    pos = int(f[1])
+    if f[0] == "chr7" and 10_000 <= pos <= 20_000:
+        f[7] = "."
+    if f[0] == "chr7" and pos in (75_000, 85_000, 90_000):
+        f[6] = "q10"
+    return f
 
 
 def _no_father_dp_at(chrom, pos, i, call):
@@ -113,6 +132,7 @@ def world(backend, tmp_path_factory):
     edited = {
         "q": _edited_vcf(base / "nogq.vcf", _no_gq_from_70kb),
         "s": _edited_vcf(base / "nodp.vcf", _no_father_dp_at),
+        "a": _edited_vcf(base / "afout.vcf", _keep_call, _af_out_labels_out),
     }
     for db, vcf in (
         ("c", FIXTURES / "scope.vcf.gz"),
@@ -445,3 +465,32 @@ def test_comphet_strict_count_is_about_the_genes_the_scope_keeps(world):
     )
     python = forced(world, "s", "python", *args)
     assert python["effective"] == doc["effective"]
+
+
+def test_the_variant_level_gates_are_judged_inside_the_scope(world):
+    """Inside chr7:10000-20000 no variant carries INFO/AF or a FILTER label;
+    outside, every one carries INFO/AF and three carry q10. The INFO/AF and
+    FILTER gates remove nothing from that region, so neither binds there, in
+    every SQL mode."""
+    args = ("--category", "dominant", "--pass-only", "--strict-missing")
+    region = ("--region", "chr7:10000-20000")
+    whole = jtrio(world, "a", *args)["effective"]
+    assert whole["info_af"]["bound"] is True
+    assert whole["filter_column"]["non_pass_variants"] == 3
+    docs = {
+        mode: forced(world, "a", mode, *args, *region)
+        for mode in ("python", "sql_buckets", "sql")
+    }
+    want = jtrio(world, "a", *args, *region)
+    for mode, doc in docs.items():
+        assert doc["effective"] == want["effective"], mode
+    eff = want["effective"]
+    assert eff["info_af"]["bound"] is False
+    assert eff["filter_column"]["non_pass_variants"] == 0
+    codes = {(w["code"], w["key"]) for w in eff["warnings"]}
+    assert ("pass_only_no_labels", "pass_only") in codes
+    assert ("gate_unbound", "max_af") in codes
+    [msg] = [w["message"] for w in eff["warnings"] if w["code"] == "pass_only_no_labels"]
+    assert "inside the run's scope" in msg
+    r = trio(world, "a", *args, *region, "--require-bound-gates", ok=False)
+    assert "max_af" in r.stderr
