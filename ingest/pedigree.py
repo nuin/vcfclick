@@ -183,19 +183,6 @@ def removed_rows(existing: list[dict] | None, stored: list[dict]) -> list[dict]:
     return [e for e in existing if e["sample_id"] not in kept]
 
 
-def load_pedigree(
-    ingest_id: str,
-    ped_path: str | Path,
-    *,
-    merge: bool = False,
-    existing: list[dict] | None = None,
-) -> int:
-    """Load a PED file into the active DB's pedigree table under
-    `ingest_id` (see `load_rows`). Returns the number of individuals
-    loaded."""
-    return load_rows(ingest_id, parse_ped(ped_path), merge=merge, existing=existing)
-
-
 def load_rows(
     ingest_id: str,
     rows: list[dict],

@@ -405,6 +405,13 @@ def test_windows_follow_variant_rank_and_the_selection(
         "    log.append([sql, len(rows)])\n"
         "    return cols, rows\n"
         "q._rows = spy\n"
+        # genotype windows are read through Arrow (storage.arrow_rows)
+        "orig_arrow = q.arrow_rows\n"
+        "def arrow_spy(sess, sql):\n"
+        "    rows = orig_arrow(sess, sql)\n"
+        "    log.append([sql, len(rows)])\n"
+        "    return rows\n"
+        "q.arrow_rows = arrow_spy\n"
         "export_vcf(get_session('src'), 'src', sys.argv[1], pass_only=True)\n"
         "print(json.dumps(log))\n"
     )

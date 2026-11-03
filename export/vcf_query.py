@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
@@ -12,6 +11,7 @@ from storage.sql import count_expr
 from storage.sql import sql_quote_str as _q
 
 from .vcf_context import ExportContext, ExportError, ExportRequest, Region, SiteCalls
+from storage import arrow_rows, has_reference_rows, query_json
 
 # A window is one variants query plus one genotypes query held in memory.
 # Its size follows the genotype rows it may return, n_variants x n_samples
@@ -70,7 +70,7 @@ def _chrom_key(c: str) -> tuple:
 
 
 def _rows(sess, sql: str) -> tuple[list[str], list[list]]:
-    d = json.loads(sess.query(sql, "JSONCompact").bytes().decode())
+    d = query_json(sess, sql)
     return [m["name"] for m in d.get("meta", [])], d.get("data", [])
 
 
@@ -134,15 +134,7 @@ def prepare_export(sess, request: ExportRequest) -> ExportContext:
 
     ingest_id = _select_ingestion(sess, request)
     samples = _select_samples(sess, ingest_id, request)
-    keep_ref = (
-        int(
-            _rows(
-                sess,
-                f"SELECT count(*) FROM genotypes WHERE ingest_id = {_q(ingest_id)} AND gt = 0",
-            )[1][0][0]
-        )
-        > 0
-    )
+    keep_ref = has_reference_rows(sess, ingest_id)
     absent_gt = "./." if (keep_ref or request.absent_as == "nocall") else "0/0"
     missing_recorded = bool(samples) and _missing_recorded(sess, ingest_id)
     variant_where = _variant_where(ingest_id, request)
@@ -253,15 +245,15 @@ def _window_calls(
             f"WHERE {context.variant_where} AND {span}) AS v "
             "ON g.pos = v.pos AND g.ref = v.ref AND g.alt = v.alt"
         )
-    _, rows = _rows(
+    rows = arrow_rows(
         sess,
         "SELECT g.pos, g.ref, g.alt, g.sample_id, g.gt, g.gq, g.dp, g.ad_ref, g.ad_alt, g.ft "
         f"FROM genotypes AS g{join} WHERE {where}",
     )
     for pos, ref, alt, sid, *values in rows:
-        calls.setdefault((int(pos), ref, alt), {})[sid] = values
+        calls.setdefault((int(pos), ref, alt), {})[sid] = list(values)
     if context.missing_recorded:
-        _, rows = _rows(
+        rows = arrow_rows(
             sess,
             "SELECT g.pos, g.ref, g.alt, g.sample_id "
             f"FROM missing_genotypes AS g{join} WHERE {where}",

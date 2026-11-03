@@ -10,6 +10,7 @@ ignore any subsequent change. Codex round 9 caught this exact gap.
 
 from storage.db import (
     apply_schema,
+    arrow_rows,
     backend,
     count_expr,
     db_disk_size,
@@ -18,6 +19,7 @@ from storage.db import (
     drop_db,
     get_readonly_session,
     get_session,
+    has_reference_rows,
     ingest_id_lock,
     insert_via_parquet,
     list_dbs,
@@ -25,6 +27,8 @@ from storage.db import (
     parquet_file_expr,
     populated_expr,
     query_arrow,
+    query_json,
+    query_rows,
     rollback_ingest,
     schema_dir_for_backend,
     sql_quote_str,
@@ -70,6 +74,10 @@ __all__ = [
     "table_columns",
     "upgrade_schema",
     "query_arrow",
+    "arrow_rows",
+    "has_reference_rows",
+    "query_json",
+    "query_rows",
     "DB_ROOT",
     "VCFCLICK_HOME",
 ]

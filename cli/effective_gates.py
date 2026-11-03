@@ -84,7 +84,6 @@ choices, named so a reviewer can change one place.
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -103,6 +102,7 @@ from cli.trio_analysis import (
     site_gate_sql,
 )
 from cli.warning_codes import warning
+from storage import query_rows
 
 # A gate binds when its field is present on at least this share of the rows.
 ENFORCEABLE_MIN = 0.90
@@ -275,7 +275,7 @@ def collect_sample_stats(
     samples there are. With a scope (cli/scope.Scope), only the rows inside it,
     exactly in every mode: these shares are what a gate falls back to."""
     sql, trim = sample_stats_sql(ingest_id, [s for s, _ in samples], scope)
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     if trim:
         from cli.scope import site_in_scope
 
@@ -484,7 +484,7 @@ def collect_candidate_stats(
             sql = x_presence_sql(
                 trio, gates, *x_pool, filter_present=filter_present, scope=scope
             )
-            data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+            data = query_rows(sess, sql)
             out[model] = _candidate_stats(model, data, scope)
             continue
         predicate = MODEL_PREDICATES.get(model)
@@ -499,8 +499,7 @@ def collect_candidate_stats(
                 x_guard=x_guard,
                 scope=scope,
             )
-            raw = sess.query(sql, "JSONCompact")
-            data = json.loads(raw.bytes().decode())["data"]
+            data = query_rows(sess, sql)
             by_predicate[predicate] = _candidate_stats(model, data, scope)
         out[model] = replace(by_predicate[predicate], model=model)
     return out
@@ -570,7 +569,7 @@ def collect_variant_stats(
     chromosome. With a scope (cli/scope.Scope), only the variants inside it,
     exactly in every mode: the INFO/AF and FILTER gates can act only there."""
     sql, trim = variant_stats_sql(ingest_id, filter_present=filter_present, scope=scope)
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     if trim:
         from cli.scope import site_in_scope
 
@@ -627,7 +626,7 @@ def sample_cohort_keys(
         f"SELECT v.chrom, v.pos, v.ref, v.alt FROM variants v WHERE {where} "
         f"LIMIT {2 * GNOMAD_PROBE_SIZE}"
     )
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     # the bucket superset's edge buckets hold variants outside the scope
     return [(c, int(p), r, a) for c, p, r, a in filter_rows(data, scope)]
 

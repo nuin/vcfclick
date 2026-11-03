@@ -30,40 +30,10 @@ NON_AUTOSOMAL: frozenset[str] = frozenset(X_NAMES + Y_NAMES + PAR_NAMES + MITO_N
 _AUTOSOME_RE = re.compile(r"^(?:chr)?([1-9]|1[0-9]|2[0-2])$")
 
 
-def is_x(chrom: str) -> bool:
-    return chrom in X_NAMES
-
-
-def is_y(chrom: str) -> bool:
-    return chrom in Y_NAMES
-
-
-def is_par_label(chrom: str) -> bool:
-    """A contig that IS the pseudo-autosomal region (chrXY, PAR, ...). The
-    PAR coordinates inside chrX/chrY are a separate, build-aware question."""
-    return chrom in PAR_NAMES
-
-
-def is_mito(chrom: str) -> bool:
-    return chrom in MITO_NAMES
-
-
-def is_sex_or_mt(chrom: str) -> bool:
-    """X, Y, a PAR label or the mitochondrion."""
-    return chrom in NON_AUTOSOMAL
-
-
 def is_autosome(chrom: str) -> bool:
     """chr1..chr22 or 1..22 (no leading zeros). Everything else is not: the
     sex and mitochondrial aliases, unplaced, alt, decoy and viral contigs."""
     return _AUTOSOME_RE.match(chrom) is not None
-
-
-def autosome_names() -> tuple[str, ...]:
-    """Every accepted spelling of the autosomes, for `chrom IN (...)`:
-    `1`..`22` then `chr1`..`chr22`."""
-    bare = tuple(str(n) for n in range(1, 23))
-    return bare + tuple(f"chr{n}" for n in bare)
 
 
 def canonical_chrom(chrom: str) -> str:

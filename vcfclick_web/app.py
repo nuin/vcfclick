@@ -13,7 +13,6 @@ enable_external_access = false, chDB readonly = 1).
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import tempfile
@@ -35,7 +34,13 @@ from ingest._arrow import (
     column_names,
 )
 from ingest.combine import CombineError, combine_vcfs
-from storage import get_readonly_session, get_session, table_columns, table_exists
+from storage import (
+    get_readonly_session,
+    get_session,
+    query_json,
+    table_columns,
+    table_exists,
+)
 from cli.trio_analysis import CATEGORIES, DEFAULT_MAX_AF
 from storage.sql_guard import is_read_only
 from vcfclick_web.page import INDEX_HTML
@@ -64,9 +69,7 @@ def _run_sql(sql: str) -> dict:
 
     The session is locked at the engine level first (storage.sql.
     session_lockdown_sql), the second layer behind `is_read_only`."""
-    sess = get_readonly_session()
-    raw = sess.query(sql, "JSONCompact").bytes().decode()
-    parsed = json.loads(raw)
+    parsed = query_json(get_readonly_session(), sql)
     return {
         "sql": sql,
         "columns": [m["name"] for m in parsed.get("meta", [])],

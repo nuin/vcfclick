@@ -258,6 +258,7 @@ def db_trio(options: TrioOptions) -> None:
             err=True,
         )
     scope = _build_scope(ctx, options, sess, ingest_id)
+    cohort_cache: dict = {}
     analyses = [
         TrioAnalysis(
             session=sess,
@@ -269,6 +270,7 @@ def db_trio(options: TrioOptions) -> None:
             build=options.build,
             x_guard=options.x_guard,
             scope=scope,
+            cohort_cache=cohort_cache,
         )
         for p in picks
     ]

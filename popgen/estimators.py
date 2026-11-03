@@ -21,8 +21,6 @@ from dataclasses import dataclass
 
 import numpy as np
 
-# ─────────────────────────── harmonic numbers ───────────────────────────
-
 
 def a1(n: int) -> float:
     """Watterson's a_n = sum_{i=1}^{n-1} 1/i (0 for n < 2)."""
@@ -40,9 +38,6 @@ def _a1_table(n_max: int) -> np.ndarray:
     if n_max >= 2:
         table[2:] = np.cumsum(1.0 / np.arange(1, n_max))
     return table
-
-
-# ────────────────────────────── per-site θ ──────────────────────────────
 
 
 def pi_per_site(k: np.ndarray, n: np.ndarray) -> np.ndarray:
@@ -79,9 +74,6 @@ def watterson_per_site(k: np.ndarray, n: np.ndarray) -> np.ndarray:
         table = _a1_table(int(n.max()))
         out[seg] = 1.0 / table[n[seg]]
     return out
-
-
-# ───────────────────────────── Tajima's D ───────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -138,9 +130,6 @@ def tajima_d(pi: float, s: float, n: int) -> float | None:
     return (pi - s / c.a1) / math.sqrt(var)
 
 
-# ─────────────────────────── Fay & Wu's H ───────────────────────────────
-
-
 def fay_wu_h_normalised(pi: float, theta_l: float, s: float, n: int) -> float | None:
     """Normalised Fay & Wu's H (Zeng, Fu, Shi & Wu 2006, eq. 11):
 
@@ -164,9 +153,6 @@ def fay_wu_h_normalised(pi: float, theta_l: float, s: float, n: int) -> float | 
     if var <= 0:
         return None
     return (pi - theta_l) / math.sqrt(var)
-
-
-# ────────────────────────────── SFS tools ───────────────────────────────
 
 
 @dataclass(frozen=True)
@@ -341,9 +327,6 @@ def sfs_counts(k: np.ndarray, n: int) -> np.ndarray:
     return np.bincount(np.asarray(k, dtype=np.int64), minlength=n + 1).astype(float)
 
 
-# ───────────────────────────── Hudson F_ST ──────────────────────────────
-
-
 def hudson_fst_components(
     k1: np.ndarray, n1: np.ndarray, k2: np.ndarray, n2: np.ndarray
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -380,9 +363,6 @@ def hudson_fst(
     if total <= 0:
         return None
     return float(num.sum()) / total
-
-
-# ───────────────────────── heterozygosity / F ───────────────────────────
 
 
 @dataclass(frozen=True)

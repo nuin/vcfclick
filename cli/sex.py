@@ -17,10 +17,10 @@ Two pieces of evidence, both read from non-reference calls:
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 
 from cli.warning_codes import warning
+from storage import query_rows
 
 # Below this chrX het fraction a sample reads as male (hemizygous: few
 # hets); at or above the upper bound, female; between, ambiguous.
@@ -104,23 +104,23 @@ def transmission_sql(
     )
 
 
-def _rows(session, sql: str) -> list:
-    return json.loads(session.query(sql, "JSONCompact").bytes().decode())["data"]
-
-
 def chrx_counts(session, ingest_id: str, samples, build: str) -> dict:
     """{sample: (hets, non-reference calls)} on non-PAR X; a sample with no
     such call is absent."""
     return {
         s: (int(het or 0), int(calls or 0))
-        for s, het, calls in _rows(session, inference_sql(ingest_id, samples, build))
+        for s, het, calls in query_rows(
+            session, inference_sql(ingest_id, samples, build)
+        )
     }
 
 
 def transmission(
     session, ingest_id: str, child: str, father: str, mother: str, build: str
 ) -> tuple[int, int]:
-    data = _rows(session, transmission_sql(ingest_id, child, father, mother, build))
+    data = query_rows(
+        session, transmission_sql(ingest_id, child, father, mother, build)
+    )
     if not data:
         return 0, 0
     informative, het = data[0]

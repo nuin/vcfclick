@@ -1,10 +1,10 @@
 """KING-robust kinship calculation and pedigree checks."""
 
-import json
 from functools import partial
 
 import click
 import numpy as np
+from storage import has_reference_rows, query_rows
 
 # KING kinship thresholds (powers of 2 between the expected values).
 _DUPLICATE = 0.354
@@ -172,10 +172,6 @@ def classify(kinship: float, ibs0_frac: float) -> str:
     return "unrelated"
 
 
-def _rows(sess, sql: str) -> list[list]:
-    return json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
-
-
 def _arrow(sess, sql: str):
     from storage.db import query_arrow
 
@@ -295,7 +291,9 @@ def _site_where(sess, q: str, pass_only: bool) -> str:
     where = f"v.ingest_id = {q} AND length(v.ref) = 1 AND length(v.alt) = 1"
     chroms = [
         r[0]
-        for r in _rows(sess, f"SELECT DISTINCT v.chrom FROM variants v WHERE {where}")
+        for r in query_rows(
+            sess, f"SELECT DISTINCT v.chrom FROM variants v WHERE {where}"
+        )
     ]
     autosomes = sorted(c for c in chroms if is_autosome(c))
     where += " AND " + (chrom_in_sql("v.chrom", autosomes) if autosomes else "1 = 0")
@@ -316,7 +314,7 @@ def _load(
     q = sql_quote_str(ingest_id)
     samples = [
         r[0]
-        for r in _rows(
+        for r in query_rows(
             sess,
             f"SELECT DISTINCT sample_id FROM samples WHERE ingest_id = {q} ORDER BY sample_id",
         )
@@ -326,16 +324,13 @@ def _load(
             f"{len(samples):,} samples in {ingest_id!r}; pairwise kinship above {_MAX_SAMPLES:,} "
             "samples needs more memory than this command uses."
         )
-    keep_ref = bool(
-        _rows(
-            sess,
-            f"SELECT 1 FROM genotypes WHERE ingest_id = {q} AND gt = 0 LIMIT 1",
-        )
-    )
+    keep_ref = has_reference_rows(sess, ingest_id)
     where = _site_where(sess, q, pass_only)
-    total = int(_rows(sess, f"SELECT count(*) FROM variants v WHERE {where}")[0][0])
+    total = int(
+        query_rows(sess, f"SELECT count(*) FROM variants v WHERE {where}")[0][0]
+    )
     span = int(
-        _rows(
+        query_rows(
             sess,
             f"SELECT {to_int64('coalesce(sum(s), 0)')} FROM ("
             f"SELECT max(v.pos) - min(v.pos) AS s FROM variants v WHERE {where} "
@@ -355,7 +350,7 @@ def _pedigree(sess, ingest_id: str) -> list[tuple[str, str, str]]:
 
     if not table_exists("pedigree"):
         return []
-    rows = _rows(
+    rows = query_rows(
         sess,
         f"SELECT sample_id, father_id, mother_id FROM pedigree WHERE ingest_id = {sql_quote_str(ingest_id)}",
     )

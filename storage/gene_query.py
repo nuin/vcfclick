@@ -12,8 +12,8 @@ use bare names (17). Both spellings are matched.
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
+from storage.db import query_rows
 
 DEFAULT_LIMIT = 500
 COLUMNS = [
@@ -46,25 +46,36 @@ def chrom_aliases(chrom: str) -> list[str]:
 
 
 def gene_variants_sql(chroms: list[str], start: int, end: int, limit: int) -> str:
-    """Portable SQL (chDB and DuckDB) for variants in a region plus carriers."""
+    """Portable SQL (chDB and DuckDB) for variants in a region plus carriers.
+
+    The variants are picked first (ordered, `limit` + 1 of them, the extra row
+    telling the caller the list was truncated); the carrier counts then read
+    the genotype rows of those variants only, not every carrier in the gene."""
     from storage.sql import str_list
 
     region = (
         f"chrom IN ({str_list(chroms)}) AND pos BETWEEN {int(start)} AND {int(end)}"
     )
     return (
+        "WITH picked AS ("
+        "SELECT ingest_id, chrom, pos, ref, alt, qual, filter, info_AF "
+        f"FROM variants WHERE {region} "
+        f"ORDER BY pos, ref, alt, ingest_id LIMIT {int(limit) + 1}"
+        ") "
         "SELECT v.ingest_id AS ingest_id, v.chrom AS chrom, v.pos AS pos, v.ref AS ref, v.alt AS alt, "
         "v.qual AS qual, v.filter AS filter, v.info_AF AS info_AF, "
         "coalesce(g.carriers, 0) AS carriers, coalesce(g.hom_alt, 0) AS hom_alt "
-        f"FROM (SELECT * FROM variants WHERE {region}) AS v "
+        "FROM picked AS v "
         "LEFT JOIN ("
         "SELECT ingest_id, chrom, pos, ref, alt, count(*) AS carriers, "
         "sum(CASE WHEN gt = 2 THEN 1 ELSE 0 END) AS hom_alt "
         f"FROM genotypes WHERE gt > 0 AND {region} "
+        "AND (ingest_id, chrom, pos, ref, alt) IN "
+        "(SELECT ingest_id, chrom, pos, ref, alt FROM picked) "
         "GROUP BY ingest_id, chrom, pos, ref, alt"
         ") AS g ON v.ingest_id = g.ingest_id AND v.chrom = g.chrom AND v.pos = g.pos "
         "AND v.ref = g.ref AND v.alt = g.alt "
-        f"ORDER BY v.pos, v.ref, v.alt, v.ingest_id LIMIT {int(limit) + 1}"
+        "ORDER BY v.pos, v.ref, v.alt, v.ingest_id"
     )
 
 
@@ -92,7 +103,7 @@ def gene_variants(
         raise GeneNotFound(symbol)
     start, end = max(1, int(g.start_pos) - flank), int(g.end_pos) + flank
     sql = gene_variants_sql(chrom_aliases(g.chrom), start, end, limit)
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     truncated = len(data) > limit
     rows = [{c: _typed(c, v) for c, v in zip(COLUMNS, r)} for r in data[:limit]]
     return {

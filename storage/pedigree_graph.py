@@ -156,8 +156,6 @@ class Pedigree:
             )
         return cls(people, None if genotyped is None else frozenset(genotyped))
 
-    # ───────────────────────────── membership ─────────────────────────────
-
     def __len__(self) -> int:
         return len(self._people)
 
@@ -189,8 +187,6 @@ class Pedigree:
     def children_of(self, sample_id: str) -> list[str]:
         """Individuals that name `sample_id` as a parent, sorted."""
         return list(self._children.get(sample_id, ()))
-
-    # ──────────────────── parents, trios, duos, probands ────────────────────
 
     def parents_of(self, child: str) -> tuple[str | None, str | None]:
         """(father, mother) as declared; None where none is declared."""
@@ -245,8 +241,6 @@ class Pedigree:
             if self.is_proband(c, include_duos=include_duos)
         ]
 
-    # ───────────────────────── siblings, grandparents ─────────────────────────
-
     def siblings(self, sample_id: str) -> list[Sibling]:
         """Everyone who shares a declared parent with `sample_id`, sorted
         by sample id. `full`: both parents shared; otherwise the single
@@ -296,8 +290,6 @@ class Pedigree:
                     g if g is not None and self.is_genotyped(g) else None
                 )
         return out
-
-    # ───────────────────────────── generations ─────────────────────────────
 
     def _kahn(self, *, ignore_self: bool) -> tuple[list[str], frozenset[str]]:
         """(individuals in an order that puts parents before children, the
@@ -361,8 +353,6 @@ class Pedigree:
                 "ancestors, so it has no generation"
             )
         return g
-
-    # ─────────────────────────────── kinship ───────────────────────────────
 
     def _require_acyclic(self, *samples: str) -> None:
         _, stuck = self._topological()
@@ -485,8 +475,6 @@ class Pedigree:
             return False
         pa, pb = self.parents_of(a), self.parents_of(b)
         return pa[0] is not None and pa[1] is not None and pa == pb
-
-    # ───────────────────────────── validation ─────────────────────────────
 
     def validate(self) -> list[Problem]:
         """Everything wrong or worth knowing, errors first. Errors: a

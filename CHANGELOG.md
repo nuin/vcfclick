@@ -297,6 +297,16 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   the life of the process, so a statement the parser misreads still cannot
   open a file, fetch a URL, write, or change a setting. `db query`, ingest
   and the TUI keep the unlocked session.
+- Fewer and smaller queries, same output. `db trio` runs each model's
+  statement once per run and asks the ingest-level chrX lookups once for all
+  trios; the reference-row checks of `db trio`, `db relatedness` and
+  `db export` stop at the first row; `db gene` (and the MCP
+  `variants_in_gene`) counts carriers of the listed variants only, so the
+  `sql` it returns is a `WITH picked AS (...)` statement; `db stats` reads
+  the overflow Map keys once; relatedness and export read genotypes through
+  Arrow. The gnomAD loader now writes the chromosomes it loaded to a
+  `gnomad_chroms` table in the annotation store, which the trio gate report
+  reads in place of scanning `gnomad_af`.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only

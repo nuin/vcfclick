@@ -37,10 +37,7 @@ import click
 
 from cli.main import _set_db, db
 from cli.options import command_options
-from cli.relatedness_analysis import (
-    _THIRD,
-    _rows,
-)
+from cli.relatedness_analysis import _THIRD
 from cli.relatedness_analysis import classify as classify
 from cli.relatedness_analysis import king_robust as king_robust
 from cli.relatedness_analysis import relatedness as relatedness
@@ -105,7 +102,7 @@ class RelatednessOptions:
 @command_options(RelatednessOptions)
 def db_relatedness(options: RelatednessOptions) -> None:
     """Pairwise kinship (KING-robust): duplicates, relatives, pedigree errors."""
-    from storage import db_path, get_session
+    from storage import db_path, get_session, query_rows
 
     if not db_path(options.name).exists():
         raise click.ClickException(f"db {options.name!r} does not exist.")
@@ -114,7 +111,7 @@ def db_relatedness(options: RelatednessOptions) -> None:
 
     ingests = [
         r[0]
-        for r in _rows(
+        for r in query_rows(
             sess, "SELECT ingest_id FROM ingestions ORDER BY ingested_at, ingest_id"
         )
     ]

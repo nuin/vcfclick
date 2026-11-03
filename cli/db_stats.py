@@ -66,23 +66,15 @@ def _query_population(sess, table: str, columns: list[tuple[str, bool]]) -> dict
 def _query_map_keys(
     sess, table: str, map_col: str, top: int
 ) -> tuple[list[tuple[str, int]], int]:
-    """Return top Map keys and total distinct key count."""
+    """Return top Map keys and total distinct key count, from one GROUP BY
+    over the keys (a Map holds few distinct keys, so all of them come back
+    and the top N is sliced here)."""
     from storage import count_expr, map_keys_from
 
     src = map_keys_from(table, map_col)
-    n_distinct = int(
-        sess.query(f"SELECT count(DISTINCT k) FROM {src}", "TSV")
-        .bytes()
-        .decode()
-        .strip()
-        or "0"
-    )
-    if n_distinct == 0:
-        return [], 0
     out = (
         sess.query(
-            f"SELECT k, {count_expr()} AS n FROM {src} "
-            f"GROUP BY k ORDER BY n DESC, k LIMIT {int(top)}",
+            f"SELECT k, {count_expr()} AS n FROM {src} GROUP BY k ORDER BY n DESC, k",
             "TSV",
         )
         .bytes()
@@ -93,7 +85,7 @@ def _query_map_keys(
     for line in out.splitlines():
         k, n = line.split("\t", 1)
         rows.append((k, int(n)))
-    return rows, n_distinct
+    return rows[: int(top)], len(rows)
 
 
 def _pct(num: int, denom: int) -> str:

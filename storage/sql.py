@@ -147,8 +147,6 @@ def map_keys_from(table: str, map_col: str) -> str:
     return f"{table} ARRAY JOIN mapKeys({map_col}) AS k"
 
 
-# ───────────────────────── shared query fragments ─────────────────────────
-#
 # Small builders every genotype query repeats. They exist so a lesson learned
 # the hard way (a LEFT JOIN that reads an absent parent as 0/0 on chDB, an
 # unsigned add that overflows on DuckDB) is encoded once, with a test on both
@@ -166,14 +164,6 @@ def _ident(name: str) -> str:
 def str_list(values) -> str:
     """`'a', 'b'` for an `IN (...)` list; every value through sql_quote_str."""
     return ", ".join(sql_quote_str(v) for v in values)
-
-
-def autosome_filter(col: str = "chrom") -> str:
-    """`chrom IN (<every autosome spelling>)`. The names come from
-    storage.contigs, the one definition of the contig alias sets."""
-    from storage.contigs import autosome_names
-
-    return f"{_ident(col)} IN ({str_list(autosome_names())})"
 
 
 def sample_join(

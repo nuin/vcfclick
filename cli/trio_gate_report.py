@@ -106,16 +106,14 @@ def report_scope(
 def _gnomad_chromosomes() -> frozenset[str] | None:
     """The chromosomes the loaded gnomAD data has records on; None when the
     store cannot be read (the coverage is then not judged)."""
-    from annotations.db import read_connection
+    from annotations.db import AnnotationStoreUnavailable, gnomad_chromosomes
 
-    conn = read_connection()
     try:
-        rows = conn.execute("SELECT DISTINCT chrom FROM gnomad_af").fetchall()
-    except Exception:  # noqa: BLE001 - table absent in an older store
+        return gnomad_chromosomes()
+    except AnnotationStoreUnavailable:
+        raise
+    except Exception:  # noqa: BLE001 - a store that cannot be read
         return None
-    finally:
-        conn.close()
-    return frozenset(r[0] for r in rows)
 
 
 def attach_gate_reports(

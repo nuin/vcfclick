@@ -655,7 +655,9 @@ def build_scope(request: ScopeRequest, *, build: str | None = None) -> Scope | N
             else:
                 echo["exclude_genes"] = block
         if "genes" in echo:
-            echo["genes"]["excluded"] = echo.get("exclude_genes", {}).get("genes", 0)
+            excluded_block = echo.get("exclude_genes")
+            excluded = excluded_block["genes"] if excluded_block else 0
+            echo["genes"]["excluded"] = excluded
             echo["note"] = SPAN_NOTE
 
     for text in request.regions:

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import logging
 import os
 import re
@@ -539,8 +540,41 @@ def upgrade_schema() -> list[str]:
     return added
 
 
+def query_json(sess, sql: str) -> dict:
+    """Run `sql` on `sess` and return the decoded JSONCompact document:
+    `{"meta": [{"name", "type"}, ...], "data": [[...], ...], ...}`."""
+    return json.loads(sess.query(sql, "JSONCompact").bytes().decode())
+
+
+def query_rows(sess, sql: str) -> list[list]:
+    """Run `sql` on `sess` and return its rows (JSONCompact `data`)."""
+    return query_json(sess, sql)["data"]
+
+
+def arrow_rows(sess, sql: str) -> list[tuple]:
+    """Run `sql` on `sess` and return its rows as tuples, through Arrow: for
+    a bulk read, the DuckDB session skips rendering JSONCompact text the
+    caller would parse back. Use it where every column is an integer or a
+    string; a float or a Map comes back in Arrow's form (a float32 widened,
+    a Map as key/value pairs), not as the JSON text shows it."""
+    table = query_arrow(sql, sess)
+    return list(zip(*(col.to_pylist() for col in table.columns), strict=True))
+
+
+def has_reference_rows(sess, ingest_id: str | None = None) -> bool:
+    """Does `genotypes` hold any stored hom-reference (gt = 0) row, in the
+    whole database or under `ingest_id`? Only a --keep-reference ingest
+    writes them. `LIMIT 1` lets a keep-reference store answer at the first
+    such row; a count would read all of them."""
+    where = "gt = 0"
+    if ingest_id is not None:
+        where = f"ingest_id = {sql_quote_str(ingest_id)} AND {where}"
+    return bool(query_rows(sess, f"SELECT 1 FROM genotypes WHERE {where} LIMIT 1"))
+
+
 def query_arrow(sql: str, sess=None) -> pa.Table:
-    """Run a SELECT and return the result as a pyarrow Table.
+    """Run a SELECT and return the result as a pyarrow Table, on `sess` (the
+    active DB's session when None).
 
     DuckDB hands Arrow over natively; chDB returns an Arrow IPC stream
     (`ArrowStream`), which carries the schema even for an empty result.

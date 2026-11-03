@@ -27,6 +27,7 @@ import duckdb
 import pyarrow as pa
 from cyvcf2 import VCF
 
+from annotations.db import refresh_gnomad_chroms
 from annotations.loaders import store_transaction
 
 log = logging.getLogger(__name__)
@@ -191,6 +192,7 @@ def load(vcf_path: Path, replace: bool = False) -> int:
                 "INSERT INTO gnomad_af (chrom, pos, ref, alt, af, af_grpmax) "
                 "SELECT chrom, pos, ref, alt, af, af_grpmax FROM stage.rows"
             )
+            refresh_gnomad_chroms(conn, new_rows=None if replace else "stage.rows")
 
     log.info("[gnomad] loaded %s allele frequencies into gnomad_af", f"{n:,}")
     if no_max:

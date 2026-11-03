@@ -235,7 +235,9 @@ the cohort's own variants, not on whether the store has a row:
 
 - it has records on the chromosomes that hold at least 90% of the cohort's
   variants (a slice on other chromosomes, or under another naming, `1` against
-  `chr1`, judges nothing), **and**
+  `chr1`, judges nothing; `annotations load-gnomad` writes the chromosomes it
+  loaded to the store's `gnomad_chroms` table, and a store loaded another way
+  is scanned for them), **and**
 - the exact allele (chromosome, position, ref, alt) is in it for at least 10% of
   a sample of up to 5,000 of the cohort's variants (the same lookup the
   `--gnomad-max-af` filter does, so a one-row test load, a slice of one gene or a

@@ -91,6 +91,22 @@ def test_flank_limit_and_case(vcfclick_home, tiny_vcf, gene_store):
     ] == [100, 250, 500, 750, 900]
     limited = _gene(vcfclick_home, "GENEX", "--limit", "2")
     assert limited["row_count"] == 2 and limited["truncated"] is True
+    assert [(r["pos"], r["carriers"]) for r in limited["variants"]] == [
+        (250, 1),
+        (500, 3),
+    ]
+
+
+def test_carriers_are_counted_only_for_the_listed_variants():
+    """LIMIT picks the variants first; the genotype aggregate then reads only
+    their rows, not every carrier in the gene (tens of millions in a large
+    cohort for TTN) for a list of 500."""
+    from storage.gene_query import gene_variants_sql
+
+    sql = gene_variants_sql(["chr1", "1"], 200, 800, 2)
+    head, aggregate = sql.split("FROM genotypes", 1)
+    assert "LIMIT 3" in head  # the variant selection is limited before the join
+    assert "IN (SELECT ingest_id, chrom, pos, ref, alt FROM picked)" in aggregate
 
 
 def test_unknown_gene_says_how_to_load_genes(vcfclick_home, tiny_vcf, gene_store):
