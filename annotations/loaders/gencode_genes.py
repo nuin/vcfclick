@@ -20,11 +20,10 @@ from __future__ import annotations
 
 import gzip
 import logging
-import time
-import urllib.request
 from pathlib import Path
 
 from annotations.loaders import store_transaction
+from annotations.loaders._download import fetch
 
 log = logging.getLogger(__name__)
 
@@ -39,17 +38,10 @@ CACHED_GFF = CACHE_DIR / f"gencode.v{GENCODE_VERSION}.annotation.gff3.gz"
 
 
 def download_gencode() -> Path:
-    """Download the GENCODE GFF3 once and cache it. Returns the local path."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    if CACHED_GFF.exists():
-        log.info("[gencode] already cached: %s", CACHED_GFF)
-        return CACHED_GFF
-    log.info("[gencode] downloading %s → %s", GENCODE_URL, CACHED_GFF)
-    started = time.time()
-    urllib.request.urlretrieve(GENCODE_URL, CACHED_GFF)
-    size_mb = CACHED_GFF.stat().st_size / 1_000_000
-    log.info("[gencode] done (%.0f MB in %.1fs)", size_mb, time.time() - started)
-    return CACHED_GFF
+    """The GENCODE GFF3 from the cache, downloaded once. The file is one
+    versioned release, so a complete cached copy is kept; the download lands
+    in a `.part` file and replaces the cache only when complete."""
+    return fetch(GENCODE_URL, CACHED_GFF, max_age_days=None, tag="gencode")
 
 
 def parse_attributes(attrs: str) -> dict[str, str]:

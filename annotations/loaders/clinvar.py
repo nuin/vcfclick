@@ -18,14 +18,13 @@ The MCP server's `clinvar_lookup` tool resolves against this table.
 from __future__ import annotations
 
 import logging
-import time
-import urllib.request
 from pathlib import Path
 
 import pyarrow as pa
 from cyvcf2 import VCF
 
 from annotations.loaders import store_transaction
+from annotations.loaders._download import fetch
 
 log = logging.getLogger(__name__)
 
@@ -35,24 +34,19 @@ CACHE_DIR = Path(__file__).parent / "_cache"
 CACHED_VCF = CACHE_DIR / "clinvar.vcf.gz"
 
 
-def download_clinvar() -> Path:
-    """Download the latest ClinVar VCF and cache it.
+# ClinVar publishes weekly; a cache older than this is fetched again.
+CACHE_MAX_AGE_DAYS = 7
 
-    Cache is replaced unconditionally — the file refreshes weekly and a
-    stale cache silently desyncs the `clinvar_lookup` MCP tool from
-    current significance calls. Delete the cache file manually if you
-    want to force a re-download mid-week.
-    """
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    if CACHED_VCF.exists():
-        log.info("[clinvar] already cached: %s", CACHED_VCF)
-        return CACHED_VCF
-    log.info("[clinvar] downloading %s → %s", CLINVAR_URL, CACHED_VCF)
-    started = time.time()
-    urllib.request.urlretrieve(CLINVAR_URL, CACHED_VCF)
-    size_mb = CACHED_VCF.stat().st_size / 1_000_000
-    log.info("[clinvar] done (%.0f MB in %.1fs)", size_mb, time.time() - started)
-    return CACHED_VCF
+
+def download_clinvar() -> Path:
+    """The ClinVar VCF from the cache, downloaded again when the cached copy
+    is older than CACHE_MAX_AGE_DAYS (or missing). The download lands in a
+    `.part` file and replaces the cache only when complete, so an interrupted
+    run never leaves a truncated file to reuse. Delete the cache file to
+    force a download sooner."""
+    return fetch(
+        CLINVAR_URL, CACHED_VCF, max_age_days=CACHE_MAX_AGE_DAYS, tag="clinvar"
+    )
 
 
 def _normalise_contig(chrom: str) -> str:

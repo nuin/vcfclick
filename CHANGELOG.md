@@ -334,6 +334,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   and gnomAD loaders store the canonical `chr` name (`load-gnomad` used to
   keep the file's spelling), and the gate report's gnomAD coverage check
   compares canonical names.
+- `annotations load-clinvar` without `--vcf` reused its first download
+  forever, although its docstring said the cache was replaced, so ClinVar
+  never refreshed. The cache is now fetched again when older than 7 days.
+  The ClinVar and GENCODE downloads write a `.part` file with a 60 s
+  socket timeout, check the size against `Content-Length`, and rename it
+  into place only when complete: an interrupted download used to leave a
+  truncated cache that every later run failed on.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

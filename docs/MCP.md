@@ -68,6 +68,11 @@ vcfclick annotations load-clinvar
 ```
 
 If `--vcf` is omitted, vcfclick downloads the current NCBI ClinVar VCF.
+The download is cached under `annotations/loaders/_cache/` and fetched
+again once the cached copy is more than 7 days old (NCBI refreshes it
+weekly). A download goes to a `.part` file and replaces the cache only
+when every byte has arrived, so an interrupted run leaves the old cache
+in place. The GENCODE GFF3 is one versioned release and stays cached.
 For reproducible demos, keep a local copy and pass it explicitly:
 
 ```bash
