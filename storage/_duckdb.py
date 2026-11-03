@@ -19,7 +19,12 @@ depends on so call sites stay unchanged. The two engines differ in:
     locking on its own file handle; multi-process access to the same
     DuckDB file is single-writer enforced by DuckDB itself. The
     storage layer's `ingest_id_lock` (fcntl) still serialises
-    same-(DB, ingest_id) ingests at the application level.
+    same-(DB, ingest_id) ingests at the application level. Within one
+    process a DuckDBPyConnection is not thread-safe (two threads
+    sharing its cursor read each other's rows), and `vcfclick web`
+    serves its endpoints from a threadpool on the one cached session,
+    so every query runs on a cursor of its own (`connection.cursor()`:
+    a duplicate connection to the same database).
 """
 
 from __future__ import annotations
@@ -176,14 +181,16 @@ class DuckDBSession:
             sql = _FORMAT_CLAUSE_RE.sub("", sql).rstrip().rstrip(";")
             format = m.group(1)
 
-        cur = self._conn.execute(sql)
-
-        # DDL/DML — no rows to render. Return empty payload.
-        if cur.description is None:
-            return _DuckDBQueryResult(b"")
-
-        columns = [d[0] for d in cur.description]
-        rows = cur.fetchall()
+        cur = self._conn.cursor()
+        try:
+            cur.execute(sql)
+            # DDL/DML — no rows to render. Return empty payload.
+            if cur.description is None:
+                return _DuckDBQueryResult(b"")
+            columns = [d[0] for d in cur.description]
+            rows = cur.fetchall()
+        finally:
+            cur.close()
 
         fmt = (format or "PrettyCompact").strip().lower()
         # chDB has overlapping format aliases; map them to our four
@@ -201,7 +208,11 @@ class DuckDBSession:
 
     def query_arrow(self, sql: str):
         """Run a SELECT and return a pyarrow Table (no text rendering)."""
-        return self._conn.execute(sql).fetch_arrow_table()
+        cur = self._conn.cursor()
+        try:
+            return cur.execute(sql).fetch_arrow_table()
+        finally:
+            cur.close()
 
     def close(self) -> None:
         try:

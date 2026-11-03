@@ -209,6 +209,29 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **Web SQL and MCP `run_sql` read the cohort tables only.** The read-only
+  guard (`storage.sql_guard`) accepted any `SELECT`, so `file()`, `url()`,
+  `s3()`, `remote()`, `executable()`, `read_csv()`, `read_text()`,
+  `read_parquet()`, `glob()`, a string-literal path as a `FROM` source,
+  `numbers(1e12)` / `range(1e12)`, the scalar `file()` / `getenv()`,
+  `system.*` tables, `SHOW PROCESSLIST` / `SHOW TABLES FROM system` and a
+  `SETTINGS` clause (`SETTINGS readonly = 0`) all ran. A page that reaches the
+  localhost web server, or an LLM prompt-injected through a VCF field, could
+  read any file the user can read and probe local network addresses. Every
+  `FROM` / `JOIN` source must now be a plain table name (optionally
+  `main.` / `default.`): the cohort tables and CTEs. Table functions,
+  literal paths, other catalogs, `information_schema`, the functions above,
+  `SETTINGS` and system introspection are refused with the same `read-only`
+  error as a write. Plain `SELECT`, `WITH`, `JOIN`, subqueries,
+  `SHOW TABLES`, `SHOW CREATE TABLE`, `DESCRIBE` and `EXPLAIN` of the cohort
+  tables are unchanged. `db query` on the command line is not affected.
+- The web server and the MCP server lock the database session they query
+  at the engine level before the first caller statement
+  (`storage.get_readonly_session`): DuckDB `enable_external_access = false`
+  with `lock_configuration = true`, chDB `readonly = 1`. The lock holds for
+  the life of the process, so a statement the parser misreads still cannot
+  open a file, fetch a URL, write, or change a setting. `db query`, ingest
+  and the TUI keep the unlocked session.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only
@@ -302,6 +325,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `vcfclick web` on DuckDB returned another request's rows, or an empty
+  result, when two requests ran at once (the UI fires `/api/meta` and
+  `/api/query` together). The one cached DuckDB session ran every statement
+  on the connection's shared cursor from the server's threadpool; 4 threads
+  running 200 queries each got 451 of 800 results wrong. Each query now runs
+  on a cursor of its own (a duplicate connection to the same database), and
+  the session cache opens one session per database under concurrent first
+  calls.
 - Parallel `db ingest` (the default) lands the same rows as `--serial`.
   Four shapes lost or duplicated rows while exiting 0:
   - a small or sparse VCF whose records share one BGZF block gave every
