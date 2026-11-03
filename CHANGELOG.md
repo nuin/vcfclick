@@ -209,6 +209,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- **`db query --format JSON` on DuckDB (output shape change).** `data` holds
+  one object per row where it held one array per row, and each `meta` entry
+  gains `type`, as on chDB. A format DuckDB does not render now fails with
+  `Format X is not supported on the DuckDB backend` where it printed a box
+  table. Details under Fixed.
+
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only
