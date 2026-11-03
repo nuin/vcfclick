@@ -203,3 +203,71 @@ def test_genome_scale_fixture_has_no_warning(vcfclick_home):
     res = _run(vcfclick_home)
     assert res["warning"] is None
     assert res["span_bp"] > 100_000_000
+
+
+# --- chunked KING ---------------------------------------------------------------
+
+
+def _fixture_matrix() -> np.ndarray:
+    """related.vcf as a (sites x samples) int8 matrix, -1 for ./. (read
+    from the text, no database)."""
+    code = {"0/0": 0, "0/1": 1, "1/0": 1, "1/1": 2}
+    rows = []
+    for line in REL_VCF.read_text().splitlines():
+        if line.startswith("#"):
+            continue
+        rows.append([code.get(c.split(":")[0], -1) for c in line.split("\t")[9:]])
+    return np.array(rows, dtype=np.int8)
+
+
+def _king_single_pass(g: np.ndarray) -> dict[str, np.ndarray]:
+    """The estimator as it was before chunking: one pass over every site."""
+    called = (g >= 0).astype(np.float32)
+    het = (g == 1).astype(np.float32)
+    homref = (g == 0).astype(np.float32)
+    homalt = (g == 2).astype(np.float32)
+    hethet = het.T @ het
+    ibs0 = homref.T @ homalt
+    ibs0 = ibs0 + ibs0.T
+    hgc = het.T @ called
+    denom = hgc + hgc.T
+    with np.errstate(divide="ignore", invalid="ignore"):
+        kinship = np.where(denom > 0, (hethet - 2 * ibs0) / denom, np.nan)
+    return {
+        "het_pair": denom,
+        "kinship": kinship,
+        "ibs0": ibs0,
+        "hethet": hethet,
+        "n_sites": called.T @ called,
+    }
+
+
+@pytest.mark.parametrize("chunk", [1, 7, 100, 1000, 100_000])
+def test_chunked_king_matches_single_pass_on_fixture(chunk):
+    """Accumulating the products over site chunks gives the kinship of one
+    pass over every site, to 1e-6, on the related.vcf genotypes."""
+    from cli.relatedness_analysis import king_robust
+
+    g = _fixture_matrix()
+    assert (g == -1).any()  # U2's no-calls are in the matrix
+    want = _king_single_pass(g)
+    got = king_robust(g, chunk_sites=chunk)
+    np.testing.assert_allclose(got["kinship"], want["kinship"], atol=1e-6)
+    for key in ("het_pair", "ibs0", "hethet", "n_sites"):
+        np.testing.assert_array_equal(got[key], want[key].astype(np.int64))
+
+
+def test_chunked_king_bounds_peak_memory():
+    """Peak memory follows the chunk, not the matrix: four float32 copies of
+    a 20,000 x 200 matrix alone would be 64 MB."""
+    import tracemalloc
+
+    from cli.relatedness_analysis import king_robust
+
+    rng = np.random.default_rng(0)
+    g = rng.integers(-1, 3, size=(20_000, 200), dtype=np.int8)
+    tracemalloc.start()
+    king_robust(g, chunk_sites=1000)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert peak < 16_000_000, peak

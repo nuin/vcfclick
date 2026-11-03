@@ -21,6 +21,8 @@ _MIN_SPAN_BP = 10_000_000
 _MIN_SITES = 1000
 # A pair needs this many heterozygous sites between them to be estimable.
 _MIN_PAIR_HETS = 20
+# Sites per chunk in king_robust: bounds the float32 indicator matrices.
+_CHUNK_SITES = 10_000
 
 
 def _pair(stats, samples, classify_pairs: bool, i: int, j: int) -> dict:
@@ -105,23 +107,41 @@ def _pedigree_checks(pedigree, samples, stats, pair):
     return checks
 
 
-def king_robust(g: np.ndarray) -> dict[str, np.ndarray]:
+def king_robust(
+    g: np.ndarray, chunk_sites: int = _CHUNK_SITES
+) -> dict[str, np.ndarray]:
     """Pairwise KING-robust statistics.
 
     `g` is a (sites x samples) int8 matrix of alt-allele counts: 0, 1, 2,
     or -1 for a no-call. Returns samples x samples matrices: kinship, ibs0
     (count), hethet (count) and n_sites (sites where both are called).
-    """
-    called = (g >= 0).astype(np.float32)
-    het = (g == 1).astype(np.float32)
-    homref = (g == 0).astype(np.float32)
-    homalt = (g == 2).astype(np.float32)
 
-    hethet = het.T @ het
-    ibs0 = homref.T @ homalt
+    The 0/1 indicator matrices are built `chunk_sites` rows at a time and
+    their products summed into samples x samples accumulators, so peak
+    memory is about chunk_sites x samples x 16 bytes plus the outputs.
+    Each product is an exact integer count in float32 (below 2^24 sites,
+    the --max-sites cap), so the sum equals the single-pass result.
+    """
+    n = g.shape[1]
+    hethet = np.zeros((n, n), dtype=np.float32)
+    ibs0 = np.zeros((n, n), dtype=np.float32)
+    het_given_called = np.zeros((n, n), dtype=np.float32)
+    both_called = np.zeros((n, n), dtype=np.float32)
+    step = max(1, int(chunk_sites))
+    for lo in range(0, g.shape[0], step):
+        c = g[lo : lo + step]
+        called = (c >= 0).astype(np.float32)
+        het = (c == 1).astype(np.float32)
+        hethet += het.T @ het
+        # het count of sample i over the sites where sample j is also called
+        het_given_called += het.T @ called
+        both_called += called.T @ called
+        del called
+        homref = (c == 0).astype(np.float32)
+        homalt = (c == 2).astype(np.float32)
+        ibs0 += homref.T @ homalt
+        del het, homref, homalt
     ibs0 = ibs0 + ibs0.T
-    # het count of sample i over the sites where sample j is also called
-    het_given_called = het.T @ called
     denom = het_given_called + het_given_called.T
     with np.errstate(divide="ignore", invalid="ignore"):
         kinship = np.where(denom > 0, (hethet - 2 * ibs0) / denom, np.nan)
@@ -130,7 +150,7 @@ def king_robust(g: np.ndarray) -> dict[str, np.ndarray]:
         "kinship": kinship,
         "ibs0": ibs0.astype(np.int64),
         "hethet": hethet.astype(np.int64),
-        "n_sites": (called.T @ called).astype(np.int64),
+        "n_sites": both_called.astype(np.int64),
     }
 
 
