@@ -52,6 +52,7 @@ ADDED_KEYS = {
         "max_af_x",
         "min_hemi_ab",
         "max_parent_alt_reads",
+        "af_gate_x",  # the X cap's own state, after the X gates
     },  # fmt: skip
     # a whole model added to `models` (step X: xlinked, always present)
     "models": {"xlinked"},

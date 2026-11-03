@@ -54,6 +54,7 @@ from cli.trio_analysis import DEFAULT_MAX_AF as DEFAULT_MAX_AF
 from cli.trio_analysis import Gates as Gates
 from cli.trio_analysis import Trio as Trio
 from cli.trio_analysis import (
+    AF_GATE_SKIPPED,
     TrioAnalysis,
     _has_reference_rows,
     _resolve_parents,
@@ -248,6 +249,14 @@ def db_trio(options: TrioOptions) -> None:
     if af_message:
         click.echo(f"note: {af_message}", err=True)
     gates = options.gates._replace(af_gate=af_gate)
+    if af_gate == AF_GATE_SKIPPED and is_explicit(ctx, "max_af_x"):
+        # --max-af-x typed: the X model applies it, as --max-af would be
+        gates = gates._replace(af_gate_x="cohort_derived_suspected")
+        click.echo(
+            f"note: --max-af-x {options.gates.max_af_x:g} is applied to the "
+            "X-linked model as requested and may remove real candidates.",
+            err=True,
+        )
     scope = _build_scope(ctx, options, sess, ingest_id)
     analyses = [
         TrioAnalysis(

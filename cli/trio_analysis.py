@@ -141,6 +141,10 @@ class Gates(NamedTuple):
     max_af_x: float = DEFAULTS["max_af_x"]
     min_hemi_ab: float = DEFAULTS["min_hemi_ab"]
     max_parent_alt_reads: int = DEFAULTS["max_parent_alt_reads"]
+    # The X model's rarity gate state (cli/xlinked.x_af_gate). None: the same
+    # as af_gate. Set when --max-af-x was typed while af_gate skipped --max-af:
+    # an explicit threshold is always honoured.
+    af_gate_x: str | None = None
 
     def strict_for(self, key: str) -> bool:
         """Does strict_missing apply to the gate `key`?"""

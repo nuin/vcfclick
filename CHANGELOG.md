@@ -316,6 +316,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- A typed `--max-af-x` was ignored when a cohort-derived `INFO/AF`
+  skipped `--max-af` (only `--max-af` counted as typed), so the X model
+  ran with no rarity gate while `gates.max_af_x` reported the cap. The
+  X model now applies the typed `--max-af-x`, says so in a note, and
+  `db trio --format json` gains `gates.af_gate_x` (additive, after
+  `max_parent_alt_reads`): the X cap's own state.
 - A preset's `regions_build` was applied only with the preset's
   `regions`, so a preset that set only `exclude_regions` on a database
   of another build reported `scope.regions_build: null`, gave no

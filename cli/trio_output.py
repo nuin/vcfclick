@@ -661,12 +661,15 @@ def _gates_json(analysis: TrioAnalysis) -> dict:
         "af_gate": gates.af_gate,
     }
     # the X model's gates, as the values it applies (cli/xlinked.py)
-    from cli.xlinked import male_x_dp, x_max_af
+    from cli.xlinked import male_x_dp, x_af_gate, x_max_af
 
     out["min_male_x_dp"] = male_x_dp(gates)
     out["max_af_x"] = x_max_af(gates)
     out["min_hemi_ab"] = gates.min_hemi_ab
     out["max_parent_alt_reads"] = gates.max_parent_alt_reads
+    # additive: the X cap's own state (a typed --max-af-x is honoured when a
+    # cohort-derived INFO/AF skipped --max-af)
+    out["af_gate_x"] = x_af_gate(gates)
     # additive: a gate is reported only when it is on
     if gates.strict_missing:
         out["strict_missing"] = True

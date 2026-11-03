@@ -223,8 +223,19 @@ def male_x_dp(gates) -> int:
     return int(gates.min_dp) // 2
 
 
+def x_af_gate(gates) -> str:
+    """The X model's rarity gate state: `gates.af_gate`, unless --max-af-x was
+    typed while a cohort-derived INFO/AF skipped --max-af (`gates.af_gate_x`)."""
+    return gates.af_gate_x or gates.af_gate
+
+
 def x_max_af(gates) -> float:
-    """The X-model rarity cap: min(--max-af, --max-af-x)."""
+    """The X-model rarity cap: min(--max-af, --max-af-x); --max-af-x alone when
+    the skipped --max-af does not apply and a typed --max-af-x does."""
+    from cli.trio_analysis import AF_GATE_SKIPPED
+
+    if gates.af_gate == AF_GATE_SKIPPED and x_af_gate(gates) != AF_GATE_SKIPPED:
+        return float(gates.max_af_x)
     return min(float(gates.max_af), float(gates.max_af_x))
 
 
@@ -248,7 +259,7 @@ def gate_sql(sex: str, gates) -> list[str]:
         parts.append(_hemi_ab("p", gates.min_hemi_ab))
     if gates.ab_requested and gates.strict_for("min_ab"):
         parts += [_ad_present(r) for r in roles]
-    if gates.af_gate != AF_GATE_SKIPPED:
+    if x_af_gate(gates) != AF_GATE_SKIPPED:
         parts.append(af_gate_sql("v.info_AF", x_max_af(gates)))
     if gates.pass_only:
         parts.append(PASS_ONLY_SQL)

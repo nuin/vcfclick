@@ -485,6 +485,7 @@ def test_a_plain_run_carries_no_preset_block_and_prints_no_new_stderr(world):
     assert list(doc["gates"]) == [
         "min_gq", "min_dp", "max_af", "min_ab", "max_ab", "gnomad_max_af", "af_gate",
         "min_male_x_dp", "max_af_x", "min_hemi_ab", "max_parent_alt_reads",
+        "af_gate_x",
     ]  # fmt: skip
     assert quiet(r.stderr) == ""
     assert "parent_alt_reads" not in doc["models"]["denovo"]["candidates"][0]

@@ -406,7 +406,11 @@ population frequency such as 0.0001 must not be mistaken for it. Then:
   `note:` on stderr says so (and points at `--gnomad-max-af`, which is a real
   population frequency);
 - with `--max-af` given explicitly, the gate is **applied as asked** and the
-  note says it may remove real candidates.
+  note says it may remove real candidates;
+- with `--max-af-x` given explicitly and `--max-af` not, the X model applies
+  the typed `--max-af-x` alone (the skipped `--max-af` default does not join
+  it), a note says so, and `gates.af_gate_x` is `cohort_derived_suspected`
+  while `gates.af_gate` stays `skipped_cohort_derived`.
 
 The outcome is reported as `gates.af_gate` in the JSON (see below):
 `applied`, `cohort_derived_suspected` (looks cohort-derived, applied because
@@ -771,7 +775,10 @@ family](#declaring-a-family-without-a-ped-file) for the rest of the flags).
   took effect after a preset and the flags were merged.
 - `gates` always reports the X model's gates after `af_gate`, as the values it
   applies: `min_male_x_dp` (half of `min_dp` unless given), `max_af_x`
-  (min(`max_af`, `--max-af-x`)), `min_hemi_ab` and `max_parent_alt_reads`.
+  (min(`max_af`, `--max-af-x`); the typed `--max-af-x` alone when `--max-af`
+  is skipped), `min_hemi_ab`, `max_parent_alt_reads` and `af_gate_x` (the X
+  cap's own state, one of the `af_gate` values: `af_gate`, unless a typed
+  `--max-af-x` is applied while `--max-af` is skipped).
 - With a preset (`--preset`) the document ends with a `preset` object (what ran:
   name, source, revision, fingerprint, the filters requested and the value each
   filter took with where it came from, what a flag overrode, what was skipped)
