@@ -37,7 +37,8 @@
     "min_male_x_dp": 5,
     "max_af_x": 0.001,
     "min_hemi_ab": 0.75,
-    "max_parent_alt_reads": 1
+    "max_parent_alt_reads": 1,
+    "af_gate_x": "applied"
   },
   "annotations": {
     "genes": false,
