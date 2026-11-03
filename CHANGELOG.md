@@ -363,8 +363,10 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 - A serial ingest staged its Parquet batches in `<home>/dbs/vcfclick_ingest_*`,
   beside the databases, so `db list` showed a phantom database while it ran
   and for good after a killed run. It now stages under the database's own
-  `staging/` directory, as the parallel path does, and `db list` skips a
-  leftover `vcfclick_ingest_*` directory and any name no database can have.
+  `staging/serial-<ingest_id>` directory, as the parallel path stages under
+  `staging/<ingest_id>`; the next ingest under that id removes a directory a
+  killed run left behind. `db list` skips a leftover `vcfclick_ingest_*`
+  directory and any name no database can have.
 
 ## [0.14.3]
 

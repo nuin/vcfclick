@@ -404,6 +404,43 @@ def test_serial_stage_dir_lives_inside_the_db(vcfclick_home, run_python, tiny_vc
     assert json.loads(lines["DBS"]) == ["b"]
 
 
+def test_serial_ingest_wipes_a_stale_stage_dir(vcfclick_home, tiny_vcf):
+    """A SIGKILLed serial ingest leaves <db>/staging/serial-<ingest_id>.
+    The next ingest under that id removes it before staging, so its stale
+    batches are neither imported nor left on disk."""
+    run_cli(vcfclick_home, "duckdb", "db", "create", "b")
+    stale = vcfclick_home / "dbs" / "b" / "staging" / "serial-i1"
+    stale.mkdir(parents=True)
+    (stale / "v_9999999999.parquet").write_bytes(b"not parquet")
+    run_cli(
+        vcfclick_home,
+        "duckdb",
+        "db",
+        "ingest",
+        "b",
+        str(tiny_vcf),
+        "--serial",
+        "--ingest-id",
+        "i1",
+    )
+    assert not stale.exists()
+    assert _count_variants(vcfclick_home, "duckdb", "b", "i1") == 5
+
+
+def _count_variants(home, backend, db, ingest_id) -> int:
+    r = run_cli(
+        home,
+        backend,
+        "db",
+        "query",
+        db,
+        f"SELECT COUNT(*) FROM variants WHERE ingest_id = '{ingest_id}'",
+        "--format",
+        "JSONCompact",
+    )
+    return int(json.loads(r.stdout)["data"][0][0])
+
+
 # ─── finding 43: one INSERT per staged table ────────────────────────────
 
 

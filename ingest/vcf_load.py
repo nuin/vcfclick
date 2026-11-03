@@ -22,7 +22,7 @@ Pre-requisite: multi-allelic sites decomposed via
 from __future__ import annotations
 
 import logging
-import tempfile
+import shutil
 import time
 import uuid
 from dataclasses import dataclass
@@ -310,13 +310,16 @@ def _ingest_locked(
     try:
         # Stage inside the DB's own directory, as the parallel path does
         # (db_path()/staging): the DB root holds one directory per DB, so
-        # a stage directory there would show in `db list`.
-        stage_root = db_path() / "staging"
-        stage_root.mkdir(parents=True, exist_ok=True)
-        with tempfile.TemporaryDirectory(
-            prefix="vcfclick_ingest_", dir=str(stage_root)
-        ) as staging:
-            staging_path = Path(staging)
+        # a stage directory there would show in `db list`. The directory
+        # is named by ingest_id and this runs under the ingest_id lock, so
+        # a directory a SIGKILLed run left behind is wiped here: otherwise
+        # the commit's v_*/g_*/m_* globs would import its stale batches.
+        staging_path = db_path() / "staging" / f"serial-{ingest_id}"
+        if staging_path.exists():
+            log.warning("[ingest] removing stale stage directory %s", staging_path)
+            shutil.rmtree(staging_path)
+        staging_path.mkdir(parents=True)
+        try:
             n_variants = _stage_vcf(
                 vcf,
                 StageOptions(
@@ -334,6 +337,8 @@ def _ingest_locked(
             _commit_staged_ingest(
                 staging_path, vcf_path, cohort, ingest_id, samples, n_variants
             )
+        finally:
+            shutil.rmtree(staging_path, ignore_errors=True)
     except BaseException:
         handle_ingest_failure(commit_started, ingest_id, "ingest")
         raise
