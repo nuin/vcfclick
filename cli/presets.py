@@ -200,7 +200,26 @@ def read_preset_file(path: Path, source: str) -> Preset:
     except PresetError as e:
         return fail("invalid_json", str(e))
     checked = validate_document(doc, allow_unknown=True)
-    problems.extend(checked.problems)
+    declared_raw = doc.get("name") if isinstance(doc, dict) else None
+    if source in (USER, SHARED) and not name_problem(name):
+        # the file name decides the name, so a declared name that is not one
+        # (a copied file's "Old Name") is a mismatch, not an unusable file
+        for p in checked.problems:
+            if p.code != "bad_name":
+                problems.append(p)
+                continue
+            shown = str(declared_raw)[:40]
+            problems.append(
+                Problem(
+                    WARN,
+                    "name_mismatch",
+                    f"the file says its name is {shown!r}, which is not a preset "
+                    f"name; it is used as {name!r}",
+                    "name",
+                )
+            )
+    else:
+        problems.extend(checked.problems)
     doc = checked.doc
     if source in (USER, SHARED):
         why = name_problem(name)

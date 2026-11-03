@@ -302,6 +302,18 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Preset names and keys. `name_problem` accepted a name with a trailing
+  line break (`rare-recessive\n`), so `preset save` wrote a file with a
+  line break in its name that `preset list` showed as a second
+  `rare-recessive`; such a name is now refused. `filters.x_guard` passed
+  as an `x_` extension key; it is now refused as a safety check. A stored
+  file whose declared `name` is not a valid name (`"Old Name"`) was
+  unavailable; it now takes its file name with a `name_mismatch`
+  warning, as a file with any other declared name does. `preset set`
+  read every text, gene and region value as JSON, so `genes=TP53` said
+  "is not a number" and `category=[recessive` crashed with a traceback;
+  a bare value is now the text itself, and bad JSON is an error naming
+  the key.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

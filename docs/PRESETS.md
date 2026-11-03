@@ -341,8 +341,9 @@ values that came from the preset or a flag), and says so when a built-in it used
 has changed revision since. `--from-json FILE|-` reads `{"filters": {...}}`.
 
 Presets live in `$VCFCLICK_HOME/presets/NAME.json`. Names are lowercase letters,
-digits, `.`, `_` and `-` (up to 63), and may not end in `.json`, be a Windows
-device name or a built-in's name. Writes are atomic. A file an export wrote
+digits, `.`, `_` and `-` (up to 63, nothing else: a trailing line break is
+refused too), and may not end in `.json`, be a Windows device name or a
+built-in's name. Writes are atomic. A file an export wrote
 (`NAME.vcfclick-preset.json`) dropped into that directory is the same preset as
 `NAME.json`: `save`, `import` and `rename` refuse to shadow it without `--force`,
 and `--force` replaces that file rather than adding a second one beside it.
@@ -351,7 +352,8 @@ The file name is what a stored preset is called. A colleague's `q1.json` copied 
 as `lab-q.json` still says `"name": "q1"` inside: it is listed with a
 `name_mismatch` warning and used as `lab-q`, and `set`, `edit`, `rename` and
 `export` all write `lab-q`, so an export imports back as `lab-q` and `edit` is not
-asked to rename it. (A file with no `name` at all gets the same treatment.)
+asked to rename it. (A file with no `name` at all gets the same treatment, and so
+does one whose declared name is not a valid name, such as `"Old Name"`.)
 
 ### The file
 
@@ -376,7 +378,8 @@ asked to rename it. (A file with no `name` at all gets the same treatment.)
   `pass_only`, `parent_alt_screen`, `max_parent_alt_frac`, `require_bound`. A key
   not in that list is an error with a did-you-mean (and the vcfclick version
   recorded in `meta.created_with`, if different); `x_...` keys are kept and
-  ignored. A `null`, a boolean where a number goes, `NaN`, an infinity (or a
+  ignored, except a never-presettable key that starts with `x_` (`x_guard`), which
+  is refused like the others. A `null`, a boolean where a number goes, `NaN`, an infinity (or a
   number too large for a float, anywhere in the file, `x_` keys included) or an
   out-of-range number is an error. `min_ab` above `max_ab` is checked on the resolved values, so
   a flag can repair it.

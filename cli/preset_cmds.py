@@ -422,13 +422,21 @@ def _parse_assignment(text: str) -> tuple[str, object]:
         if raw.lower() not in words:
             raise PresetError(f"{key}: must be true or false")
         value: object = words[raw.lower()]
-    elif spec.type == "category":
-        value = json.loads(raw) if raw.startswith("[") else raw
+    elif spec.type in ("category", "text", *fr.LIST_TYPES):
+        # a bare word is the text itself; JSON only when it is spelt as JSON
+        if raw.startswith(("[", '"')):
+            try:
+                value = json.loads(raw)
+            except ValueError:
+                raise PresetError(f"{key}: {raw[:20]!r} is not valid JSON") from None
+        else:
+            value = raw
     else:
         try:
             value = json.loads(raw)
         except ValueError:
-            raise PresetError(f"{key}: {raw[:20]!r} is not a number") from None
+            what = "an integer" if spec.type == "int" else "a number"
+            raise PresetError(f"{key}: {raw[:20]!r} is not {what}") from None
     checked, bad = fr.check_value(spec, value)
     if bad:
         raise PresetError(f"{key}: {bad}")

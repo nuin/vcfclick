@@ -137,7 +137,7 @@ def name_problem(name: object) -> str | None:
     """Why `name` cannot be a preset name, or None. Names are lowercase and
     never look like a path: a value with a separator or ending .json is read
     as a file on the command line, so a preset may not have one."""
-    if not isinstance(name, str) or not NAME_RE.match(name):
+    if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         return (
             "a preset name is 1-63 characters: lowercase letters, digits, "
             "'.', '_' or '-', starting with a letter or digit"
@@ -179,6 +179,8 @@ def filter_identity_problem(key: str) -> str | None:
     a registered filter are what they are; any other key that spells an identity
     is refused (an unknown key that does not is `unknown_key`, a warning in a
     stored file)."""
+    if key in fr.NEVER_PRESET:  # before the prefix: `x_guard` is a safety check
+        return identity_problem(key, envelope=False)
     if key.startswith(EXTENSION_PREFIX) or key in fr.REGISTRY:
         return None
     return identity_problem(key, envelope=False)
@@ -426,7 +428,13 @@ def _check_filters(
     unknown: list[str] = []
     for key, value in raw.items():
         shown = key[:40]
-        if key.startswith(EXTENSION_PREFIX):
+        if key in fr.NEVER_PRESET:  # before the prefix: `x_guard` is a safety check
+            bad(
+                "never_presettable",
+                f"{shown} can never be part of a preset: {fr.NEVER_PRESET[key]}",
+                key,
+            )
+        elif key.startswith(EXTENSION_PREFIX):
             other[key] = value
         elif key in fr.REGISTRY:
             spec = fr.REGISTRY[key]
@@ -438,12 +446,6 @@ def _check_filters(
                 bad("bad_value", f"{shown}: {why}", key)
             else:
                 known[key] = checked
-        elif key in fr.NEVER_PRESET:
-            bad(
-                "never_presettable",
-                f"{shown} can never be part of a preset: {fr.NEVER_PRESET[key]}",
-                key,
-            )
         elif who := filter_identity_problem(key):
             bad("never_presettable", f"{shown} {who}", key)
         else:
