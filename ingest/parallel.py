@@ -62,6 +62,7 @@ from ingest.parallel_worker import _worker
 from ingest._rollback import handle_ingest_failure
 from ingest.routing import classify_header
 from ingest.vcf_load import BATCH_SIZE
+from ingest.vcf_rows import log_clamp_count
 from storage import (
     apply_schema,
     db_path,
@@ -260,9 +261,11 @@ def _stage_regions(
 
     started_parse = time.time()
     total = 0
+    clamped = 0
     with ProcessPoolExecutor(max_workers=options.workers) as pool:
-        for region, n, n_batches in pool.map(_worker, args_list):
+        for region, n, n_batches, n_clamped in pool.map(_worker, args_list):
             total += n
+            clamped += n_clamped
             if n > 0:
                 log.info(
                     "[parallel-ingest]   %s: %s variants (%d batches)",
@@ -271,6 +274,7 @@ def _stage_regions(
                     n_batches,
                 )
     parse_elapsed = time.time() - started_parse
+    log_clamp_count(clamped, "parallel-ingest")
 
     return total, parse_elapsed
 

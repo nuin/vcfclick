@@ -10,14 +10,21 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
-from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows, require_single_alt
+from ingest.vcf_rows import (
+    MAX_BATCH_ROWS,
+    build_record_rows,
+    require_single_alt,
+    take_clamp_count,
+)
 
 
-def _worker(args: tuple) -> tuple[str, int, int]:
+def _worker(args: tuple) -> tuple[str, int, int, int]:
     """Parse one region, emit Parquet files in BATCH_SIZE batches.
 
-    Returns (region, n_variants, n_batches) — n_batches is informational,
-    used to log per-worker progress in the main process log.
+    Returns (region, n_variants, n_batches, n_clamped). n_batches is
+    informational, used to log per-worker progress in the main process
+    log; n_clamped counts FORMAT values clamped to their column range,
+    which the parent logs as one total.
     """
     (
         region,
@@ -29,6 +36,7 @@ def _worker(args: tuple) -> tuple[str, int, int]:
         keep_reference,
         record_missing,
     ) = args
+    take_clamp_count()  # a reused pool process starts from 0
     vcf = VCF(vcf_path)
     samples = list(vcf.samples)
 
@@ -77,4 +85,4 @@ def _worker(args: tuple) -> tuple[str, int, int]:
             flush()
 
     flush()
-    return region, total_variants, batch_idx
+    return region, total_variants, batch_idx, take_clamp_count()

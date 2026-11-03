@@ -81,29 +81,42 @@ def _cell(arr, i):
 # 65,535 for the UInt16 columns (gq, dp, ad_*, pl_*, mq, pq) and
 # 4,294,967,295 for ps. A value above the bound (mitochondrial or
 # amplicon depth above 65,535) is clamped to it rather than aborting the
-# ingest with an ArrowInvalid, and the clamp is logged once per process.
+# ingest with an ArrowInvalid. Clamps are counted per process; the loader
+# reads the count with take_clamp_count() (a parallel worker returns it
+# to the parent) and logs one total, since a pool worker's log output may
+# never reach the user.
 _COLUMN_MAX: dict[str, int] = {
     f.name: 2**f.type.bit_width - 1
     for f in GENOTYPES_ARROW_SCHEMA
     if pa.types.is_unsigned_integer(f.type)
 }
 _UINT16_MAX = 65535
-_clamp_warned = False
+_clamped = 0
+
+
+def take_clamp_count() -> int:
+    """FORMAT values clamped since the last call, and reset to 0."""
+    global _clamped
+    n, _clamped = _clamped, 0
+    return n
+
+
+def log_clamp_count(n: int, tag: str) -> None:
+    if n:
+        log.warning(
+            "[%s] %s FORMAT values exceeded their column range and were "
+            "clamped to it (65,535 for gq, dp, ad, pl, mq and pq)",
+            tag,
+            f"{n:,}",
+        )
 
 
 def _bounded(v: int, max_value: int) -> int | None:
-    global _clamp_warned
+    global _clamped
     if v < 0:
         return None
     if v > max_value:
-        if not _clamp_warned:
-            _clamp_warned = True
-            log.warning(
-                "[ingest] FORMAT value %d exceeds the column range; "
-                "clamping such values to %d",
-                v,
-                max_value,
-            )
+        _clamped += 1
         return max_value
     return v
 

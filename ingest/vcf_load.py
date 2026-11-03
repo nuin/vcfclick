@@ -40,7 +40,13 @@ from ingest._arrow import (
 )
 from ingest._rollback import handle_ingest_failure
 from ingest.routing import classify_header
-from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows, require_single_alt
+from ingest.vcf_rows import (
+    MAX_BATCH_ROWS,
+    build_record_rows,
+    log_clamp_count,
+    require_single_alt,
+    take_clamp_count,
+)
 from storage import (
     apply_schema,
     db_path,
@@ -205,6 +211,7 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
     genotypes_batch: list[list] = []
     missing_batch: list[list] = []
     n_variants = 0
+    take_clamp_count()
 
     for variant in vcf:
         require_single_alt(variant, options.vcf_path)
@@ -242,6 +249,7 @@ def _stage_vcf(vcf, options: StageOptions, staging_path: Path, started: float) -
     _write_stage_batch(
         staging_path, n_variants, variants_batch, genotypes_batch, missing_batch
     )
+    log_clamp_count(take_clamp_count(), "ingest")
     return n_variants
 
 

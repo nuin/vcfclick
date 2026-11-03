@@ -167,6 +167,43 @@ def test_wide_format_integers_clamp_to_uint16(tmp_path):
     write_parquet(rows[0][1], GENOTYPES_ARROW_SCHEMA, tmp_path / "g.parquet")
 
 
+def test_clamp_count_is_taken_and_reset(tmp_path):
+    """Each clamped value is counted; take_clamp_count() returns the total
+    since the last call, so a loader logs one figure per ingest."""
+    from ingest.vcf_rows import take_clamp_count
+
+    vcf = _write_vcf(
+        tmp_path / "dp.vcf",
+        ["A"],
+        ["chr1\t100\t.\tA\tG\t50\tPASS\tDP=9\tGT:DP:AD\t0/1:70000:80000,5"],
+    )
+    take_clamp_count()
+    _rows(vcf)
+    assert take_clamp_count() == 2  # DP and AD_ref
+    assert take_clamp_count() == 0
+
+
+@pytest.mark.parametrize("mode", ["serial", "parallel"])
+def test_clamp_total_reaches_the_ingest_log(vcfclick_home, tmp_path, mode):
+    """The clamp total is logged by the process the user watches: the
+    serial loader itself, or the parallel parent from the workers' counts
+    (a pool worker's own log output may go nowhere)."""
+    src = _write_vcf(
+        tmp_path / "dp.vcf",
+        ["A"],
+        [
+            "chr1\t100\t.\tA\tG\t50\tPASS\tDP=9\tGT:DP:AD\t0/1:70000:80000,5",
+            "chr1\t200\t.\tA\tG\t50\tPASS\tDP=9\tGT:DP\t0/1:70001",
+        ],
+    )
+    gz = bgzip_vcf(src, tmp_path / "dp.vcf.gz")
+    run_cli(vcfclick_home, "duckdb", "db", "create", "dp")
+    args = ["--serial"] if mode == "serial" else ["--workers", "2"]
+    r = run_cli(vcfclick_home, "duckdb", "db", "ingest", "dp", str(gz), *args)
+    tag = "ingest" if mode == "serial" else "parallel-ingest"
+    assert f"[{tag}] 3 FORMAT values exceeded their column range" in r.stderr
+
+
 # ─── finding 40: samples but no GT ──────────────────────────────────────
 
 
