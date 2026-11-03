@@ -55,7 +55,7 @@ log = logging.getLogger(__name__)
 
 
 def _import_parquet(table: str, parquet_path: Path) -> None:
-    """Bulk-import a single Parquet file into the active backend's table."""
+    """Bulk-import a Parquet file (or a glob of them) into a table."""
     from ingest._arrow import TABLE_COLUMNS, column_list_sql
     from storage import parquet_file_expr
 
@@ -262,14 +262,16 @@ def _commit_staged_ingest(
         ],
     )
 
-    for v_path in sorted(staging_path.glob("v_*.parquet")):
-        _import_parquet("variants", v_path)
-        g_path = staging_path / v_path.name.replace("v_", "g_", 1)
-        if g_path.exists() and g_path.stat().st_size > 0:
-            _import_parquet("genotypes", g_path)
-        m_path = staging_path / v_path.name.replace("v_", "m_", 1)
-        if m_path.exists() and m_path.stat().st_size > 0:
-            _import_parquet("missing_genotypes", m_path)
+    # One INSERT per table over a glob of the staged batches, as the
+    # parallel commit does: _write_stage_batch writes all three files for
+    # every batch, so the globs match. No batch (an empty VCF) is no file.
+    for table, prefix in (
+        ("variants", "v_"),
+        ("genotypes", "g_"),
+        ("missing_genotypes", "m_"),
+    ):
+        if any(staging_path.glob(f"{prefix}*.parquet")):
+            _import_parquet(table, staging_path / f"{prefix}*.parquet")
 
     from ingest.panel import prune_stale_labels
 
@@ -320,9 +322,13 @@ def _ingest_locked(
     commit_started = False
 
     try:
-        db_dir = db_path()
+        # Stage inside the DB's own directory, as the parallel path does
+        # (db_path()/staging): the DB root holds one directory per DB, so
+        # a stage directory there would show in `db list`.
+        stage_root = db_path() / "staging"
+        stage_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(
-            prefix="vcfclick_ingest_", dir=str(db_dir.parent)
+            prefix="vcfclick_ingest_", dir=str(stage_root)
         ) as staging:
             staging_path = Path(staging)
             n_variants = _stage_vcf(

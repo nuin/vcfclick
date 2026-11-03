@@ -360,6 +360,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `bcftools norm -m -` remedy that leaves the record in place. Serial and
   parallel ingests now say the record has no ALT allele and name
   `bcftools view -e 'ALT="."'` to drop such records.
+- A serial ingest staged its Parquet batches in `<home>/dbs/vcfclick_ingest_*`,
+  beside the databases, so `db list` showed a phantom database while it ran
+  and for good after a killed run. It now stages under the database's own
+  `staging/` directory, as the parallel path does, and `db list` skips a
+  leftover `vcfclick_ingest_*` directory and any name no database can have.
 
 ## [0.14.3]
 

@@ -296,3 +296,83 @@ def test_no_alt_record_names_the_remedy(tmp_path):
     assert "bcftools norm -m -" in str(
         pytest.raises(ValueError, require_single_alt, multi, "in.vcf.gz").value
     )
+
+
+# ─── finding 38: the serial stage directory ─────────────────────────────
+
+
+def test_list_dbs_skips_a_leftover_stage_dir(vcfclick_home):
+    """A SIGKILLed serial ingest on an older version left
+    <home>/dbs/vcfclick_ingest_xxxx behind; `db list` must not show it."""
+    from storage import list_dbs
+
+    dbs = vcfclick_home / "dbs"
+    (dbs / "cohort").mkdir(parents=True)
+    (dbs / "vcfclick_ingest_abc123").mkdir()
+    assert list_dbs() == ["cohort"]
+
+
+_SERIAL_SPY = """
+import collections, json, sys
+import ingest.vcf_load as vl
+import storage
+
+vl.BATCH_SIZE = 1
+inserts = collections.Counter()
+original = vl._commit_staged_ingest
+
+
+def spy(staging_path, *args):
+    print("STAGE", staging_path)
+    print("DBS", json.dumps(storage.list_dbs()))
+    sess = storage.get_session()
+    query = sess.query
+
+    def counted(sql, *a, **k):
+        words = sql.split()
+        if words[:2] == ["INSERT", "INTO"]:
+            inserts[words[2]] += 1
+        return query(sql, *a, **k)
+
+    sess.query = counted
+    try:
+        return original(staging_path, *args)
+    finally:
+        sess.query = query
+
+
+vl._commit_staged_ingest = spy
+vl.ingest(sys.argv[1], "c", ingest_id="i1")
+print("INSERTS", json.dumps(inserts))
+"""
+
+
+def _serial_spy(home, run_python, vcf) -> dict[str, str]:
+    out = run_python(
+        home,
+        _SERIAL_SPY,
+        str(vcf),
+        VCFCLICK_BACKEND="duckdb",
+        VCFCLICK_DB_NAME="b",
+    )
+    return dict(line.split(" ", 1) for line in out.splitlines() if " " in line)
+
+
+def test_serial_stage_dir_lives_inside_the_db(vcfclick_home, run_python, tiny_vcf):
+    """The serial stage directory is under the DB's own directory, so an
+    in-flight or killed ingest never appears in `db list`."""
+    lines = _serial_spy(vcfclick_home, run_python, tiny_vcf)
+    assert Path(lines["STAGE"]).is_relative_to(vcfclick_home / "dbs" / "b")
+    assert json.loads(lines["DBS"]) == ["b"]
+
+
+# ─── finding 43: one INSERT per staged table ────────────────────────────
+
+
+def test_serial_commit_inserts_each_table_once(vcfclick_home, run_python, tiny_vcf):
+    """Five one-site batches commit with one INSERT per staged table, as
+    the parallel path does, not one INSERT per batch file."""
+    inserts = json.loads(_serial_spy(vcfclick_home, run_python, tiny_vcf)["INSERTS"])
+    assert inserts.get("variants") == 1, inserts
+    assert inserts.get("genotypes") == 1, inserts
+    assert inserts.get("missing_genotypes", 0) <= 1, inserts
