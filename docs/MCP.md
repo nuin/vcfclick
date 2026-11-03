@@ -68,6 +68,11 @@ vcfclick annotations load-clinvar
 ```
 
 If `--vcf` is omitted, vcfclick downloads the current NCBI ClinVar VCF.
+The download is cached under `annotations/loaders/_cache/` and fetched
+again once the cached copy is more than 7 days old (NCBI refreshes it
+weekly). A download goes to a `.part` file and replaces the cache only
+when every byte has arrived, so an interrupted run leaves the old cache
+in place. The GENCODE GFF3 is one versioned release and stays cached.
 For reproducible demos, keep a local copy and pass it explicitly:
 
 ```bash
@@ -88,8 +93,24 @@ vcfclick annotations load-gnomad cftr.gnomad.vcf.gz
 `load-gnomad` appends by default, so per-chromosome slices load
 incrementally; pass `--replace` to start fresh.
 
+The popmax is `AF_grpmax` (gnomAD v4) or `AF_popmax` (v2.1.1, v3.x). A
+record with neither falls back to its overall `AF`, and the loader logs
+how many records did. The VCF is read in batches of 1,000,000 records
+into a scratch file, so a whole chromosome loads in flat memory.
+
 The annotation store is separate from cohort databases. Loading
 annotations does not modify any `variants` or `genotypes` table.
+
+Lookups open the store read-only and change nothing in it, so any number
+of `db trio` runs, the web UI and the MCP server read it at once, and a
+store on a read-only file system (mode 444, a read-only site-packages)
+still answers. A loader is the one writer. While a load runs, DuckDB
+keeps readers out: a command that needs the store then stops with
+`the annotation store ... cannot be opened for reading: another process
+(PID n) has it open for writing`, and a retry after the load succeeds.
+A loader parses its whole input before it touches the store and swaps
+the rows in one transaction, so a truncated download or a file with no
+usable rows raises and leaves the old rows in place.
 
 ## Start The MCP Server
 
@@ -215,5 +236,8 @@ If gene lookup returns nothing, load annotations or verify the gene
 symbol is present in the chosen GENCODE release.
 
 If ClinVar lookup returns nothing, load ClinVar and verify the allele
-uses the same normalized representation as the cohort (`chr` prefix,
-1-based position, decomposed `ref`/`alt`).
+uses the same normalized representation as the cohort (1-based position,
+decomposed `ref`/`alt`). The contig may be spelt either way: the loaders
+store `chr17`, `chrX`, `chrM`, and every ClinVar and gnomAD lookup also
+matches `17`, `X`, `23`, `MT` and the other aliases in
+`storage/contigs.py`, answering under the spelling it was asked with.

@@ -46,7 +46,22 @@ def _setup_logging() -> None:
     root.setLevel(logging.INFO)
 
 
-@click.group()
+class _Cli(click.Group):
+    """The root group: an annotation store another process is writing (or
+    that cannot be read) ends any command with its message, not a traceback."""
+
+    def invoke(self, ctx: click.Context):
+        try:
+            return super().invoke(ctx)
+        except Exception as e:
+            from annotations.db import AnnotationStoreUnavailable
+
+            if isinstance(e, AnnotationStoreUnavailable):
+                raise click.ClickException(str(e)) from None
+            raise
+
+
+@click.group(cls=_Cli)
 @click.version_option(package_name="vcfclick")
 def cli() -> None:
     """vcfclick — small VCF databases."""

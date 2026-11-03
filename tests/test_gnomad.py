@@ -132,3 +132,89 @@ def test_point_lookups_miss_on_an_impossible_position(tmp_path, monkeypatch):
     for pos in (-1, 2**32, 2**40):
         assert gnomad_af("chr1", pos, "A", "C") is None
         assert clinvar_lookup("chr1", pos, "A", "C") is None
+
+
+def _sites_vcf(path: Path, info_key: str | None, records: list[tuple]) -> Path:
+    """A plain-text gnomAD-style sites VCF: (chrom, pos, ref, alt, af, grpmax)."""
+    head = [
+        "##fileformat=VCFv4.2",
+        "##contig=<ID=chr1>",
+        '##INFO=<ID=AF,Number=A,Type=Float,Description="AF">',
+    ]
+    if info_key:
+        head.append(f'##INFO=<ID={info_key},Number=A,Type=Float,Description="max">')
+    lines = [*head, "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO"]
+    for chrom, pos, ref, alt, af, grp in records:
+        info = f"AF={af}" + (
+            f";{info_key}={grp}" if info_key and grp is not None else ""
+        )
+        lines.append(f"{chrom}\t{pos}\t.\t{ref}\t{alt}\t.\tPASS\t{info}")
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+def test_gnomad_v3_af_popmax_is_the_group_max(tmp_path, monkeypatch):
+    """gnomAD v2.1.1 and v3.x name the group-max AF `AF_popmax`; v4 names it
+    `AF_grpmax`. Either is the popmax, so a variant common in one ancestry
+    is not judged by its overall AF."""
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    from annotations import gnomad_af
+    from annotations.loaders.gnomad import load
+
+    vcf = _sites_vcf(
+        tmp_path / "v3.vcf", "AF_popmax", [("chr1", 100, "A", "G", 0.002, 0.05)]
+    )
+    assert load(vcf, replace=True) == 1
+    g = gnomad_af("chr1", 100, "A", "G")
+    assert abs(g.af_grpmax - 0.05) < 1e-6 and g.popmax == g.af_grpmax
+
+
+def test_gnomad_load_says_how_many_have_no_group_max(tmp_path, monkeypatch, caplog):
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    from annotations.loaders.gnomad import load
+
+    vcf = _sites_vcf(
+        tmp_path / "afonly.vcf",
+        None,
+        [("chr1", 100, "A", "G", 0.002, None), ("chr1", 200, "C", "T", 0.1, None)],
+    )
+    with caplog.at_level("WARNING", logger="annotations.loaders.gnomad"):
+        load(vcf, replace=True)
+    text = caplog.text
+    assert "2 of 2" in text and "AF_grpmax" in text and "AF_popmax" in text
+
+
+def test_gnomad_load_streams_in_batches(tmp_path, monkeypatch):
+    """The loader writes batches, not the whole file at once, and still keeps
+    the first record of a key repeated in the file, across batches too."""
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    import annotations.loaders.gnomad as gl
+    from annotations import gnomad_af
+
+    monkeypatch.setattr(gl, "BATCH_ROWS", 3)
+    records = [("chr1", 10 * i, "A", "G", i / 100, i / 50) for i in range(1, 11)]
+    records.append(("chr1", 10, "A", "G", 0.9, 0.9))  # a repeat of the first
+    vcf = _sites_vcf(tmp_path / "many.vcf", "AF_grpmax", records)
+    batches = []
+    real = gl._to_arrow
+    monkeypatch.setattr(
+        gl, "_to_arrow", lambda rows: batches.append(len(rows)) or real(rows)
+    )
+    assert gl.load(vcf, replace=True) == 10
+    assert max(batches) <= 3
+    assert abs(gnomad_af("chr1", 10, "A", "G").af - 0.01) < 1e-6
+    assert abs(gnomad_af("chr1", 100, "A", "G").af - 0.1) < 1e-6
+
+
+def test_gnomad_failed_load_keeps_the_table(tmp_path, monkeypatch):
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    import pytest
+
+    from annotations import gnomad_af
+    from annotations.loaders.gnomad import load
+
+    load(GNOMAD_VCF, replace=True)
+    empty = _sites_vcf(tmp_path / "empty.vcf", "AF_grpmax", [])
+    with pytest.raises(RuntimeError):
+        load(empty, replace=True)
+    assert gnomad_af("chr7", 117488888, "A", "C") is not None

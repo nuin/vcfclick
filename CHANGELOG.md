@@ -344,6 +344,64 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The annotation store opens read-only for every lookup and runs no DDL,
+  so two `db trio` runs, the web UI and the MCP server read it at once,
+  and a mode-444 store answers. A store another process is writing used
+  to read as "nothing loaded" in `db trio` (exit 0, empty `genes`,
+  `clinvar` and `gnomad_popmax`) and as a raw DuckDB traceback in
+  `db trio --genes`. Every command now stops with exit 1 and
+  `the annotation store PATH cannot be opened for reading: another
+  process (PID n) has it open for writing`. Loaders keep the writer.
+- Annotation loaders (`annotations load`, `load-transcripts`,
+  `load-clinvar`, `load-gnomad`, `load-hgnc`) parse the input first and
+  swap the rows in one transaction. `annotations load` with a truncated
+  GFF, or one with no `gene` rows, used to empty `refseq_genes` before it
+  failed; the old rows now stay. `load-transcripts` also accepts a GFF
+  with no CDS rows.
+- `annotations load-gnomad` reads the group-max AF from `AF_grpmax` (v4)
+  or `AF_popmax` (v2.1.1, v3.x). A v3 or v2 file used to store no
+  group-max AF, so popmax fell back to the overall AF and
+  `--gnomad-max-af` kept variants common in one ancestry. The loader
+  warns with the count of records that carry neither key. It also
+  streams the VCF in batches of 1,000,000 records through a scratch
+  DuckDB file and reads only the AF keys from INFO, so a full
+  per-chromosome sites VCF no longer has to fit in memory twice.
+- ClinVar and gnomAD lookups match a contig however the cohort spells it,
+  as gene lookups already did. A cohort with bare contigs (`17`, `X`,
+  `MT`) found no ClinVar or gnomAD record, so `db trio` showed a blank
+  `clinvar` column and `--gnomad-max-af` kept every candidate as absent;
+  `benchmark` stratification called every variant novel. `clinvar_lookup`,
+  `gnomad_af`, `clinvar_many` and `gnomad_af_many` (and the MCP tools)
+  now try every alias and answer under the caller's spelling. The ClinVar
+  and gnomAD loaders store the canonical `chr` name (`load-gnomad` used to
+  keep the file's spelling), and the gate report's gnomAD coverage check
+  compares canonical names.
+- `annotations load-clinvar` without `--vcf` reused its first download
+  forever, although its docstring said the cache was replaced, so ClinVar
+  never refreshed. The cache is now fetched again when older than 7 days.
+  The ClinVar and GENCODE downloads write a `.part` file with a 60 s
+  socket timeout, check the size against `Content-Length`, and rename it
+  into place only when complete: an interrupted download used to leave a
+  truncated cache that every later run failed on.
+- `db trio --genes NEWSYM` resolves a gene HGNC renamed after the GENCODE
+  release in the store, which still holds it as OLDSYM: the current symbol
+  now follows HGNC's previous-symbol row to the stored gene (`resolved_by`
+  counts it as `previous`). Before, an approved symbol absent from the
+  store was unresolved, and the default strict mode refused the run.
+- `db export --gene`, `db popgen --gene`, `db gene`, the TUI and the MCP
+  `position_for_gene` tool take the tokens `db trio --genes` takes. A
+  token that is no stored symbol now resolves as an Ensembl gene id and,
+  after `annotations load-hgnc`, a previous symbol, alias, HGNC or Entrez
+  id; it used to be "not found". A stored symbol answers as before.
+- `annotations load` keeps both copies of a pseudo-autosomal gene (SHOX,
+  XG: GENCODE lists a chrX row and a `_PAR_Y` chrY row). It kept the first
+  row of a symbol, so the chrY copy was dropped: chrY PAR variants had no
+  gene label and `--genes SHOX` built only the chrX interval. `refseq_genes`
+  is now keyed on `(gene_symbol, chrom)`; a replacing load rebuilds an
+  older table. A symbol listed twice on one contig keeps its first locus,
+  and the loader logs how many rows it dropped. `scope.genes.genes` still
+  counts SHOX as one gene, and the "matched on chrX only" note appears only
+  for a store loaded before this change.
 - `db export` sizes its windows by genotype rows: 1,000,000 rows divided
   by the sample count, between 200 and 50,000 variants. Windows are cut at
   every Nth selected variant in position order, so a clustered exome no

@@ -208,7 +208,7 @@ Options:
 
 ### db gene
 
-Every variant in a gene (HGNC symbol), with how many samples carry it and how many are homozygous. Needs gene coordinates loaded once with [`annotations load`](#annotations-load); `chr17` and `17` naming both match.
+Every variant in a gene (HGNC symbol), with how many samples carry it and how many are homozygous. Needs gene coordinates loaded once with [`annotations load`](#annotations-load); `chr17` and `17` naming both match. The gene may also be an Ensembl gene id and, after [`annotations load-hgnc`](#annotations-load-hgnc), a previous symbol, an alias, an HGNC or Entrez id, as for `db trio --genes`; `db export --gene` and `db popgen --gene` take the same tokens.
 
 ```bash
 vcfclick db gene brca_cohort BRCA1

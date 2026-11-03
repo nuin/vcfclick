@@ -123,7 +123,9 @@ or an Ensembl gene id (`ENSG00000147894`, version ignored). After the optional
 `vcfclick annotations load-hgnc hgnc_complete_set.txt` (the HGNC complete-set
 TSV you download from genenames.org), also a previous symbol, an alias, an
 HGNC id (`HGNC:28337`) or an Entrez id; a token that names two genes is not
-resolved. `--genes` takes a comma list and repeats; `--gene-file` reads one
+resolved. A gene HGNC renamed after the GENCODE release in the store (the
+store has the old symbol) resolves by its current symbol too, through HGNC's
+previous-symbol row, and counts as `previous` in `resolved_by`. `--genes` takes a comma list and repeats; `--gene-file` reads one
 token per line (`#` starts a comment); typed together, the two are joined.
 
 **Unresolved genes are an error** for a list of 20 tokens or fewer with any
@@ -136,8 +138,11 @@ stdout and the tokens in `scope.genes.unresolved`. Without
 **A gene is its GENCODE span**, start to end, introns and UTRs included, so a
 splice-region variant is inside it; a promoter is not, which is what
 `--gene-flank BP` is for. The annotation store is GRCh38 with one locus per
-symbol: a pseudo-autosomal gene is matched on chrX only (the run says so), and
-a database known to be GRCh37 (`--build GRCh37`) refuses a gene list. When the
+symbol and contig: a pseudo-autosomal gene (SHOX, XG) is matched on chrX and
+chrY and counts as one gene. A store loaded before vcfclick kept both copies
+holds the chrX one only (the run says so; `vcfclick annotations load` again
+stores both). A database known to be GRCh37 (`--build GRCh37`) refuses a gene
+list. When the
 build cannot be told from the data, the run notes that it is not verified.
 
 **Regions** are `chrN:FROM-TO`, 1-based and inclusive, in either contig

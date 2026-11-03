@@ -1223,7 +1223,11 @@ def _gnomad_coverage(
     the cohort has no variants to judge it by."""
     if not variants.n or not variants.chroms:
         return None, []
-    covered = sum(n for chrom, n in variants.chroms if chrom in gnomad_chroms)
+    from storage.contigs import canonical_chrom
+
+    # the lookups match a contig under any spelling, so the coverage does too
+    held = {canonical_chrom(c) for c in gnomad_chroms}
+    covered = sum(n for chrom, n in variants.chroms if canonical_chrom(chrom) in held)
     return covered / variants.n, [c for c, _ in variants.chroms]
 
 
