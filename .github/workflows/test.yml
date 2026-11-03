@@ -177,3 +177,42 @@ jobs:
       - name: Run timing gates
         timeout-minutes: 20
         run: uv run pytest tests/test_trio_timing.py -v -m timing
+
+  # Wheel smoke test. The test matrix runs from the source tree, where every
+  # package imports whether or not the build ships it. The 0.14.3 wheel
+  # had no vcfclick_web/ because `uv build` builds the wheel from the sdist
+  # and the sdist include list omitted the package. This job builds from a
+  # `git archive` export (what release.yml and bioconda see), installs the
+  # wheel into a venv with no source tree on sys.path and imports the two
+  # front-end packages that a source-tree run cannot prove are packaged.
+  wheel_smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Install Python 3.13
+        run: uv python install 3.13
+
+      - name: Build sdist + wheel from a git archive export
+        run: |
+          mkdir -p "$RUNNER_TEMP/export"
+          git archive HEAD | tar -x -C "$RUNNER_TEMP/export"
+          uv build --project "$RUNNER_TEMP/export" --out-dir "$RUNNER_TEMP/dist"
+          ls -l "$RUNNER_TEMP/dist"
+
+      - name: Install the wheel into a clean venv
+        run: |
+          uv venv --python 3.13 "$RUNNER_TEMP/venv"
+          WHEEL=$(ls "$RUNNER_TEMP"/dist/*.whl)
+          uv pip install --python "$RUNNER_TEMP/venv/bin/python" "vcfclick[web] @ file://$WHEEL"
+
+      - name: Import the packaged front-ends and run the CLI
+        # Runs from $RUNNER_TEMP so the checkout is not on sys.path: an
+        # import that succeeds here comes from the installed wheel.
+        working-directory: ${{ runner.temp }}
+        run: |
+          "$RUNNER_TEMP/venv/bin/python" -c "import vcfclick_web.app, vcfclick_mcp.server; print('vcfclick_web and vcfclick_mcp import from the wheel')"
+          "$RUNNER_TEMP/venv/bin/vcfclick" --help
