@@ -26,14 +26,6 @@ def _vcf(tmp_path, name, samples, sites):
 
 
 @pytest.mark.parametrize("backend", BACKENDS)
-def test_stats_sample_count_is_a_tuple_distinct_on_both_engines(backend, monkeypatch):
-    monkeypatch.setenv("VCFCLICK_BACKEND", backend)
-    from cli.db_stats import distinct_sample_pair_expr
-
-    assert distinct_sample_pair_expr() == "count(DISTINCT (ingest_id, sample_id))"
-
-
-@pytest.mark.parametrize("backend", BACKENDS)
 def test_stats_counts_distinct_sample_pairs_not_concatenations(
     backend, vcfclick_home, tmp_path
 ):
