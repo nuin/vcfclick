@@ -161,7 +161,10 @@ the variant-level gates: the `INFO/AF` share behind `info_af.bound` and
 `gate_partial`, `filter_column.non_pass_variants` behind `pass_only_no_labels`,
 and the gnomAD chromosome coverage and probe are counted over the variants
 inside the scope, so a region with no `INFO/AF` and no `FILTER` label reports
-both gates unbound however the rest of the cohort looks. The text output gains a
+both gates unbound however the rest of the cohort looks. One gap remains: the
+compound-het pool holds the candidate rows inside the scope, so a partner the
+run keeps just outside a listed region (`in_scope: false`) is shown but its
+GQ / DP / AD are not in the rows the gates are judged on. The text output gains a
 `  scope: 3 genes; gene spans only ...` line under `trio:`; the JSON a
 `scope` object (see [Machine-readable output](#machine-readable-output)). A
 preset can carry `genes`, `genes_label`, `exclude_genes`, `gene_flank`,
@@ -279,11 +282,15 @@ The X model applies the quality gates only to the roles a pattern reads:
   `--pass-only` apply as for the other models. gnomAD hemizygote counts are not
   in the annotation store, so this is a stand-in, not a prevalence-derived cap.
 
-The effective-gate report of a preset run judges the X model on the roles
-its gates read: the proband, the father (hemizygous 0 or 2) and the mother,
-whose het calls are held to the allele-balance band. It does not know the
-proband's sex at that point, so a son's father is judged too, which can only
-make the report stricter. A `--strict-missing` run counts what it dropped
+The effective-gate report of a preset run judges the X model on its own
+candidate rows: the non-PAR chrX sites that match its patterns for the
+proband's sex and pass its rarity and FILTER gates, before any quality gate
+(one grouped count over the same pivot the model runs). Of those rows it reads
+the roles its gates read: the proband, the father (hemizygous 0 or 2) and the
+mother, whose het calls are held to the allele-balance band. A son's father is
+judged too, which can only make the report stricter. A blocked X model (no
+chrX data, unknown sex, a build conflict) has no pool, and its gates fall back
+to the sample's stored rows, as for any model with no candidate rows. A `--strict-missing` run counts what it dropped
 from `xlinked` after the run, as for the other models. The female compound
 het uses the X model's gates (the father at the male DP floor).
 

@@ -118,6 +118,13 @@ def _no_father_dp_off_comphet(chrom, pos, i, call):
     return f"{gt}:{ad}:{gq}:." if i == 1 and pos == 85_000 else call
 
 
+def _no_proband_gq_on_x(chrom, pos, i, call):
+    """GQ removed from the proband's chrX calls: 2 of the proband's 20 rows,
+    so the share over all of them is 90% while the X candidates have none."""
+    gt, ad, gq, dp = call.split(":")
+    return f"{gt}:{ad}:.:{dp}" if i == 0 and chrom == "chrX" else call
+
+
 def _no_father_dp_at(chrom, pos, i, call):
     """The father's DP removed at 59 kb (C12orf57's maternal partner, outside
     chr7:50000-56000) and at 72 kb (OTHER1's paternal het)."""
@@ -142,6 +149,7 @@ def world(backend, tmp_path_factory):
         "s": _edited_vcf(base / "nodp.vcf", _no_father_dp_at),
         "a": _edited_vcf(base / "afout.vcf", _keep_call, _af_out_labels_out),
         "d": _edited_vcf(base / "nodp2.vcf", _no_father_dp_off_comphet),
+        "x": _edited_vcf(base / "noxgq.vcf", _no_proband_gq_on_x),
     }
     for db, vcf in (
         ("c", FIXTURES / "scope.vcf.gz"),
@@ -499,7 +507,9 @@ def test_the_variant_level_gates_are_judged_inside_the_scope(world):
     codes = {(w["code"], w["key"]) for w in eff["warnings"]}
     assert ("pass_only_no_labels", "pass_only") in codes
     assert ("gate_unbound", "max_af") in codes
-    [msg] = [w["message"] for w in eff["warnings"] if w["code"] == "pass_only_no_labels"]
+    [msg] = [
+        w["message"] for w in eff["warnings"] if w["code"] == "pass_only_no_labels"
+    ]
     assert "inside the run's scope" in msg
     r = trio(world, "a", *args, *region, "--require-bound-gates", ok=False)
     assert "max_af" in r.stderr
@@ -544,3 +554,20 @@ def test_a_presets_regions_build_follows_its_exclusions_too(world, tmp_path):
     again = json.loads((world.home / "presets" / "ex37-again.json").read_text())
     assert again["filters"]["regions_build"] == "GRCh37"
     assert again["filters"]["exclude_regions"] == ["chr1:1-100"]
+
+
+def test_the_x_model_is_judged_on_its_own_candidate_rows(world):
+    """The proband's GQ is on 90% of its rows but on none of its chrX calls.
+    --category xlinked reads only those, so min_gq cannot bind there; judged
+    on the whole sample it would. The pool is the X model's candidates."""
+    args = ("--category", "xlinked", "--build", "GRCh38", "--min-gq", "20",
+            "--strict-missing")  # fmt: skip
+    r = trio(world, "x", *args, ok=False)
+    assert "min_gq" in r.stderr and "xlinked candidate sites" in r.stderr
+    doc = jtrio(world, "x", *args, "--no-require-bound-gates")
+    assert doc["models"]["xlinked"]["count"] == 2
+    assert doc["effective"]["gq"]["bound"] is False
+    # the autosomal models still read their own rows, which all carry GQ
+    dom = jtrio(world, "x", "--category", "dominant", "--min-gq", "20",
+                "--strict-missing")  # fmt: skip
+    assert dom["effective"]["gq"]["bound"] is True

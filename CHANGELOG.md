@@ -209,6 +209,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `db trio --category xlinked`: the effective-gate report judges the X
+  model's GQ / DP / AD gates on its own candidate rows (non-PAR chrX
+  sites matching its patterns for the proband's sex, after the rarity and
+  FILTER gates), as it does for the other models. They were judged on
+  the sample's rows genome-wide, so a caller that left GQ off chrX could
+  report `min_gq` bound while `--strict-missing` dropped every X
+  candidate. Values only: no key changes.
 - `db trio` with a scope (`--genes`, `--region`, a preset's lists): the
   effective-gate report counts the variant-level gates over the variants
   inside the scope. `effective.info_af.bound` (the `INFO/AF` share),

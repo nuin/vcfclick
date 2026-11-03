@@ -217,6 +217,11 @@ def attach_gate_reports(
             )
             if m not in blocked
         ]
+        x_pool = None
+        if "xlinked" in wanted:
+            ctx = analysis.x_context()
+            if ctx.has_x and ctx.blocked_reason is None:
+                x_pool = (ctx.proband_sex, ctx.region_build)
         return collect_candidate_stats(
             sess,
             analysis.trio,
@@ -225,6 +230,7 @@ def attach_gate_reports(
             filter_present=filter_present,
             x_guard=analysis.x_guard_sql(),
             scope=analysis.scope,
+            x_pool=x_pool,
         )
 
     def strict_check(analysis: TrioAnalysis) -> tuple[str, ...]:

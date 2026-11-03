@@ -434,6 +434,8 @@ def _candidate_stats(
         n = int(row[3])
         sites += n
         for i, role in enumerate(_ROLES):  # proband g, father f, mother m
+            if row[i] is None:  # no stored row (the X pivot): nothing to read
+                continue
             tally = tallies[role].setdefault(genotype_class(int(row[i])), [0, 0, 0, 0])
             tally[0] += n
             for j in range(3):  # gq, dp, ad
@@ -461,18 +463,30 @@ def collect_candidate_stats(
     filter_present: bool = True,
     x_guard: str | None = None,
     scope=None,
+    x_pool: tuple[str, str] | None = None,
 ) -> dict[str, CandidateStats]:
     """For each of `models` that has a genotype predicate, what the rows at its
     candidate sites carry (`candidate_presence_sql`: the sites `gates` keep, when
     given). One grouped count per distinct predicate (compound het reads the
-    dominant pattern and shares its count). A model without one, or a trio without
-    both parents, is left out, and its gates are judged on the sample's stored rows
-    instead."""
+    dominant pattern and shares its count). The X model's pool is its own count
+    over the NPX pivot (cli/xlinked.candidate_presence_sql), given its proband's
+    sex and region build (`x_pool`). A model without a pool, or a trio without
+    both parents, is left out, and its gates are judged on the sample's stored
+    rows instead."""
     out: dict[str, CandidateStats] = {}
     if trio.father is None or trio.mother is None:
         return out
     by_predicate: dict[str, CandidateStats] = {}
     for model in models:
+        if model == "xlinked" and x_pool is not None and gates is not None:
+            from cli.xlinked import candidate_presence_sql as x_presence_sql
+
+            sql = x_presence_sql(
+                trio, gates, *x_pool, filter_present=filter_present, scope=scope
+            )
+            data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+            out[model] = _candidate_stats(model, data, scope)
+            continue
         predicate = MODEL_PREDICATES.get(model)
         if predicate is None:
             continue
@@ -1557,6 +1571,13 @@ def _effective_scope_sql(trio: Trio, gates: Gates, scope) -> list:
         (sample_stats_sql(trio.ingest_id, samples, scope)[0], "stats", "genotypes")
     )
     out.append((variant_stats_sql(trio.ingest_id, scope=scope)[0], "stats", "v"))
+    from cli.xlinked import candidate_presence_sql as x_presence_sql
+
+    if trio.father and trio.mother:
+        for sex in ("male", "female"):
+            out.append(
+                (x_presence_sql(trio, gates, sex, "GRCh38", scope=scope), "stats", "t")
+            )
     return out
 
 
