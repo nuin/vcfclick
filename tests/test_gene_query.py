@@ -91,7 +91,10 @@ def test_flank_limit_and_case(vcfclick_home, tiny_vcf, gene_store):
     ] == [100, 250, 500, 750, 900]
     limited = _gene(vcfclick_home, "GENEX", "--limit", "2")
     assert limited["row_count"] == 2 and limited["truncated"] is True
-    assert [(r["pos"], r["carriers"]) for r in limited["variants"]] == [(250, 1), (500, 3)]
+    assert [(r["pos"], r["carriers"]) for r in limited["variants"]] == [
+        (250, 1),
+        (500, 3),
+    ]
 
 
 def test_carriers_are_counted_only_for_the_listed_variants():
