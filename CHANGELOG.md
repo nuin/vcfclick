@@ -302,6 +302,22 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db query --format` on DuckDB prints what chDB prints. `JSON` came out
+  as arrays with no column types (the desktop apps read `meta[].type` and
+  one object per row), `CSVWithNames` and `TSVWithNames` dropped the
+  header, `JSONEachRow` and `TSVWithNames` fell through to a box table,
+  every float went through six significant digits (`1234567.25` printed
+  as `1.23457e+06`), CSV left strings unquoted, TSV escaped no tab,
+  newline or backslash, and an unknown format name printed a box table.
+  Now `JSON`, `JSONCompact`, `JSONEachRow`, `TSV`, `TSVWithNames`, `CSV`
+  and `CSVWithNames` match chDB byte for byte, except that a type name has
+  no `Nullable(...)` / `LowCardinality(...)` wrapper and `statistics`
+  holds `elapsed` only. An unknown format raises. Code that parses
+  DuckDB's `JSONCompact` now reads a REAL as its Float32 text (`0.33`, not
+  `0.33000001311302185`) and an integral float as an integer, as on chDB.
+  So `db trio` on DuckDB prints `"af": 0.05` and `AF=0.05`, as chDB
+  does, where it printed `0.05000000074505806`; the DuckDB trio goldens
+  are now identical to the chDB ones.
 - One string-literal quoting rule per backend. `sql_quote_str` doubled
   backslashes on DuckDB too, where a backslash is a plain character, so a
   sample id or cohort such as `DOM\kid` quoted to a literal that never

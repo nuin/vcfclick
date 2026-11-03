@@ -131,6 +131,18 @@ Use it when:
 Current caveat: `vcfclick db stats` is not yet implemented for DuckDB.
 Use `vcfclick db info` for basic counts.
 
+`vcfclick db query --format` prints the same bytes on DuckDB as on chDB
+for `JSON`, `JSONCompact`, `JSONEachRow`, `TSV` (`TabSeparated`),
+`TSVWithNames`, `CSV` and `CSVWithNames`. Three parts differ:
+
+- a type name in `meta` has no `Nullable(...)` or `LowCardinality(...)`
+  wrapper (`Float32` where chDB says `Nullable(Float32)`);
+- `statistics` holds `elapsed` only, with no `rows_read` or `bytes_read`;
+- there is no `rows_before_limit_at_least`.
+
+`PrettyCompact`, `Pretty` and `Vertical` print a plain approximation of
+chDB's box tables. Any other format name is an error, as on chDB.
+
 ## Move Data Between Backends
 
 Do not copy backend directories between engines. Use Parquet:

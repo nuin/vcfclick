@@ -39,7 +39,7 @@
           "proband_gt": 2,
           "father_gt": 1,
           "mother_gt": 1,
-          "af": 0.20000000298023224,
+          "af": 0.2,
           "genes": [],
           "gnomad_popmax": null,
           "clinvar": null
