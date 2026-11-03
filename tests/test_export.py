@@ -294,3 +294,67 @@ def test_bad_inputs_are_reported(vcfclick_home, tiny_vcf, tmp_path):
             ok=False,
         )
         assert r.returncode != 0 and msg in r.stderr, (args, r.stderr)
+
+
+# --- INFO and QUAL rendering ---------------------------------------------------------
+
+
+def test_string_info_with_a_dot_exports_unchanged(vcfclick_home, tmp_path):
+    vcf = tmp_path / "aa.vcf"
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1>\n"
+        '##INFO=<ID=AA,Number=1,Type=String,Description="Ancestral allele">\n'
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\n"
+        "chr1\t100\t.\tA\tG\t50\tPASS\tAA=.\tGT\t0/1\n"
+        "chr1\t200\t.\tC\tT\t50\tPASS\tAA=G.T\tGT\t0/1\n"
+        "chr1\t300\t.\tG\tA\t50\tPASS\tAA=G\tGT\t0/1\n"
+    )
+    _db(vcfclick_home, vcf, "src")
+    recs = _records(_export(vcfclick_home, tmp_path / "out.vcf"))
+    assert [r[7] for r in recs] == ["AA=.", "AA=G.T", "AA=G"]
+    assert any(
+        h.startswith("##INFO=<ID=AA,") and "Type=String" in h
+        for h in _header(tmp_path / "out.vcf")
+    )
+
+
+def test_float_info_and_qual_keep_their_stored_precision(vcfclick_home, tmp_path):
+    vcf = tmp_path / "f.vcf"
+    vcf.write_text(
+        "##fileformat=VCFv4.2\n##contig=<ID=chr1>\n"
+        '##INFO=<ID=AF,Number=A,Type=Float,Description="AF">\n'
+        '##INFO=<ID=MQ,Number=1,Type=Float,Description="MQ">\n'
+        '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+        "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\n"
+        "chr1\t100\t.\tA\tG\t1234567.5\tPASS\tAF=0.123456789;MQ=29.37\tGT\t0/1\n"
+        "chr1\t200\t.\tC\tT\t50\tPASS\tAF=0.5;MQ=60\tGT\t0/1\n"
+    )
+    _db(vcfclick_home, vcf, "src")
+    out = _export(vcfclick_home, tmp_path / "out.vcf")
+    recs = _records(out)
+    # Float32 holds 0.12345679 of 0.123456789; six digits would lose one.
+    assert [(r[5], r[7]) for r in recs] == [
+        ("1234567.5", "AF=0.12345679;MQ=29.37"),
+        ("50", "AF=0.5;MQ=60"),
+    ]
+    _db(vcfclick_home, out, "dst")
+    cols = "pos, qual, info_AF, info_MQ"
+    assert _q(vcfclick_home, "src", f"SELECT {cols} FROM variants ORDER BY pos") == _q(
+        vcfclick_home, "dst", f"SELECT {cols} FROM variants ORDER BY pos"
+    )
+
+
+def test_num_formats_by_column_type():
+    from export.vcf_format import _num
+
+    f32 = "Nullable(Float32)"
+    assert _num(1234567.5, f32) == "1234567.5"
+    assert _num(0.12345679104328156, "REAL") == "0.12345679"  # REAL widened
+    assert _num(29.370000839233398, f32) == "29.37"
+    assert _num(5.0, f32) == "5"
+    assert _num(0.1 + 0.2, "Nullable(Float64)") == "0.30000000000000004"
+    assert _num(0.1 + 0.2, "DOUBLE") == "0.30000000000000004"
+    assert _num("G.T", "Nullable(String)") == "G.T"
+    assert _num(".", "VARCHAR") == "."
+    assert _num(7, "Nullable(UInt32)") == "7"

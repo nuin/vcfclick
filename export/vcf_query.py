@@ -162,6 +162,9 @@ def prepare_export(sess, request: ExportRequest) -> ExportContext:
         info_cols=info_cols,
         has_extra=any(column == "info_extra" for column, _, _ in typed),
         chrom_stats=chrom_stats,
+        qual_type=next(
+            (typ for column, typ, _ in typed if column == "qual"), "Float32"
+        ),
     )
 
 

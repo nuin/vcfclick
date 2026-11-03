@@ -49,6 +49,7 @@ class ExportContext:
     info_cols: list[InfoColumn]
     has_extra: bool
     chrom_stats: list[list[Any]]
+    qual_type: str = "Float32"
     sample_index: dict[str, int] = field(init=False)
     used_info: dict[str, str] = field(default_factory=dict)
     used_extra: set[str] = field(default_factory=set)

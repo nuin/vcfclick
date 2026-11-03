@@ -302,6 +302,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db export` writes a String INFO value as stored. A value with a dot
+  (`AA=.`, the unknown ancestral allele, or `AA=G.T`) was parsed as a
+  number and the export stopped with `could not convert string to float`.
+- `db export` writes Float INFO and QUAL values with the fewest digits that
+  read back as the stored value (up to 9 for Float32, `repr` for Float64).
+  Six digits lost one: `AF=0.123456789` came back `0.123457` and
+  `QUAL=1234567.5` came back `1.23457e+06`, so a re-ingest changed them.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
