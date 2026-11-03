@@ -18,7 +18,7 @@ did-you-mean, never a silent no-op.
 
 Pure: no click, no SQL, no file system. `resolve_filters_from_values` is the
 precedence rule (flag over preset over default) for a caller that has no
-Click context (the web route, the MCP tools, `preset save`).
+Click context (`preset save`; the planned web and MCP preset endpoints).
 """
 
 from __future__ import annotations

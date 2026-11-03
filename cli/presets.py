@@ -13,9 +13,10 @@ A built-in name belongs to the built-in: a user or shared file with that name
 is listed with an error and never used. A name in both the user directory and
 a shared one resolves to the user's with a note. An explicit file path
 (`--preset ./x.json`) is `source=file`, skips the lookup and exists on the
-command line only: the name-only resolver the web and MCP front ends use
-(`load_named`) rejects anything that is not a name before it touches the file
-system, and no error message quotes a file's content.
+command line only: the name-only resolver (`load_named`, and `locate` with
+`allow_path=False`), meant for the web and MCP preset endpoints that are not
+built yet (docs/PRESETS.md), rejects anything that is not a name before it
+touches the file system, and no error message quotes a file's content.
 
 Every lookup, rewrite and delete takes a NAME that has passed `name_problem`,
 whatever the command: a value with a separator, a leading dot or an absolute

@@ -55,7 +55,8 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `starting point, not validated`), or your own. A flag typed next to
   `--preset` wins over it, and `--preset-ignore KEY` switches one key off for
   one run. `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, also for a
-  path) fails the run if the preset's content is not the pinned one;
+  path) fails the run if the preset's stored filter values are not the pinned
+  ones (a pin does not cover what `all` expands to or a default it leaves out);
   `--preset-skip-unavailable` applies the keys this version knows and reports
   the rest. A preset is a JSON file in `$VCFCLICK_HOME/presets`, in a read-only
   directory on `VCFCLICK_PRESET_PATH`, or built in; it holds filter values and

@@ -81,7 +81,10 @@ yours, and the result records it (`from: "flag"`).
 - `--preset NAME@FINGERPRINT` (or `--preset-fingerprint`, which also works with a
   path) makes the run fail if the preset's content is not the one you pinned. For
   a built-in whose revision has moved on, the message says which revision had that
-  fingerprint.
+  fingerprint. The fingerprint covers the values stored in the preset, nothing
+  else: what `category: ["all"]` expands to (`broad-first-pass` revisions 1 and 2
+  share `cd3726cc3853`, and revision 2 runs `xlinked` too) and the registry
+  default of a key the preset leaves out can change while a pin still passes.
 - A key in the preset that this vcfclick does not know (a preset written by a
   newer version, stored with `preset import --allow-unknown-keys`) is an error;
   `--preset-skip-unavailable` applies the rest and says, in the output, that
