@@ -209,6 +209,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- `db relatedness` thins SNVs to `--max-sites` in SQL and fetches genotype
+  rows only for the kept sites, as Arrow, so memory follows `--max-sites`
+  instead of the cohort's whole genotype table. The 20,000-sample limit is
+  checked before the genotype matrix is allocated, and KING-robust sums its
+  matrix products over 10,000-site chunks (peak memory was about 20x the
+  genotype matrix). Kept sites are the ranks floor(i x total / max-sites) in
+  integer arithmetic; the float arithmetic it replaces kept the site before
+  at a few exact-integer boundaries. Output on `tests/fixtures/related.vcf`
+  is unchanged.
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only

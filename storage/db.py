@@ -498,15 +498,17 @@ def upgrade_schema() -> list[str]:
     return added
 
 
-def query_arrow(sql: str) -> pa.Table:
+def query_arrow(sql: str, sess=None) -> pa.Table:
     """Run a SELECT and return the result as a pyarrow Table.
 
     DuckDB hands Arrow over natively; chDB returns an Arrow IPC stream
     (`ArrowStream`), which carries the schema even for an empty result.
     Column types follow the engine, so cast aggregates explicitly in SQL
-    (e.g. `CAST(sum(x) AS BIGINT)`) where both must agree.
+    (e.g. `CAST(sum(x) AS BIGINT)`) where both must agree. `sess` is the
+    session to run on (default: the current DB's).
     """
-    sess = get_session()
+    if sess is None:
+        sess = get_session()
     if backend() == "duckdb":
         return sess.query_arrow(sql)
     import pyarrow.ipc as ipc

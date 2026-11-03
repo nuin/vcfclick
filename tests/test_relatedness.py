@@ -271,3 +271,95 @@ def test_chunked_king_bounds_peak_memory():
     _, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
     assert peak < 16_000_000, peak
+
+
+# --- thinning in SQL --------------------------------------------------------------
+
+
+def _exact_thin(total: int, max_sites: int) -> list[int]:
+    """Indices floor(i * total / max_sites), i < max_sites, in exact integers."""
+    if total <= max_sites:
+        return list(range(total))
+    return [i * total // max_sites for i in range(max_sites)]
+
+
+@pytest.mark.parametrize(
+    "total,max_sites", [(10, 3), (30, 22), (3003, 1000), (3003, 7), (97, 96)]
+)
+def test_thin_predicate_keeps_evenly_spread_sites(total, max_sites):
+    """The SQL predicate on a site's 0-based rank keeps exactly max_sites
+    sites, the ones at floor(i * total / max_sites)."""
+    from cli.relatedness_analysis import _thin_keeps
+
+    kept = [k for k in range(total) if _thin_keeps(k, total, max_sites)]
+    assert kept == _exact_thin(total, max_sites)
+
+
+@pytest.mark.parametrize("max_sites", ["1000", "7"])
+def test_thinned_kinship_matches_the_thinned_fixture(vcfclick_home, max_sites):
+    """Thinning in SQL keeps the same sites as thinning the fixture rows, so
+    kinship equals the single-pass estimator on those rows."""
+    _setup(vcfclick_home, keep_reference=True, ped=False)
+    res = _run(vcfclick_home, "--max-sites", max_sites, "--force")
+    g = _fixture_matrix()
+    rows = _exact_thin(g.shape[0], int(max_sites))
+    assert res["sites_used"] == len(rows) and res["n_sites"] == g.shape[0]
+    want = _king_single_pass(g[rows])
+    names = ["F", "M", "C1", "C2", "D", "U1", "U2"]
+    for p in res["pairs"]:
+        i, j = names.index(p["sample_a"]), names.index(p["sample_b"])
+        assert p["n_sites"] == int(want["n_sites"][i, j])
+        if p["kinship"] is not None:
+            assert p["kinship"] == pytest.approx(want["kinship"][i, j], abs=5e-5)
+
+
+_FETCH_COUNT = """
+import json, sys
+import cli.main  # noqa: F401  (registers the command modules)
+import cli.relatedness_analysis as ra
+from storage import get_session
+fetched = []
+real = ra._arrow
+def spy(sess, sql):
+    t = real(sess, sql)
+    fetched.append(t.num_rows)
+    return t
+ra._arrow = spy
+res = ra.relatedness(get_session("r"), "i1", max_sites=7, include_all=True,
+                     min_kinship=0.0, force=True)
+print("RESULT " + json.dumps({"fetched": fetched, "used": res["sites_used"]}))
+"""
+
+
+def test_genotype_fetch_is_restricted_to_the_thinned_sites(vcfclick_home, run_python):
+    """--max-sites bounds what leaves the database: with 7 sites kept of
+    3,003, at most 7 x 7 genotype rows are fetched."""
+    _setup(vcfclick_home, ped=False)
+    out = run_python(vcfclick_home, _FETCH_COUNT, VCFCLICK_DB_NAME="r")
+    line = [ln for ln in out.splitlines() if ln.startswith("RESULT ")][-1]
+    got = json.loads(line.removeprefix("RESULT "))
+    assert got["used"] == 7
+    assert got["fetched"] and all(n <= 7 * 7 for n in got["fetched"]), got
+
+
+_SAMPLE_GUARD = """
+import click
+import cli.main  # noqa: F401  (registers the command modules)
+import cli.relatedness_analysis as ra
+from storage import get_session
+ra._MAX_SAMPLES = 3
+def boom(*a, **k):
+    raise AssertionError("genotype matrix built before the sample-count check")
+ra._genotype_matrix = boom
+try:
+    ra.relatedness(get_session("r"), "i1", max_sites=200000, include_all=False,
+                   min_kinship=0.0442)
+except click.ClickException as e:
+    print("REFUSED " + e.message)
+"""
+
+
+def test_sample_cap_is_checked_before_the_matrix_is_built(vcfclick_home, run_python):
+    _setup(vcfclick_home, ped=False)
+    out = run_python(vcfclick_home, _SAMPLE_GUARD, VCFCLICK_DB_NAME="r")
+    assert "REFUSED 7 samples" in out, out

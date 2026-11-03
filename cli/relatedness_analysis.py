@@ -172,21 +172,99 @@ def _rows(sess, sql: str) -> list[list]:
     return json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
 
 
-def _span_bp(sites: list[list]) -> int:
-    """Total genomic span covered by the sites: sum over chromosomes of max - min."""
-    by_chrom: dict[str, list[int]] = {}
-    for chrom, pos, *_ in sites:
-        lo_hi = by_chrom.setdefault(chrom, [int(pos), int(pos)])
-        lo_hi[0] = min(lo_hi[0], int(pos))
-        lo_hi[1] = max(lo_hi[1], int(pos))
-    return sum(hi - lo for lo, hi in by_chrom.values())
+def _arrow(sess, sql: str):
+    from storage.db import query_arrow
+
+    return query_arrow(sql, sess)
+
+
+def _thin_keeps(k: int, total: int, max_sites: int) -> bool:
+    """True when the site of 0-based rank k is one of the max_sites kept,
+    the ranks floor(i * total / max_sites). Mirrors `_thin_sql`."""
+    if total <= max_sites:
+        return True
+    r = (k * max_sites) % total
+    return r == 0 or r > total - max_sites
+
+
+def _thin_sql(col: str, total: int, max_sites: int) -> str:
+    """SQL form of `_thin_keeps` on the rank column `col`. Integer
+    arithmetic only, so both backends keep the same sites."""
+    if total <= max_sites:
+        return "1 = 1"
+    m, t = int(max_sites), int(total)
+    return f"(({col} * {m}) % {t} = 0 OR ({col} * {m}) % {t} > {t - m})"
+
+
+def _kept_sites_cte(where: str, total: int, max_sites: int) -> str:
+    """`WITH ... kept AS (chrom, pos, ref, alt, i)`: the thinned SNV sites,
+    with i their 0-based row in the genotype matrix."""
+    return (
+        "WITH ranked AS (SELECT chrom, pos, ref, alt, "
+        "row_number() OVER (ORDER BY chrom, pos, ref, alt) - 1 AS k "
+        f"FROM variants WHERE {where}), "
+        "kept AS (SELECT chrom, pos, ref, alt, "
+        "row_number() OVER (ORDER BY k) - 1 AS i "
+        f"FROM ranked WHERE {_thin_sql('k', total, max_sites)}) "
+    )
+
+
+def _kept_join(alias: str) -> str:
+    return " AND ".join(
+        f"{alias}.{c} = kept.{c}" for c in ("chrom", "pos", "ref", "alt")
+    )
+
+
+def _fill(g: np.ndarray, table, samples: list[str], value: int | None) -> None:
+    """Write `table`'s rows (i, sample_id[, gt]) into g: gt, or `value`."""
+    import pyarrow as pa
+    import pyarrow.compute as pc
+
+    if table.num_rows == 0:
+        return
+    rows = np.asarray(table.column("i").to_numpy(), dtype=np.int64)
+    ids = pc.cast(table.column("sample_id"), pa.string())
+    cols = pc.fill_null(pc.index_in(ids, value_set=pa.array(samples, pa.string())), -1)
+    cols = np.asarray(cols.to_numpy(), dtype=np.int64)
+    if value is None:
+        vals = np.asarray(table.column("gt").to_numpy(), dtype=np.int64)
+        ok = (cols >= 0) & (vals >= 0)
+    else:
+        vals = np.full(len(rows), value, dtype=np.int64)
+        ok = cols >= 0
+    g[rows[ok], cols[ok]] = vals[ok].astype(np.int8)
+
+
+def _genotype_matrix(
+    sess, q: str, cte: str, n_sites: int, samples: list[str], keep_ref: bool
+) -> np.ndarray:
+    """(sites x samples) int8 alt-allele counts over the kept sites, -1 for a
+    no-call. Only the kept sites' rows leave the database."""
+    g = np.full((n_sites, len(samples)), -1 if keep_ref else 0, dtype=np.int8)
+    min_gt = 0 if keep_ref else 1
+    _fill(
+        g,
+        _arrow(
+            sess,
+            f"{cte}SELECT kept.i AS i, g.sample_id AS sample_id, g.gt AS gt "
+            f"FROM genotypes g INNER JOIN kept ON {_kept_join('g')} "
+            f"WHERE g.ingest_id = {q} AND g.gt >= {min_gt}",
+        ),
+        samples,
+        None,
+    )
+    return g
 
 
 def _load(
     sess, ingest_id: str, max_sites: int
 ) -> tuple[list[str], np.ndarray, str, int, int]:
-    """Samples, (sites x samples) matrix, mode, total SNV sites, genomic span."""
+    """Samples, (sites x samples) matrix, mode, total SNV sites, genomic span.
+
+    Refuses a cohort above _MAX_SAMPLES before anything is allocated.
+    """
     from cli.db_diff import _quote_str
+    from storage.sql import to_int64
 
     q = _quote_str(ingest_id)
     samples = [
@@ -196,39 +274,30 @@ def _load(
             f"SELECT DISTINCT sample_id FROM samples WHERE ingest_id = {q} ORDER BY sample_id",
         )
     ]
-    keep_ref = (
-        int(
-            _rows(
-                sess, f"SELECT count(*) FROM genotypes WHERE ingest_id = {q} AND gt = 0"
-            )[0][0]
+    if len(samples) > _MAX_SAMPLES:
+        raise click.ClickException(
+            f"{len(samples):,} samples in {ingest_id!r}; pairwise kinship above {_MAX_SAMPLES:,} "
+            "samples needs more memory than this command uses."
         )
-        > 0
+    keep_ref = bool(
+        _rows(
+            sess,
+            f"SELECT 1 FROM genotypes WHERE ingest_id = {q} AND gt = 0 LIMIT 1",
+        )
     )
-    snv = "length(ref) = 1 AND length(alt) = 1"
-    sites = _rows(
-        sess,
-        f"SELECT chrom, pos, ref, alt FROM variants WHERE ingest_id = {q} AND {snv} ORDER BY chrom, pos, ref, alt",
+    where = f"ingest_id = {q} AND length(ref) = 1 AND length(alt) = 1"
+    total = int(_rows(sess, f"SELECT count(*) FROM variants WHERE {where}")[0][0])
+    span = int(
+        _rows(
+            sess,
+            f"SELECT {to_int64('coalesce(sum(s), 0)')} FROM ("
+            f"SELECT max(pos) - min(pos) AS s FROM variants WHERE {where} "
+            "GROUP BY chrom) t",
+        )[0][0]
     )
-    total = len(sites)
-    span = _span_bp(sites)
-    if total > max_sites:
-        # Deterministic, evenly spread thinning keeps memory bounded.
-        step = total / max_sites
-        sites = [sites[int(i * step)] for i in range(max_sites)]
-    site_index = {tuple(s): i for i, s in enumerate(sites)}
-    sample_index = {s: j for j, s in enumerate(samples)}
-
-    g = np.full((len(sites), len(samples)), -1 if keep_ref else 0, dtype=np.int8)
-    min_gt = 0 if keep_ref else 1
-    for chrom, pos, ref, alt, sample_id, gt in _rows(
-        sess,
-        f"SELECT chrom, pos, ref, alt, sample_id, gt FROM genotypes "
-        f"WHERE ingest_id = {q} AND {snv} AND gt >= {min_gt}",
-    ):
-        i = site_index.get((chrom, pos, ref, alt))
-        j = sample_index.get(sample_id)
-        if i is not None and j is not None and int(gt) >= 0:
-            g[i, j] = int(gt)
+    n_sites = min(total, max_sites)
+    cte = _kept_sites_cte(where, total, max_sites)
+    g = _genotype_matrix(sess, q, cte, n_sites, samples, keep_ref)
     return samples, g, "keep-reference" if keep_ref else "sparse", total, span
 
 
@@ -274,11 +343,6 @@ def relatedness(
             )
         )
     classify_pairs = warning is None or force
-    if len(samples) > _MAX_SAMPLES:
-        raise click.ClickException(
-            f"{len(samples):,} samples in {ingest_id!r}; pairwise kinship above {_MAX_SAMPLES:,} "
-            "samples needs more memory than this command uses."
-        )
     stats = king_robust(g) if len(samples) and g.shape[0] else None
 
     pair = partial(_pair, stats, samples, classify_pairs)
