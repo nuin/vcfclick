@@ -110,6 +110,14 @@ def _af_out_labels_out(f: list[str]) -> list[str]:
     return f
 
 
+def _no_father_dp_off_comphet(chrom, pos, i, call):
+    """The father's DP removed at dom_out (85 kb), an intergenic paternal het
+    that pairs with no maternal het: the compound-het report never shows it,
+    with strict_missing or without. (One row in ten, so the DP gate binds.)"""
+    gt, ad, gq, dp = call.split(":")
+    return f"{gt}:{ad}:{gq}:." if i == 1 and pos == 85_000 else call
+
+
 def _no_father_dp_at(chrom, pos, i, call):
     """The father's DP removed at 59 kb (C12orf57's maternal partner, outside
     chr7:50000-56000) and at 72 kb (OTHER1's paternal het)."""
@@ -133,6 +141,7 @@ def world(backend, tmp_path_factory):
         "q": _edited_vcf(base / "nogq.vcf", _no_gq_from_70kb),
         "s": _edited_vcf(base / "nodp.vcf", _no_father_dp_at),
         "a": _edited_vcf(base / "afout.vcf", _keep_call, _af_out_labels_out),
+        "d": _edited_vcf(base / "nodp2.vcf", _no_father_dp_off_comphet),
     }
     for db, vcf in (
         ("c", FIXTURES / "scope.vcf.gz"),
@@ -494,3 +503,21 @@ def test_the_variant_level_gates_are_judged_inside_the_scope(world):
     assert "inside the run's scope" in msg
     r = trio(world, "a", *args, *region, "--require-bound-gates", ok=False)
     assert "max_af" in r.stderr
+
+
+@pytest.mark.parametrize(
+    "scope",
+    [(), ("--exclude-region", "chr7:1-100"), ("--region", "chr7:1-100000")],
+    ids=["none", "exclude-only", "include"],
+)
+def test_comphet_strict_count_is_about_shown_genes_in_every_scope_form(world, scope):
+    """strict_missing drops a paternal het that no compound het shows, with it
+    or without: the count is 0 whatever form the scope takes (it was 1 without
+    an include scope)."""
+    args = ("--category", "comphet", "--strict-missing", "--min-dp", "10", *scope)
+    doc = jtrio(world, "d", *args)
+    assert doc["effective"]["dp"]["bound"] is True  # the strict gate is in force
+    plain = jtrio(world, "d", "--category", "comphet", "--min-dp", "10", *scope)
+    assert names(doc, "comphet") == names(plain, "comphet")
+    codes = [w["code"] for w in doc["effective"]["warnings"]]
+    assert "strict_missing_dropped" not in codes

@@ -316,6 +316,14 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The `strict_missing_dropped` count for `comphet` counted every
+  dominant-pattern het strict_missing dropped unless the run had an
+  include scope, so a run with no scope or with exclusions only warned
+  about hets in genes that form no compound het ("`--no-strict-missing`
+  lists them" when it does not). It now counts, in every scope form,
+  only the dropped variants in a gene the report shows without
+  strict_missing. The listed candidates were right; the warning count
+  was inflated.
 - Preset names and keys. `name_problem` accepted a name with a trailing
   line break (`rare-recessive\n`), so `preset save` wrote a file with a
   line break in its name that `preset list` showed as a second

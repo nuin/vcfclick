@@ -869,11 +869,9 @@ class TrioAnalysis:
         if category not in MODEL_PREDICATES:
             return 0
         guard = self.x_guard_sql()
-        grouped = (
-            category == "comphet"
-            and self.scope is not None
-            and self.scope.include is not None
-        )
+        # compound het counts only the dropped variants in a gene its report
+        # can show, whatever form the scope takes (none, exclusions, inclusions)
+        grouped = category == "comphet"
         if self._count_in_sql() and not grouped:
             sql = strict_dropped_sql(
                 category, self.trio, gates, count_only=True, x_guard=guard,
@@ -900,7 +898,7 @@ class TrioAnalysis:
         return len(_gnomad_filter(rows, self.gnomad_max_af))
 
     def _comphet_dropped_by_strict(self, rows: list) -> int:
-        """With an include scope: of the compound-het variants strict_missing
+        """Of the compound-het variants strict_missing
         dropped (`rows`, exclusions applied), those in a gene the compound-het
         rule keeps in the same run without strict_missing, so the count is
         about the genes the report can show."""
