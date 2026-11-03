@@ -132,3 +132,27 @@ def test_point_lookups_miss_on_an_impossible_position(tmp_path, monkeypatch):
     for pos in (-1, 2**32, 2**40):
         assert gnomad_af("chr1", pos, "A", "C") is None
         assert clinvar_lookup("chr1", pos, "A", "C") is None
+
+
+def test_gnomad_chromosomes_are_kept_at_load(tmp_path, monkeypatch):
+    """The chromosomes gnomAD has records on are written when it is loaded,
+    so a gated trio run reads a small table instead of scanning gnomad_af
+    for DISTINCT chrom. A store whose rows did not come through the loader
+    (an older store, a seeded test store) still answers by the scan."""
+    monkeypatch.setenv("VCFCLICK_ANNOTATIONS_DB", str(tmp_path / "ann.duckdb"))
+    from annotations.db import get_connection, gnomad_chromosomes
+    from annotations.loaders.gnomad import load
+
+    assert gnomad_chromosomes() == frozenset()
+    _seed_gnomad([("chr1", 10, "A", "C", 0.002, 0.004)])  # not via the loader
+    assert gnomad_chromosomes() == {"chr1"}
+
+    load(GNOMAD_VCF)  # append: the earlier rows stay, and so does chr1
+    conn = get_connection()
+    kept = {r[0] for r in conn.execute("SELECT chrom FROM gnomad_chroms").fetchall()}
+    conn.close()
+    assert kept == {"chr1", "chr7"}
+    assert gnomad_chromosomes() == {"chr1", "chr7"}
+
+    load(GNOMAD_VCF, replace=True)
+    assert gnomad_chromosomes() == {"chr7"}

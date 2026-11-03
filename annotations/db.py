@@ -81,6 +81,13 @@ CREATE TABLE IF NOT EXISTS gnomad_af (
     PRIMARY KEY (chrom, pos, ref, alt)
 );
 
+-- The chromosomes gnomad_af has records on, written by the gnomAD loader so
+-- a reader does not scan gnomad_af for them. Empty in a store whose rows did
+-- not come through the loader: gnomad_chromosomes() then scans.
+CREATE TABLE IF NOT EXISTS gnomad_chroms (
+    chrom     VARCHAR PRIMARY KEY
+);
+
 -- Optional (`vcfclick annotations load-hgnc`): what else a gene is called.
 -- Each row maps one token to the current approved HGNC symbol, which is the
 -- gene_symbol of refseq_genes. Empty unless loaded.
@@ -100,6 +107,35 @@ def get_connection() -> duckdb.DuckDBPyConnection:
 
     conn.execute(TRANSCRIPTS_SCHEMA_DDL)
     return conn
+
+
+def refresh_gnomad_chroms(conn, *, new_rows: str | None = None) -> None:
+    """Bring gnomad_chroms up to date after a gnomAD load. With `new_rows`
+    (a relation holding the rows just appended) and a table already filled,
+    only their chromosomes are added; otherwise the set is rebuilt from
+    gnomad_af (after a replace, or the first load into an older store)."""
+    filled = conn.execute("SELECT 1 FROM gnomad_chroms LIMIT 1").fetchone()
+    if new_rows is not None and filled is not None:
+        conn.execute(
+            f"INSERT INTO gnomad_chroms SELECT DISTINCT chrom FROM {new_rows} "
+            "WHERE chrom NOT IN (SELECT chrom FROM gnomad_chroms)"
+        )
+        return
+    conn.execute("DELETE FROM gnomad_chroms")
+    conn.execute("INSERT INTO gnomad_chroms SELECT DISTINCT chrom FROM gnomad_af")
+
+
+def gnomad_chromosomes() -> frozenset[str]:
+    """The chromosomes the loaded gnomAD data has records on: gnomad_chroms,
+    or a scan of gnomad_af when that is empty (rows written another way)."""
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT chrom FROM gnomad_chroms").fetchall()
+        if not rows:
+            rows = conn.execute("SELECT DISTINCT chrom FROM gnomad_af").fetchall()
+    finally:
+        conn.close()
+    return frozenset(r[0] for r in rows)
 
 
 @dataclass(frozen=True)

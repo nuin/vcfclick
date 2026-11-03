@@ -162,3 +162,38 @@ def test_stats_top_n_caps_overflow_listing(vcfclick_home):
 def test_stats_errors_on_missing_db(vcfclick_home):
     r = _vc(vcfclick_home, "db", "stats", "no-such-db", expect_failure=True)
     assert "not found" in r.stderr
+
+
+class _FakeResult:
+    def __init__(self, text: str):
+        self._text = text
+
+    def bytes(self) -> bytes:
+        return self._text.encode()
+
+
+class _FakeSession:
+    """Answers the per-key GROUP BY with canned TSV and records every statement."""
+
+    def __init__(self, tsv: str):
+        self.tsv, self.seen = tsv, []
+
+    def query(self, sql: str, fmt: str = "CSV"):
+        self.seen.append(sql)
+        return _FakeResult(self.tsv)
+
+
+def test_map_keys_are_counted_in_one_scan():
+    """The distinct-key count and the top keys come from one GROUP BY over the
+    Map keys: a second count(DISTINCT k) statement read the column again."""
+    from cli.db_stats import _query_map_keys
+
+    sess = _FakeSession("B\t5\nA\t3\nC\t1\n")
+    assert _query_map_keys(sess, "genotypes", "format_extra", 2) == (
+        [("B", 5), ("A", 3)],
+        3,
+    )
+    assert len(sess.seen) == 1 and "GROUP BY k" in sess.seen[0]
+    empty = _FakeSession("")
+    assert _query_map_keys(empty, "variants", "info_extra", 5) == ([], 0)
+    assert len(empty.seen) == 1

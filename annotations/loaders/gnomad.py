@@ -25,7 +25,7 @@ from pathlib import Path
 import pyarrow as pa
 from cyvcf2 import VCF
 
-from annotations.db import get_connection
+from annotations.db import get_connection, refresh_gnomad_chroms
 
 log = logging.getLogger(__name__)
 
@@ -114,6 +114,7 @@ def load(vcf_path: Path, replace: bool = False) -> int:
             "INSERT INTO gnomad_af (chrom, pos, ref, alt, af, af_grpmax) "
             "SELECT chrom, pos, ref, alt, af, af_grpmax FROM gnomad_arrow"
         )
+        refresh_gnomad_chroms(conn, new_rows=None if replace else "gnomad_arrow")
     finally:
         conn.unregister("gnomad_arrow")
 

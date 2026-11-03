@@ -118,7 +118,6 @@ def map_keys_from(table: str, map_col: str) -> str:
     return f"{table} ARRAY JOIN mapKeys({map_col}) AS k"
 
 
-#
 # Small builders every genotype query repeats. They exist so a lesson learned
 # the hard way (a LEFT JOIN that reads an absent parent as 0/0 on chDB, an
 # unsigned add that overflows on DuckDB) is encoded once, with a test on both
