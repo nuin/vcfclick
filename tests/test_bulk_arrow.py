@@ -43,14 +43,16 @@ arrow_genotypes = [s for s in via.get("arrow", []) + via.get("ArrowStream", [])
 ctx = prepare_export(real, ExportRequest(db_name="t"))
 via.clear()
 calls = {}
-for region in _windows(ctx):
+for region in _windows(real, ctx):
     calls.update({f"{region[0]}:{k[0]}:{k[1]}:{k[2]}": v
                   for k, v in _window_calls(Spy(), ctx, region).items()})
 export_json = [s for s in via.get("JSONCompact", []) if "FROM genotypes" in s]
 records = list(iter_records(real, ctx))
 matched = sum(1 for _rec, c in records if c)
 with_calls = real.query(
-    "SELECT count(*) FROM (SELECT DISTINCT chrom, pos, ref, alt FROM genotypes)", "CSV"
+    "SELECT count(*) FROM (SELECT DISTINCT chrom, pos, ref, alt FROM ("
+    "SELECT chrom, pos, ref, alt FROM genotypes UNION ALL "
+    "SELECT chrom, pos, ref, alt FROM missing_genotypes) u) d", "CSV"
 ).bytes().decode().strip()
 print("OUT " + json.dumps({
     "samples": samples, "sum": int(np.abs(g).sum()), "shape": list(g.shape),
@@ -79,9 +81,11 @@ def test_bulk_genotype_reads_use_arrow(vcfclick_home, run_python, backend):
     assert got["export_json"] == 0
     assert got["total"] > 0 and got["sum"] > 0 and got["calls"]
     # one value per call column, ints as ints (not strings)
-    first = next(iter(got["calls"].values()))
-    gt, gq, dp, ad_ref, ad_alt, ft = next(iter(first.values()))
+    # (a recorded no-call is None: the export writes it ./.)
+    first = next(v for c in got["calls"].values() for v in c.values() if v)
+    gt, gq, dp, ad_ref, ad_alt, ft = first
     assert isinstance(gt, int)
     assert all("b'" not in key for key in got["calls"])  # str, never bytes
-    # every site with stored calls found them (a site of 0/0 calls has none)
+    # every site with stored calls or recorded no-calls found them (a site
+    # of 0/0 calls has none)
     assert got["matched"] == got["with_calls"] > 0

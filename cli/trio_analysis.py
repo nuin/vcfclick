@@ -930,7 +930,7 @@ class TrioAnalysis:
         )
         # Not self._comphet_rows: its gnomAD pass records into self.stats,
         # which would count variants only the tolerant gates let through.
-        candidates = drop_excluded(self._query(sql), self.scope)
+        candidates = drop_excluded(query_rows(self.session, sql), self.scope)
         if self.gnomad_max_af is not None:
             candidates = _gnomad_filter(candidates, self.gnomad_max_af)
         kept, _ = genes_in_scope(_comphet_genes(candidates), self.scope)
