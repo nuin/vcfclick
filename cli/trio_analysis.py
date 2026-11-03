@@ -194,13 +194,19 @@ def _quality_gate(
 
 
 def _het_ab_gate(alias: str, min_ab: float, max_ab: float) -> str:
-    # Allele balance for a het call: ad_alt / (ad_ref + ad_alt) should sit
-    # near 0.5. Applies only to het rows (gt=1) with AD present.
-    denom = f"({alias}.ad_ref + {alias}.ad_alt)"
-    frac = f"({alias}.ad_alt * 1.0 / {denom})"
+    """Allele balance of a het call, ad_alt / (ad_ref + ad_alt), inside the
+    band. Applies only to het rows (gt = 1) with AD present. The depths are
+    16-bit unsigned columns; allele_fraction_sql widens both before adding
+    them, since DuckDB raises on a UInt16 sum above 65535 (chDB promotes).
+    The zero test widens the same way, as cli.xlinked._fraction does."""
+    from storage.sql import allele_fraction_sql, to_int64
+
+    alt, ref = f"{alias}.ad_alt", f"{alias}.ad_ref"
+    zero = f"({to_int64(alt)} + {to_int64(ref)}) = 0"
+    frac = allele_fraction_sql(alt, ref)
     return (
-        f"({alias}.gt != 1 OR {alias}.ad_ref IS NULL OR {alias}.ad_alt IS NULL "
-        f"OR {denom} = 0 OR {frac} BETWEEN {min_ab} AND {max_ab})"
+        f"({alias}.gt != 1 OR {ref} IS NULL OR {alt} IS NULL "
+        f"OR {zero} OR {frac} BETWEEN {min_ab} AND {max_ab})"
     )
 
 

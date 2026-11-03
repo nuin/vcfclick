@@ -123,7 +123,9 @@ or an Ensembl gene id (`ENSG00000147894`, version ignored). After the optional
 `vcfclick annotations load-hgnc hgnc_complete_set.txt` (the HGNC complete-set
 TSV you download from genenames.org), also a previous symbol, an alias, an
 HGNC id (`HGNC:28337`) or an Entrez id; a token that names two genes is not
-resolved. `--genes` takes a comma list and repeats; `--gene-file` reads one
+resolved. A gene HGNC renamed after the GENCODE release in the store (the
+store has the old symbol) resolves by its current symbol too, through HGNC's
+previous-symbol row, and counts as `previous` in `resolved_by`. `--genes` takes a comma list and repeats; `--gene-file` reads one
 token per line (`#` starts a comment); typed together, the two are joined.
 
 **Unresolved genes are an error** for a list of 20 tokens or fewer with any
@@ -136,8 +138,11 @@ stdout and the tokens in `scope.genes.unresolved`. Without
 **A gene is its GENCODE span**, start to end, introns and UTRs included, so a
 splice-region variant is inside it; a promoter is not, which is what
 `--gene-flank BP` is for. The annotation store is GRCh38 with one locus per
-symbol: a pseudo-autosomal gene is matched on chrX only (the run says so), and
-a database known to be GRCh37 (`--build GRCh37`) refuses a gene list. When the
+symbol and contig: a pseudo-autosomal gene (SHOX, XG) is matched on chrX and
+chrY and counts as one gene. A store loaded before vcfclick kept both copies
+holds the chrX one only (the run says so; `vcfclick annotations load` again
+stores both). A database known to be GRCh37 (`--build GRCh37`) refuses a gene
+list. When the
 build cannot be told from the data, the run notes that it is not verified.
 
 **Regions** are `chrN:FROM-TO`, 1-based and inclusive, in either contig
@@ -437,9 +442,10 @@ variant neither parent has," which requires the parents to be
 parent is not evidence.
 
 `--keep-reference` additionally stores confident `0/0` calls (gt=0) at
-variant sites, while still dropping no-calls. Then de-novo's join
+variant sites, while still dropping no-calls and half-calls (`./0`,
+`0/.`: a missing allele is never a proven `0/0`). Then de-novo's join
 (`f.gt = 0 AND m.gt = 0`) matches only when both parents have a stored
-reference call — a no-call parent has no row, so that site is correctly
+reference call — a no-call or half-called parent has no row, so that site is correctly
 **excluded** from de novo rather than falsely reported.
 
 Without `--keep-reference`, `db trio` still runs but de-novo and

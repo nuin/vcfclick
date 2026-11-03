@@ -20,8 +20,8 @@ one with more than 5% unresolved, is an ERROR (`--allow-unresolved-genes` runs
 anyway): a panel that silently lost genes is the narrower search a clinician
 did not ask for. A gene is its GENCODE span start..end (introns and UTRs, so a
 splice-region variant is inside); promoters need `--gene-flank`. The store is
-GRCh38 with one locus per symbol (a PAR gene is matched on chrX only); a
-GRCh37 database cannot take a gene list.
+GRCh38 with one locus per symbol and contig (a PAR gene is matched on chrX
+and chrY); a GRCh37 database cannot take a gene list.
 
 REGIONS. `chrN:FROM-TO`, 1-based and inclusive, or a BED file (0-based
 half-open, converted when read). Genes and regions together: a variant in
@@ -95,7 +95,8 @@ GENE_BUILD = "GRCh38"  # the annotation store's assembly
 SPAN_NOTE = (
     "gene spans only (start..end, introns and UTRs); use --gene-flank for promoters"
 )
-# PAR1 and PAR2 of GRCh38 chrX: a gene there has one locus in the store (chrX)
+# PAR1 and PAR2 of GRCh38 chrX: a gene there should have a chrX and a chrY
+# locus; a store loaded before both were kept has the chrX one only
 _PAR_GRCH38 = ((10_001, 2_781_479), (155_701_383, 156_030_895))
 
 SCOPE_KEYS: tuple[str, ...] = (
@@ -469,6 +470,7 @@ def compact_list(values: Sequence[str], *, upper: bool = False) -> Any:
 @dataclass
 class _Resolution:
     genes: list = field(default_factory=list)  # GeneRange, one per symbol
+    loci: list = field(default_factory=list)  # GeneRange, every locus of each
     resolved_by: dict = field(default_factory=dict)
     unresolved: list = field(default_factory=list)
     ambiguous: list = field(default_factory=list)
@@ -490,12 +492,14 @@ def _resolve_list(tokens: Sequence[str], found: Mapping) -> _Resolution:
         if len(symbols) > 1:
             out.ambiguous.append(token)
             continue
-        gene = next(g for kind, g in matches if kind == best)
+        loci = [g for kind, g in matches if kind == best]
         out.resolved += 1
         out.resolved_by[best] = out.resolved_by.get(best, 0) + 1
-        if gene.gene_symbol not in seen:
-            seen.add(gene.gene_symbol)
-            out.genes.append(gene)
+        if loci[0].gene_symbol not in seen:
+            seen.add(loci[0].gene_symbol)
+            out.genes.append(loci[0])
+            # a gene on chrX and chrY (pseudo-autosomal) is both intervals
+            out.loci.extend(loci)
     return out
 
 
@@ -519,8 +523,9 @@ def _par_note(gene) -> str | None:
         return None
     if any(gene.start_pos <= hi and gene.end_pos >= lo for lo, hi in _PAR_GRCH38):
         return (
-            f"{gene.gene_symbol} is a pseudo-autosomal gene; the store keeps one "
-            f"locus per symbol, so it is matched on {gene.chrom} only"
+            f"{gene.gene_symbol} is a pseudo-autosomal gene; the annotation store "
+            f"holds it on {gene.chrom} only, so it is matched there (re-run "
+            "`vcfclick annotations load` to store both copies)"
         )
     return None
 
@@ -582,8 +587,8 @@ def build_scope(request: ScopeRequest, *, build: str | None = None) -> Scope | N
     if request.genes or request.exclude_genes:
         from annotations.db import (
             gene_count,
-            get_connection,
             has_gene_aliases,
+            read_connection,
             resolve_gene_tokens,
         )
 
@@ -593,7 +598,7 @@ def build_scope(request: ScopeRequest, *, build: str | None = None) -> Scope | N
                 "annotation store are GRCh38, and this database is GRCh37 "
                 "(use --region with GRCh37 coordinates instead)"
             )
-        conn = get_connection()
+        conn = read_connection()
         try:
             if gene_count(conn) == 0:
                 raise ScopeError(NEEDS_GENES)
@@ -620,7 +625,10 @@ def build_scope(request: ScopeRequest, *, build: str | None = None) -> Scope | N
             w = _check_unresolved(flag, tokens, res, request.allow_unresolved)
             if w:
                 warnings.append(w)
-            for gene in res.genes:
+            symbols_on = {}
+            for gene in res.loci:
+                symbols_on.setdefault(gene.gene_symbol, set()).add(gene.chrom)
+            for gene in res.loci:
                 target.append(
                     (
                         gene.chrom,
@@ -628,7 +636,9 @@ def build_scope(request: ScopeRequest, *, build: str | None = None) -> Scope | N
                         int(gene.end_pos) + flank,
                     )
                 )
-                note = _par_note(gene)
+                note = (
+                    _par_note(gene) if len(symbols_on[gene.gene_symbol]) == 1 else None
+                )
                 if note:
                     notes.append(note)
             block = _gene_echo(

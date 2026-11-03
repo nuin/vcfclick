@@ -129,9 +129,10 @@ haplotypes at a diploid site are derived as
 That derivation is exact for diploid genotypes that are either fully
 called or fully missing. It is **not** exact for:
 
-- partially missing calls (`./1`, `0/.`) — `genotypes` stores what
-  cyvcf2's `gt_types` reports (`./1` is a het, `0/.` hom-ref), and the
-  sample is not "fully missing";
+- partially missing calls (`./1`, `0/.`) — `genotypes` stores `./1` as
+  a het and no row for `0/.` or `./0` (not even with `--keep-reference`;
+  see [SCHEMA.md](SCHEMA.md#missing_genotypes)), and the sample is not
+  "fully missing";
 - haploid calls on an autosome (a haploid `1` is stored as `gt = 2`);
 - polyploid calls.
 

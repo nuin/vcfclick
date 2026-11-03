@@ -675,9 +675,20 @@ def _merr(vcf: Path, pfm: str) -> dict[int, int]:
     return out
 
 
+def _bcftools_version() -> tuple[int, ...]:
+    first = subprocess.run(
+        ["bcftools", "--version"], capture_output=True, text=True, check=True
+    ).stdout.split("\n", 1)[0]  # "bcftools 1.25"
+    return tuple(int(p) for p in first.split()[1].split("-")[0].split(".")[:2])
+
+
 def test_candidates_agree_with_bcftools_mendelian2(world):
     if not shutil.which("bcftools"):
         pytest.skip("bcftools not on PATH")
+    # Before 1.24, +mendelian2 -p could assign the 2X rules to a 1X trio
+    # (samtools/bcftools#2545); Ubuntu 26.04 ships 1.22.
+    if _bcftools_version() < (1, 24):
+        pytest.skip("bcftools +mendelian2 before 1.24 misassigns 1X/2X rules")
     docs = trios(world, "k")
     for proband, pfm in (("XSON", "1X:XSON,XDAD,XMUM"), ("XDAU", "2X:XDAU,XDAD,XMUM")):
         merr = _merr(VCF, pfm)

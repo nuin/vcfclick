@@ -4,9 +4,11 @@ The four classic models (denovo, recessive, dominant, comphet) must keep
 producing exactly the SQL they produced at v0.14.3: the
 refactors that route them through shared helpers (`sample_join`, the
 registry) are only allowed to change how the text is assembled, never the
-text. The AF epsilon is the one deliberate change, made in its own commit
-(it edits the `info_AF <=` line of tests/goldens/trio_sql/*.sql and nothing
-else).
+text. Two deliberate changes, each made in its own commit: the AF epsilon
+(the `info_AF <=` clause) and the allele-balance gate's widening of
+`ad_ref + ad_alt` to 64 bits before the add (DuckDB raised on a UInt16 sum
+above 65535). Each edits that one clause of tests/goldens/trio_sql/*.sql
+and nothing else.
 
 Regenerate (and say why in the commit):
 

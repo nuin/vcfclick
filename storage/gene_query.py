@@ -47,8 +47,11 @@ def chrom_aliases(chrom: str) -> list[str]:
 
 def gene_variants_sql(chroms: list[str], start: int, end: int, limit: int) -> str:
     """Portable SQL (chDB and DuckDB) for variants in a region plus carriers."""
-    in_list = ", ".join("'" + c.replace("'", "''") + "'" for c in chroms)
-    region = f"chrom IN ({in_list}) AND pos BETWEEN {int(start)} AND {int(end)}"
+    from storage.sql import str_list
+
+    region = (
+        f"chrom IN ({str_list(chroms)}) AND pos BETWEEN {int(start)} AND {int(end)}"
+    )
     return (
         "SELECT v.ingest_id AS ingest_id, v.chrom AS chrom, v.pos AS pos, v.ref AS ref, v.alt AS alt, "
         "v.qual AS qual, v.filter AS filter, v.info_AF AS info_AF, "

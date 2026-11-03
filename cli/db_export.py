@@ -82,7 +82,8 @@ class ExportOptions:
     type=click.Choice(["ref", "nocall"]),
     default="ref",
     show_default=True,
-    help="How to write samples with no stored genotype (ignored for --keep-reference ingestions, "
+    help="How to write samples with no stored genotype and no recorded no-call "
+    "(recorded no-calls are always ./.; ignored for --keep-reference ingestions, "
     "where absent always means no-call).",
 )
 @command_options(ExportOptions)

@@ -62,17 +62,16 @@ def _annotation_store() -> tuple[dict, object | None]:
 
     Each lookup is skipped when its source is empty. The connection is
     returned so the caller can keep it open: DuckDB shares an open database
-    between connections, so every later `get_connection()` is about ten
+    between connections, so every later `read_connection()` is about ten
     times cheaper (0.7 ms against 7 ms with genes loaded) than when the
     last connection has been closed and the file has to be opened again.
     """
-    none = {"genes": False, "clinvar": False, "gnomad": False}
-    try:
-        from annotations.db import get_connection
+    from annotations.db import read_connection
 
-        conn = get_connection()
-    except Exception:  # noqa: BLE001 - no annotation store at all
-        return none, None
+    # a missing store opens empty; one another process is writing raises
+    # AnnotationStoreUnavailable, which ends the command with its message
+    # (an unannotated table would read as "nothing loaded")
+    conn = read_connection()
     have = {}
     for key, table in (
         ("genes", "refseq_genes"),
