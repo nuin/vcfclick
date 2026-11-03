@@ -299,6 +299,13 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   preset this is the same test; with one, a preset's `max_af` is never typed, so it
   cannot defeat the cohort-derived-AF skip. The `--help` text of the gate options
   is longer.
+- A partially missing reference call (`./0`, `0/.`) is no longer stored as
+  `gt = 0` under `--keep-reference`. cyvcf2 reports it as hom-ref, so a
+  half-called parent read as a proven `0/0` and `db trio --category denovo`
+  could report a de novo on it. Such a call now gets no `genotypes` row, as a
+  `./.` does; `./1` is still stored as a het (`gt = 1`). `n_called`,
+  `an_called` and `ac_called` are unchanged. Re-ingest to apply the rule to an
+  existing database. See docs/SCHEMA.md (partial calls).
 
 ### Fixed
 

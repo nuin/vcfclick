@@ -316,8 +316,18 @@ GT_ENCODE = {1: 1, 3: 2}
 # analysis can prove a parent is genuinely 0/0 at a site (vs simply
 # absent = no-call). The missing/no-call UNKNOWN (gt_type 2) is STILL
 # dropped — a ./. asserts nothing, so it must stay distinguishable
-# from a stored 0/0 by its absence.
+# from a stored 0/0 by its absence. A partial call ('./0', '0/.') is
+# also HOM_REF to cyvcf2 but proves nothing about the missing allele, so
+# build_genotype_rows stores no gt=0 row for it; './1' stays a het (gt=1).
 GT_ENCODE_KEEP_REF = {0: 0, 1: 1, 3: 2}
+
+
+def _partial_calls(variant):
+    """Per-sample flag: True where the GT has a missing allele (-1)."""
+    try:
+        return (variant.genotype.array()[:, :-1] == -1).any(axis=1)
+    except Exception:
+        return None
 
 
 def build_genotype_rows(
@@ -337,6 +347,7 @@ def build_genotype_rows(
         # reports the same record as NOT_RECORDED; there is nothing to
         # store per sample.
         return []
+    partial = _partial_calls(variant) if keep_reference else None
     scalar_arrs = {f: _format_arr(variant, f) for f in FORMAT_SCALAR}
     pair_arrs = {f: _format_arr(variant, f) for f in FORMAT_PAIR}
     triple_arrs = {f: _format_arr(variant, f) for f in FORMAT_TRIPLE}
@@ -351,6 +362,8 @@ def build_genotype_rows(
     for i, sample_id in enumerate(samples):
         encoded = encode.get(int(gt_types[i]))
         if encoded is None:
+            continue
+        if encoded == 0 and partial is not None and partial[i]:
             continue
 
         row: dict = {col: None for col in GENOTYPES_COLUMNS}

@@ -121,6 +121,49 @@ def test_ingest_records_called_counts_and_missing(
     ) == [[500, "B1", 1], [600, "C1", 2]]
 
 
+PARTIAL_VCF = """\
+##fileformat=VCFv4.3
+##contig=<ID=1,length=100000>
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tP\tQ\tR\tS
+1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t./0\t0/.\t./1\t0/0
+1\t200\t.\tC\tT\t50\tPASS\t.\tGT\t0/0\t0/1\t./.\t0/0
+"""
+
+
+@pytest.mark.parametrize("mode", [["--serial"], ["--workers", "2"]])
+def test_keep_reference_partial_call_is_no_stored_hom_ref(
+    vcfclick_home, tmp_path, mode
+):
+    """Under --keep-reference a './0' or '0/.' call gets no gt=0 row, so
+    a stored 0/0 always means both alleles were called. './1' stays a
+    het. n_called counts none of the three partial calls."""
+    from tests.conftest import bgzip_vcf
+
+    src = tmp_path / "partial.vcf"
+    src.write_text(PARTIAL_VCF)
+    gz = bgzip_vcf(src, tmp_path / "partial.vcf.gz")
+    _vc(vcfclick_home, "duckdb", "db", "create", "pg")
+    _vc(
+        vcfclick_home, "duckdb", "db", "ingest", "pg", str(gz),
+        "--ingest-id", "kg", "--keep-reference", *mode,
+    )  # fmt: skip
+    rows = _rows(
+        vcfclick_home,
+        "duckdb",
+        "pg",
+        "SELECT pos, sample_id, gt FROM genotypes ORDER BY pos, sample_id",
+    )
+    assert rows == [
+        [100, "R", 1],
+        [100, "S", 0],
+        [200, "P", 0],
+        [200, "Q", 1],
+        [200, "S", 0],
+    ]
+    assert _counts(vcfclick_home, "duckdb")[100] == [1, 5, 1]
+
+
 def test_no_record_missing_keeps_site_counts(vcfclick_home, popgen_vcf):
     _vc(vcfclick_home, "duckdb", "db", "create", "pg")
     _vc(

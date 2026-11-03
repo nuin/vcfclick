@@ -206,7 +206,7 @@ def test_keep_reference_stores_no_row_for_a_partial_reference_call(tmp_path):
     gts = _gt_dict(rows[0][1])
     assert {s: g["gt"] for s, g in gts.items()} == {"C": 1, "D": 0, "E": 0}
     variant = _variant_dict(rows[0][0])
-    assert variant["n_called"] == 3  # C, with one missing allele, is not called
+    assert variant["n_called"] == 2  # D and E; A, B and C miss an allele
     assert [r[-1] for r in rows[0][2]] == ["F"]  # missing_genotypes: ./. only
 
 
@@ -255,6 +255,8 @@ def test_half_called_parent_is_no_denovo_evidence(vcfclick_home, tmp_path, backe
         "db",
         "trio",
         "c2",
+        "--proband",
+        "kid",
         "--category",
         "denovo",
         "--format",

@@ -336,7 +336,7 @@ Sparse: only non-reference calls. One row per
 | `ingest_id` | `LowCardinality(String)` | same as on `variants` |
 | `chrom`, `pos`, `ref`, `alt` | as in `variants` | |
 | `sample_id` | `LowCardinality(String)` | per-VCF sample name |
-| `gt` | `Int8` | alt-allele count: `1` = het (0/1 or 1/0) or a partial call with one ALT allele (`./1`), `2` = hom-alt (1/1) **or a haploid ALT call** (see below), `0` = hom-ref, stored only with `--keep-reference`. **The encoder never writes a negative value** (there is no hemizygous code), and `./.` is never stored; without `--keep-reference` `0/0` is not stored either. |
+| `gt` | `Int8` | alt-allele count: `1` = het (0/1 or 1/0) or a partial call with one ALT allele (`./1`), `2` = hom-alt (1/1) **or a haploid ALT call** (see below), `0` = hom-ref, stored only with `--keep-reference` and only for a fully called reference genotype (`0/0`, haploid `0`). **The encoder never writes a negative value** (there is no hemizygous code), and `./.` is never stored; without `--keep-reference` `0/0` is not stored either. |
 | `phased` | `UInt8 DEFAULT 0` | `1` if `|`-separated in the VCF, else `0`. A haploid call (a lone `1`) reads as phased. |
 | `ingested_at` | `DateTime` | |
 
@@ -419,10 +419,16 @@ user-defined alias table; vcfclick does not auto-merge.
 
 One row per sample whose GT is **fully** missing (`./.`, `.`) at a
 site. Written at ingest by default; `db ingest --no-record-missing`
-skips it. Partially missing calls (`./1`, `0/.`) are not rows here —
-`genotypes` stores what cyvcf2's `gt_types` reports for them (`./1` as
-a het, `0/.` as hom-ref, i.e. absent), and the per-site
-`variants.an_called` / `ac_called` remain exact.
+skips it. Partially missing calls (`./1`, `0/.`) are not rows here.
+
+**Partial calls in `genotypes`.** A call with a missing allele is never
+a proven `0/0`. `./0` and `0/.` get no `genotypes` row in either mode,
+including `--keep-reference`, so a stored `gt = 0` always means both
+alleles were called and trio analysis cannot read a half-call as a
+hom-ref parent. `./1` is stored as a het (`gt = 1`): it carries one
+observed ALT allele. None of the three counts toward `n_called`; the
+per-site `variants.an_called` / `ac_called` count their called alleles
+and remain exact.
 
 Size: about samples × sites × missing rate rows. On a large cohort with
 a lot of missing data that can exceed the sparse `genotypes` table, so
