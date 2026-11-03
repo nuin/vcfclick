@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .vcf_context import ExportContext, ExportError, ExportRequest, Region, SiteCalls
-from storage import has_reference_rows, query_json
+from storage import arrow_rows, has_reference_rows, query_json
 
 _WINDOW_VARIANTS = 50_000
 _REGION_RE = re.compile(r"^([^:\s]+)(?::([\d,]+)(?:-([\d,]+))?)?$")
@@ -179,14 +179,14 @@ def _window_calls(
         sample_filter = (
             " AND sample_id IN (" + ", ".join(_q(s) for s in context.samples) + ")"
         )
-    _, rows = _rows(
+    rows = arrow_rows(
         sess,
         "SELECT pos, ref, alt, sample_id, gt, gq, dp, ad_ref, ad_alt, ft FROM genotypes "
         f"WHERE ingest_id = {_q(context.ingest_id)} AND chrom = {_q(chrom)} "
         f"AND pos BETWEEN {start} AND {end}{sample_filter}",
     )
     for pos, ref, alt, sid, *values in rows:
-        calls.setdefault((int(pos), ref, alt), {})[sid] = values
+        calls.setdefault((int(pos), ref, alt), {})[sid] = list(values)
     return calls
 
 

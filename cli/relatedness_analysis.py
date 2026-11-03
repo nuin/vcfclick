@@ -4,7 +4,7 @@ from functools import partial
 
 import click
 import numpy as np
-from storage import has_reference_rows, query_rows
+from storage import arrow_rows, has_reference_rows, query_rows
 
 # KING kinship thresholds (powers of 2 between the expected values).
 _DUPLICATE = 0.354
@@ -174,7 +174,7 @@ def _load(
     ]
     keep_ref = has_reference_rows(sess, ingest_id)
     snv = "length(ref) = 1 AND length(alt) = 1"
-    sites = query_rows(
+    sites = arrow_rows(
         sess,
         f"SELECT chrom, pos, ref, alt FROM variants WHERE ingest_id = {q} AND {snv} ORDER BY chrom, pos, ref, alt",
     )
@@ -184,12 +184,12 @@ def _load(
         # Deterministic, evenly spread thinning keeps memory bounded.
         step = total / max_sites
         sites = [sites[int(i * step)] for i in range(max_sites)]
-    site_index = {tuple(s): i for i, s in enumerate(sites)}
+    site_index = {s: i for i, s in enumerate(sites)}
     sample_index = {s: j for j, s in enumerate(samples)}
 
     g = np.full((len(sites), len(samples)), -1 if keep_ref else 0, dtype=np.int8)
     min_gt = 0 if keep_ref else 1
-    for chrom, pos, ref, alt, sample_id, gt in query_rows(
+    for chrom, pos, ref, alt, sample_id, gt in arrow_rows(
         sess,
         f"SELECT chrom, pos, ref, alt, sample_id, gt FROM genotypes "
         f"WHERE ingest_id = {q} AND {snv} AND gt >= {min_gt}",

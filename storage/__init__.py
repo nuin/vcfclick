@@ -10,6 +10,7 @@ ignore any subsequent change. Codex round 9 caught this exact gap.
 
 from storage.db import (
     apply_schema,
+    arrow_rows,
     backend,
     count_expr,
     db_disk_size,
@@ -71,6 +72,7 @@ __all__ = [
     "table_columns",
     "upgrade_schema",
     "query_arrow",
+    "arrow_rows",
     "has_reference_rows",
     "query_json",
     "query_rows",
