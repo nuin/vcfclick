@@ -12,8 +12,8 @@ use bare names (17). Both spellings are matched.
 
 from __future__ import annotations
 
-import json
 from dataclasses import asdict
+from storage.db import query_rows
 
 DEFAULT_LIMIT = 500
 COLUMNS = [
@@ -89,7 +89,7 @@ def gene_variants(
         raise GeneNotFound(symbol)
     start, end = max(1, int(g.start_pos) - flank), int(g.end_pos) + flank
     sql = gene_variants_sql(chrom_aliases(g.chrom), start, end, limit)
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     truncated = len(data) > limit
     rows = [{c: _typed(c, v) for c, v in zip(COLUMNS, r)} for r in data[:limit]]
     return {

@@ -1,10 +1,10 @@
 """KING-robust kinship calculation and pedigree checks."""
 
-import json
 from functools import partial
 
 import click
 import numpy as np
+from storage import query_rows
 
 # KING kinship thresholds (powers of 2 between the expected values).
 _DUPLICATE = 0.354
@@ -148,10 +148,6 @@ def classify(kinship: float, ibs0_frac: float) -> str:
     return "unrelated"
 
 
-def _rows(sess, sql: str) -> list[list]:
-    return json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
-
-
 def _span_bp(sites: list[list]) -> int:
     """Total genomic span covered by the sites: sum over chromosomes of max - min."""
     by_chrom: dict[str, list[int]] = {}
@@ -171,21 +167,21 @@ def _load(
     q = _quote_str(ingest_id)
     samples = [
         r[0]
-        for r in _rows(
+        for r in query_rows(
             sess,
             f"SELECT DISTINCT sample_id FROM samples WHERE ingest_id = {q} ORDER BY sample_id",
         )
     ]
     keep_ref = (
         int(
-            _rows(
+            query_rows(
                 sess, f"SELECT count(*) FROM genotypes WHERE ingest_id = {q} AND gt = 0"
             )[0][0]
         )
         > 0
     )
     snv = "length(ref) = 1 AND length(alt) = 1"
-    sites = _rows(
+    sites = query_rows(
         sess,
         f"SELECT chrom, pos, ref, alt FROM variants WHERE ingest_id = {q} AND {snv} ORDER BY chrom, pos, ref, alt",
     )
@@ -200,7 +196,7 @@ def _load(
 
     g = np.full((len(sites), len(samples)), -1 if keep_ref else 0, dtype=np.int8)
     min_gt = 0 if keep_ref else 1
-    for chrom, pos, ref, alt, sample_id, gt in _rows(
+    for chrom, pos, ref, alt, sample_id, gt in query_rows(
         sess,
         f"SELECT chrom, pos, ref, alt, sample_id, gt FROM genotypes "
         f"WHERE ingest_id = {q} AND {snv} AND gt >= {min_gt}",
@@ -219,7 +215,7 @@ def _pedigree(sess, ingest_id: str) -> list[tuple[str, str, str]]:
 
     if not table_exists("pedigree"):
         return []
-    rows = _rows(
+    rows = query_rows(
         sess,
         f"SELECT sample_id, father_id, mother_id FROM pedigree WHERE ingest_id = {_quote_str(ingest_id)}",
     )

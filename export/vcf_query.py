@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import re
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 from .vcf_context import ExportContext, ExportError, ExportRequest, Region, SiteCalls
+from storage import query_json
 
 _WINDOW_VARIANTS = 50_000
 _REGION_RE = re.compile(r"^([^:\s]+)(?::([\d,]+)(?:-([\d,]+))?)?$")
@@ -66,7 +66,7 @@ def _chrom_key(c: str) -> tuple:
 
 
 def _rows(sess, sql: str) -> tuple[list[str], list[list]]:
-    d = json.loads(sess.query(sql, "JSONCompact").bytes().decode())
+    d = query_json(sess, sql)
     return [m["name"] for m in d.get("meta", [])], d.get("data", [])
 
 

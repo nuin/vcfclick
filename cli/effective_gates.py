@@ -84,7 +84,6 @@ choices, named so a reviewer can change one place.
 
 from __future__ import annotations
 
-import json
 import math
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
@@ -103,6 +102,7 @@ from cli.trio_analysis import (
     site_gate_sql,
 )
 from cli.warning_codes import warning
+from storage import query_rows
 
 # A gate binds when its field is present on at least this share of the rows.
 ENFORCEABLE_MIN = 0.90
@@ -275,7 +275,7 @@ def collect_sample_stats(
     samples there are. With a scope (cli/scope.Scope), only the rows inside it,
     exactly in every mode: these shares are what a gate falls back to."""
     sql, trim = sample_stats_sql(ingest_id, [s for s, _ in samples], scope)
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     if trim:
         from cli.scope import site_in_scope
 
@@ -485,8 +485,7 @@ def collect_candidate_stats(
                 x_guard=x_guard,
                 scope=scope,
             )
-            raw = sess.query(sql, "JSONCompact")
-            data = json.loads(raw.bytes().decode())["data"]
+            data = query_rows(sess, sql)
             by_predicate[predicate] = _candidate_stats(model, data, scope)
         out[model] = replace(by_predicate[predicate], model=model)
     return out
@@ -530,7 +529,7 @@ def collect_variant_stats(
         f"{labelled} "
         f"FROM variants v WHERE ingest_id = {sql_quote_str(ingest_id)} GROUP BY chrom"
     )
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     per = sorted(((c, int(n or 0)) for c, n, _, _ in data), key=lambda t: (-t[1], t[0]))
     return VariantStats(
         sum(n for _, n in per),
@@ -568,7 +567,7 @@ def sample_cohort_keys(sess, ingest_id: str, n: int) -> list[tuple[str, int, str
         f"SELECT chrom, pos, ref, alt FROM variants WHERE {where} "
         f"LIMIT {2 * GNOMAD_PROBE_SIZE}"
     )
-    data = json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+    data = query_rows(sess, sql)
     return [(c, int(p), r, a) for c, p, r, a in data]
 
 

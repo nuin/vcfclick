@@ -27,7 +27,6 @@ No import of cli.main.
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from typing import NamedTuple
 
@@ -43,6 +42,7 @@ from cli.xchrom import (
     npx_sql,
     resolve_build,
 )
+from storage import query_rows
 
 
 class _Any:
@@ -378,10 +378,6 @@ class XContext:
         return self.sexes.proband_sex
 
 
-def _query(session, sql: str) -> list:
-    return json.loads(session.query(sql, "JSONCompact").bytes().decode())["data"]
-
-
 def _has_x(session, trio) -> bool:
     from storage.sql import chrom_in_sql, sql_quote_str, str_list
 
@@ -391,7 +387,7 @@ def _has_x(session, trio) -> bool:
         f"AND {chrom_in_sql('chrom', X_NAMES)} "
         f"AND sample_id IN ({str_list(trio.parents + (trio.proband,))}) LIMIT 1"
     )
-    return bool(_query(session, sql))
+    return bool(query_rows(session, sql))
 
 
 def _unsupported_contigs(session, ingest_id: str) -> list[str]:
@@ -402,7 +398,7 @@ def _unsupported_contigs(session, ingest_id: str) -> list[str]:
         f"WHERE ingest_id = {sql_quote_str(ingest_id)} "
         f"AND {chrom_in_sql('chrom', UNSUPPORTED_SEX_CONTIGS)} ORDER BY chrom"
     )
-    return [r[0] for r in _query(session, sql)]
+    return [r[0] for r in query_rows(session, sql)]
 
 
 def _max_x_pos(session, ingest_id: str) -> int | None:
@@ -413,7 +409,7 @@ def _max_x_pos(session, ingest_id: str) -> int | None:
         f"WHERE ingest_id = {sql_quote_str(ingest_id)} "
         f"AND {chrom_in_sql('chrom', X_NAMES)}"
     )
-    data = _query(session, sql)
+    data = query_rows(session, sql)
     return None if not data or data[0][0] is None else int(data[0][0])
 
 
@@ -429,7 +425,7 @@ def _pedigree(session, trio) -> dict[str, tuple[str | None, str | None]]:
         f"WHERE ingest_id = {sql_quote_str(trio.ingest_id)} "
         f"AND sample_id IN ({str_list(trio.parents + (trio.proband,))})"
     )
-    return {s: (sex, aff) for s, sex, aff in _query(session, sql)}
+    return {s: (sex, aff) for s, sex, aff in query_rows(session, sql)}
 
 
 def build_context(session, trio, build_option: str = "auto") -> XContext:
@@ -516,7 +512,7 @@ def band_count(session, trio, build: str) -> int:
         f"AND sample_id = {sql_quote_str(trio.proband)} AND gt > 0 "
         f"AND {band_sql(build)}"
     )
-    return int(_query(session, sql)[0][0])
+    return int(query_rows(session, sql)[0][0])
 
 
 def excluded_counts(session, trio, ctx: XContext) -> dict[str, int]:
@@ -525,7 +521,7 @@ def excluded_counts(session, trio, ctx: XContext) -> dict[str, int]:
     out = dict.fromkeys(EXCLUDED_KEYS, 0)
     if not ctx.has_x or ctx.proband_sex is None:
         return out
-    for p, f, m, n in _query(session, genotype_classes_sql(trio, ctx.region_build)):
+    for p, f, m, n in query_rows(session, genotype_classes_sql(trio, ctx.region_build)):
         key = _EXCLUDED_CLASS.get(
             classify(ctx.proband_sex, _int(p), _int(f), _int(m)) or ""
         )

@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import contextlib
 import importlib
+import json
 import logging
 import os
 import re
@@ -496,6 +497,17 @@ def upgrade_schema() -> list[str]:
     if added:
         log.info("[storage] upgraded schema: added %s", ", ".join(added))
     return added
+
+
+def query_json(sess, sql: str) -> dict:
+    """Run `sql` on `sess` and return the decoded JSONCompact document:
+    `{"meta": [{"name", "type"}, ...], "data": [[...], ...], ...}`."""
+    return json.loads(sess.query(sql, "JSONCompact").bytes().decode())
+
+
+def query_rows(sess, sql: str) -> list[list]:
+    """Run `sql` on `sess` and return its rows (JSONCompact `data`)."""
+    return query_json(sess, sql)["data"]
 
 
 def query_arrow(sql: str) -> pa.Table:

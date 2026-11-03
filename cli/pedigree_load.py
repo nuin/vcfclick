@@ -17,11 +17,11 @@ Two things the table does not promise, handled here once:
 
 from __future__ import annotations
 
-import json
 
 import click
 
 from storage.pedigree_graph import Pedigree
+from storage import query_rows
 
 NO_PEDIGREE = (
     "no pedigree loaded. Load one with `vcfclick db ped <name> <file.ped>` "
@@ -35,10 +35,6 @@ class NoPedigree(click.ClickException):
     """The database has no pedigree to read."""
 
 
-def _query_rows(sess, sql: str) -> list:
-    return json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
-
-
 def pedigree_rows(sess, ingest_id: str) -> list[dict]:
     """The pedigree rows of one ingestion, one per sample, in sample-id
     order, as dicts with the COLUMNS keys. Raises NoPedigree when the
@@ -48,7 +44,7 @@ def pedigree_rows(sess, ingest_id: str) -> list[dict]:
 
     if not table_exists("pedigree"):
         raise NoPedigree(NO_PEDIGREE)
-    data = _query_rows(
+    data = query_rows(
         sess,
         f"SELECT {', '.join(COLUMNS)} FROM pedigree "
         f"WHERE ingest_id = {sql_quote_str(ingest_id)} "
@@ -62,7 +58,7 @@ def known_samples(sess, ingest_id: str) -> set[str]:
     """The sample ids ingested under `ingest_id`."""
     from storage import sql_quote_str
 
-    data = _query_rows(
+    data = query_rows(
         sess,
         "SELECT DISTINCT sample_id FROM samples "
         f"WHERE ingest_id = {sql_quote_str(ingest_id)}",

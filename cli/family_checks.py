@@ -7,13 +7,9 @@ once here and each model asks them instead of inventing its own.
 
 from __future__ import annotations
 
-import json
 from collections.abc import Iterable
 from dataclasses import dataclass
-
-
-def _rows(sess, sql: str) -> list:
-    return json.loads(sess.query(sql, "JSONCompact").bytes().decode())["data"]
+from storage import query_rows
 
 
 # ─────────────────────────── reference calls ───────────────────────────
@@ -44,7 +40,7 @@ def samples_with_reference(
     if not wanted:
         return {}
     listed = ", ".join(sql_quote_str(s) for s in wanted)
-    rows = _rows(
+    rows = query_rows(
         sess,
         "SELECT DISTINCT sample_id FROM genotypes WHERE ingest_id = "
         f"{sql_quote_str(ingest_id)} AND sample_id IN ({listed}) AND gt = 0 "
@@ -143,7 +139,7 @@ def cohort_af_probe(sess, ingest_id: str) -> CohortAfProbe:
         "AND info_AF IS NOT NULL AND ac_called IS NOT NULL "
         "AND an_called IS NOT NULL AND an_called > 0"
     )
-    n, n_like, n_single = (int(v or 0) for v in _rows(sess, sql)[0])
+    n, n_like, n_single = (int(v or 0) for v in query_rows(sess, sql)[0])
     if n < PROBE_MIN_SITES:
         return CohortAfProbe(
             False, n_sites=n, reason=f"only {n} sites carry INFO/AF and called counts"

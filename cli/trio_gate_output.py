@@ -32,6 +32,7 @@ from cli.trio_output import (
     register_candidate_decorator,
     register_document_decorator,
 )
+from storage import query_rows
 
 _CHUNK = 400  # variants per lookup statement
 
@@ -64,8 +65,9 @@ def lookup_parent_reads(analysis, keys: Sequence[tuple]) -> dict:
             f"AND sample_id IN ({listed}) "
             f"AND (chrom, pos, ref, alt) IN ({tuples})"
         )
-        result = json.loads(analysis.session.query(sql, "JSONCompact").bytes().decode())
-        for sample, chrom, pos, ref, alt, ad_ref, ad_alt in result["data"]:
+        for sample, chrom, pos, ref, alt, ad_ref, ad_alt in query_rows(
+            analysis.session, sql
+        ):
             entry = out.setdefault((chrom, int(pos), ref, alt), {})
             entry[names[sample]] = {
                 "ref": None if ad_ref is None else int(ad_ref),

@@ -7,7 +7,6 @@ testable without a terminal event loop.
 
 from __future__ import annotations
 
-import json
 import re
 from typing import Any
 
@@ -45,12 +44,10 @@ def validate_database(name: str) -> str:
 
 def _query_json(name: str, sql: str) -> QueryResult:
     """Execute SQL and normalize chDB/DuckDB JSONCompact output."""
-    from storage import get_session
+    from storage import get_session, query_json
 
     validate_database(name)
-    sess = get_session(name)
-    raw = sess.query(sql, "JSONCompact").bytes().decode()
-    parsed = json.loads(raw)
+    parsed = query_json(get_session(name), sql)
     columns = [m["name"] for m in parsed.get("meta", [])]
     rows = parsed.get("data", [])
     return QueryResult(
