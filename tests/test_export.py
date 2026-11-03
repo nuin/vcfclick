@@ -137,6 +137,64 @@ def test_absent_genotypes_default_to_ref_with_a_header_note(
     assert _records(nocall)[0][9].split(":")[0] == "./."
 
 
+_NOCALL_VCF = (
+    "##fileformat=VCFv4.2\n##contig=<ID=chr1>\n"
+    '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
+    "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
+    "chr1\t100\t.\tA\tG\t50\tPASS\t.\tGT\t0/1\t./.\t0/0\n"
+    "chr1\t200\t.\tC\tT\t50\tPASS\t.\tGT\t0/1\t0/1\t./.\n"
+)
+
+
+def _gts(path: Path) -> list[list[str]]:
+    return [[c.split(":")[0] for c in r[9:]] for r in _records(path)]
+
+
+def test_sparse_ingest_writes_recorded_no_calls_as_no_calls(vcfclick_home, tmp_path):
+    vcf = tmp_path / "nc.vcf"
+    vcf.write_text(_NOCALL_VCF)
+    _db(vcfclick_home, vcf, "src")
+    out = _export(vcfclick_home, tmp_path / "out.vcf")
+    # B at 100 and C at 200 have missing_genotypes rows; C at 100 was 0/0.
+    assert _gts(out) == [["0/1", "./.", "0/0"], ["0/1", "0/1", "./."]]
+    note = [h for h in _header(out) if h.startswith("##vcfclick_note=")]
+    assert len(note) == 1 and "./." in note[0] and "0/0" in note[0]
+    # --absent-as nocall still turns the unrecorded absences into ./.
+    nocall = _export(vcfclick_home, tmp_path / "nc_out.vcf", "--absent-as", "nocall")
+    assert _gts(nocall) == [["0/1", "./.", "./."], ["0/1", "0/1", "./."]]
+    if HAS_HTSLIB:
+        fmt = "%POS[\t%GT]\n"
+        want = subprocess.run(
+            ["bcftools", "query", "-f", fmt, str(vcf)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        got = subprocess.run(
+            ["bcftools", "query", "-f", fmt, str(out)],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout
+        assert got == want
+    _db(vcfclick_home, out, "dst")
+    cols = "pos, sample_id"
+    order = "ORDER BY pos, sample_id"
+    assert _q(
+        vcfclick_home, "src", f"SELECT {cols} FROM missing_genotypes {order}"
+    ) == _q(vcfclick_home, "dst", f"SELECT {cols} FROM missing_genotypes {order}")
+
+
+def test_unrecorded_no_calls_fall_back_to_absent_rule(vcfclick_home, tmp_path):
+    vcf = tmp_path / "nc.vcf"
+    vcf.write_text(_NOCALL_VCF)
+    _db(vcfclick_home, vcf, "src", "--no-record-missing")
+    out = _export(vcfclick_home, tmp_path / "out.vcf")
+    assert _gts(out) == [["0/1", "0/0", "0/0"], ["0/1", "0/1", "0/0"]]
+    note = [h for h in _header(out) if h.startswith("##vcfclick_note=")]
+    assert len(note) == 1 and "no no-calls were recorded" in note[0]
+
+
 def test_keep_reference_ingest_keeps_no_calls(vcfclick_home, tmp_path):
     vcf = tmp_path / "nc.vcf"
     vcf.write_text(
@@ -306,7 +364,7 @@ def _clustered_vcf() -> str:
         '##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">\n'
         "#CHROM\tPOS\tID\tREF\tALT\tQUAL\tFILTER\tINFO\tFORMAT\tA\tB\tC\n"
     )
-    gts = ["0/1\t0/0\t1/1", "0/0\t0/0\t0/1", "1/1\t0/1\t0/0", "0/1\t0/1\t0/0"]
+    gts = ["0/1\t0/0\t1/1", "0/0\t./.\t0/1", "1/1\t0/1\t0/0", "0/1\t0/1\t./."]
     rows = [f"chr1\t100\t.\tA\t{alt}\t50\tPASS\t.\tGT\t{gts[0]}" for alt in "GTC"]
     for i, pos in enumerate(range(101, 110)):
         filt = "LowQual" if pos in (105, 107) else "PASS"

@@ -8,6 +8,8 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
+from storage.sql import count_expr
+
 from .vcf_context import ExportContext, ExportError, ExportRequest, Region, SiteCalls
 
 # A window is one variants query plus one genotypes query held in memory.
@@ -145,6 +147,7 @@ def prepare_export(sess, request: ExportRequest) -> ExportContext:
         > 0
     )
     absent_gt = "./." if (keep_ref or request.absent_as == "nocall") else "0/0"
+    missing_recorded = bool(samples) and _missing_recorded(sess, ingest_id)
     variant_where = _variant_where(ingest_id, request)
     typed = _rows(sess, typed_columns_sql("variants"))[1]
     info_cols = [
@@ -170,8 +173,27 @@ def prepare_export(sess, request: ExportRequest) -> ExportContext:
         qual_type=next(
             (typ for column, typ, _ in typed if column == "qual"), "Float32"
         ),
+        missing_recorded=missing_recorded,
         selective=bool(request.regions or request.where or request.pass_only),
     )
+
+
+def _missing_recorded(sess, ingest_id: str) -> bool:
+    """True when the ingestion has at least one `missing_genotypes` row.
+
+    A database from before that table, or an ingest run with
+    --no-record-missing, has none: a no-call then cannot be told from an
+    absent hom-ref call and the absent rule applies to both.
+    """
+    from storage.db import table_exists
+
+    if not table_exists("missing_genotypes"):
+        return False
+    n = _rows(
+        sess,
+        f"SELECT {count_expr()} FROM missing_genotypes WHERE ingest_id = {_q(ingest_id)}",
+    )[1][0][0]
+    return int(n) > 0
 
 
 def _variants_per_window(n_samples: int) -> int:
@@ -241,6 +263,14 @@ def _window_calls(
     )
     for pos, ref, alt, sid, *values in rows:
         calls.setdefault((int(pos), ref, alt), {})[sid] = values
+    if context.missing_recorded:
+        _, rows = _rows(
+            sess,
+            "SELECT g.pos, g.ref, g.alt, g.sample_id "
+            f"FROM missing_genotypes AS g{join} WHERE {where}",
+        )
+        for pos, ref, alt, sid in rows:
+            calls.setdefault((int(pos), ref, alt), {}).setdefault(sid, None)
     return calls
 
 

@@ -144,10 +144,14 @@ def record(rec: dict[str, Any], site_calls: SiteCalls, context: ExportContext) -
 
 def _genotypes(site_calls: SiteCalls, context: ExportContext) -> list[str]:
     cols = [context.absent_gt] * len(context.samples)
-    for sid, (gt, gq, dp, adr, ada, ft) in site_calls.items():
+    for sid, values in site_calls.items():
         j = context.sample_index.get(sid)
         if j is None:
             continue
+        if values is None:  # a recorded no-call
+            cols[j] = "./."
+            continue
+        gt, gq, dp, adr, ada, ft = values
         parts = {
             "GT": _GT.get(int(gt), "./."),
             "GQ": ".",
@@ -188,10 +192,17 @@ def header(context: ExportContext, used_fmt: list[str]) -> str:
                 '##vcfclick_note="Ingested with --keep-reference: stored 0/0 calls are written 0/0; '
                 'absent genotypes are no-calls, written ./."'
             )
+        elif context.missing_recorded:
+            lines.append(
+                '##vcfclick_note="Only non-reference genotypes and no-calls were stored at ingest: '
+                "recorded no-calls are written ./. and every other absent genotype is written "
+                f'{context.absent_gt}. Phase is not preserved (all calls unphased)."'
+            )
         else:
             lines.append(
-                f'##vcfclick_note="Only non-reference genotypes were stored at ingest, so a hom-ref '
-                f"call cannot be told from a no-call: absent genotypes are written {context.absent_gt}. "
+                '##vcfclick_note="Only non-reference genotypes were stored at ingest and no no-calls '
+                "were recorded (none in the source, or --no-record-missing), so a hom-ref call "
+                f"cannot be told from a no-call: absent genotypes are written {context.absent_gt}. "
                 'Phase is not preserved (all calls unphased)."'
             )
     lines.append(
