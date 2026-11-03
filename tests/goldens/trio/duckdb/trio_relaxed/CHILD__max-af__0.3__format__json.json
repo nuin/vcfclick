@@ -33,7 +33,7 @@
           "proband_gt": 1,
           "father_gt": 0,
           "mother_gt": 0,
-          "af": 0.009999999776482582,
+          "af": 0.01,
           "genes": [
             "GENEX"
           ],
@@ -55,7 +55,7 @@
           "proband_gt": 2,
           "father_gt": 1,
           "mother_gt": 1,
-          "af": 0.20000000298023224,
+          "af": 0.2,
           "genes": [
             "GENEX"
           ],
@@ -77,7 +77,7 @@
           "proband_gt": 1,
           "father_gt": 1,
           "mother_gt": 0,
-          "af": 0.05000000074505806,
+          "af": 0.05,
           "genes": [
             "GENEX"
           ],
@@ -92,7 +92,7 @@
           "proband_gt": 1,
           "father_gt": 0,
           "mother_gt": 1,
-          "af": 0.05000000074505806,
+          "af": 0.05,
           "genes": [
             "GENEX"
           ],
@@ -115,7 +115,7 @@
               "pos": 300,
               "ref": "G",
               "alt": "A",
-              "af": 0.05000000074505806
+              "af": 0.05
             }
           ],
           "maternal": [
@@ -124,7 +124,7 @@
               "pos": 400,
               "ref": "T",
               "alt": "C",
-              "af": 0.05000000074505806
+              "af": 0.05
             }
           ]
         }

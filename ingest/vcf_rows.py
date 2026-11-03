@@ -2,16 +2,59 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import numpy as np
+import pyarrow as pa
 
-from ingest._arrow import GENOTYPES_COLUMNS, VARIANTS_COLUMNS
+from ingest._arrow import GENOTYPES_ARROW_SCHEMA, GENOTYPES_COLUMNS, VARIANTS_COLUMNS
 from ingest.routing import FORMAT_PAIR, FORMAT_SCALAR, FORMAT_TRIPLE
 from ingest.routing import INFO_FLAG, INFO_PAIR, INFO_SCALAR
 
+log = logging.getLogger(__name__)
+
+
+# htslib sentinels in cyvcf2's int32 FORMAT arrays: a missing value and
+# the padding after a vector shorter than the header's Number.
+_INT_MISSING = -2147483648
+_INT_END_OF_VECTOR = -2147483647
+# The float sentinels are NaNs with these payloads (bcf_float_missing /
+# bcf_float_vector_end), told apart from a real NaN by their bits.
+_FLOAT_MISSING_BITS = 0x7F800001
+_FLOAT_END_OF_VECTOR_BITS = 0x7F800002
+
+
+def _stringify_numpy(arr: np.ndarray) -> str:
+    """One FORMAT value from a cyvcf2 array as the VCF would spell it:
+    elements joined by ',', '.' for a missing element, end-of-vector
+    padding dropped. A value that is entirely missing is '.'."""
+    if arr.ndim == 0:
+        arr = arr.reshape(1)
+    out: list[str] = []
+    if arr.dtype.kind == "f":
+        bits = arr.astype(np.float32).view(np.uint32)
+        for x, b in zip(arr, bits):
+            if b == _FLOAT_END_OF_VECTOR_BITS:
+                break
+            out.append("." if (b == _FLOAT_MISSING_BITS or x != x) else str(x))
+    elif arr.dtype.kind in "iu":
+        for x in arr:
+            if x == _INT_END_OF_VECTOR:
+                break
+            out.append("." if x == _INT_MISSING else str(x))
+    else:
+        out = [x.decode() if isinstance(x, bytes) else str(x) for x in arr]
+    if not out or all(s == "." for s in out):
+        return "."
+    return ",".join(out)
+
 
 def _stringify(value) -> str:
+    if isinstance(value, np.ndarray):
+        return _stringify_numpy(value)
+    if isinstance(value, np.generic):
+        return _stringify_numpy(np.asarray(value))
     if isinstance(value, (list, tuple)):
         return ",".join(str(v) for v in value)
     return str(value)
@@ -34,14 +77,58 @@ def _cell(arr, i):
     return v
 
 
-def _scalar_int(arr, i):
+# Upper bound of each unsigned genotypes column, from the Arrow schema:
+# 65,535 for the UInt16 columns (gq, dp, ad_*, pl_*, mq, pq) and
+# 4,294,967,295 for ps. A value above the bound (mitochondrial or
+# amplicon depth above 65,535) is clamped to it rather than aborting the
+# ingest with an ArrowInvalid. Clamps are counted per process; the loader
+# reads the count with take_clamp_count() (a parallel worker returns it
+# to the parent) and logs one total, since a pool worker's log output may
+# never reach the user.
+_COLUMN_MAX: dict[str, int] = {
+    f.name: 2**f.type.bit_width - 1
+    for f in GENOTYPES_ARROW_SCHEMA
+    if pa.types.is_unsigned_integer(f.type)
+}
+_UINT16_MAX = 65535
+_clamped = 0
+
+
+def take_clamp_count() -> int:
+    """FORMAT values clamped since the last call, and reset to 0."""
+    global _clamped
+    n, _clamped = _clamped, 0
+    return n
+
+
+def log_clamp_count(n: int, tag: str) -> None:
+    if n:
+        log.warning(
+            "[%s] %s FORMAT values exceeded their column range and were "
+            "clamped to it (65,535 for gq, dp, ad, pl, mq and pq)",
+            tag,
+            f"{n:,}",
+        )
+
+
+def _bounded(v: int, max_value: int) -> int | None:
+    global _clamped
+    if v < 0:
+        return None
+    if v > max_value:
+        _clamped += 1
+        return max_value
+    return v
+
+
+def _scalar_int(arr, i, max_value: int = _UINT16_MAX):
     if arr is None:
         return None
     try:
         v = int(_cell(arr, i))
     except (IndexError, TypeError, ValueError):
         return None
-    return v if v >= 0 else None
+    return _bounded(v, max_value)
 
 
 def _pair_int(arr, i):
@@ -54,7 +141,7 @@ def _pair_int(arr, i):
         a, b = int(v[0]), int(v[1])
     except (IndexError, TypeError, ValueError):
         return (None, None)
-    return (a if a >= 0 else None, b if b >= 0 else None)
+    return (_bounded(a, _UINT16_MAX), _bounded(b, _UINT16_MAX))
 
 
 def _triple_int(arr, i):
@@ -68,9 +155,9 @@ def _triple_int(arr, i):
     except (IndexError, TypeError, ValueError):
         return (None, None, None)
     return (
-        a if a >= 0 else None,
-        b if b >= 0 else None,
-        c if c >= 0 else None,
+        _bounded(a, _UINT16_MAX),
+        _bounded(b, _UINT16_MAX),
+        _bounded(c, _UINT16_MAX),
     )
 
 
@@ -117,7 +204,9 @@ NOT_RECORDED = CalledCounts(None, None, None, ())
 # as well as after the per-batch site count. On a large cohort one site can
 # carry tens of thousands of rows (missing calls, or 0/0 under
 # --keep-reference), so the site count alone does not bound memory.
-MAX_BATCH_ROWS = 2_000_000
+# 2,000,000 rows measured 1.5 to 1.75 GB per process (each of the default
+# 4 workers holds one batch); 250,000 keeps a process near 200 MB.
+MAX_BATCH_ROWS = 250_000
 
 
 def called_counts(variant, n_samples: int) -> CalledCounts:
@@ -145,6 +234,30 @@ def called_counts(variant, n_samples: int) -> CalledCounts:
         an_called=int(np.count_nonzero(called)),
         ac_called=int(np.count_nonzero(alleles > 0)),
         missing=tuple(int(i) for i in np.flatnonzero(~any_called)),
+    )
+
+
+def require_single_alt(variant, vcf_path: str) -> None:
+    """Raise ValueError unless the record has exactly one ALT allele.
+
+    The loaders expect `bcftools norm -m -` output. A record with two or
+    more ALTs is told to re-normalise; a record with none (ALT '.', as
+    bcftools mpileup without -v or some joint-call exports write) cannot
+    be fixed by norm, so it is told which records to drop instead.
+    """
+    n_alt = len(variant.ALT)
+    if n_alt == 1:
+        return
+    site = f"{variant.CHROM}:{variant.POS}"
+    if n_alt == 0:
+        raise ValueError(
+            f"Record at {site} has no ALT allele (ALT is '.'); vcfclick "
+            f"stores variant sites only. Drop such records with: "
+            f"bcftools view -e 'ALT=\".\"' {vcf_path} -Oz -o out.vcf.gz"
+        )
+    raise ValueError(
+        f"Multi-allelic site at {site} ({n_alt} ALTs). Re-normalise with: "
+        f"bcftools norm -m - {vcf_path} | bgzip > out.vcf.gz"
     )
 
 
@@ -177,7 +290,16 @@ def build_variant_row(
     extra: dict[str, str] = {}
     for field, value in info.items():
         if field in INFO_SCALAR:
-            row[INFO_SCALAR[field]] = value
+            # A header may declare a routed field with Number=4 (GATK's
+            # SB) or Number=. and carry several values; a scalar column
+            # cannot hold them, so the tuple goes to info_extra instead.
+            if isinstance(value, (list, tuple)):
+                if len(value) == 1:
+                    row[INFO_SCALAR[field]] = value[0]
+                elif value:
+                    extra[field] = _stringify(value)
+            else:
+                row[INFO_SCALAR[field]] = value
         elif field in INFO_PAIR:
             ref_col, alt_col = INFO_PAIR[field]
             if isinstance(value, (list, tuple)) and len(value) >= 2:
@@ -209,8 +331,39 @@ GT_ENCODE = {1: 1, 3: 2}
 # analysis can prove a parent is genuinely 0/0 at a site (vs simply
 # absent = no-call). The missing/no-call UNKNOWN (gt_type 2) is STILL
 # dropped — a ./. asserts nothing, so it must stay distinguishable
-# from a stored 0/0 by its absence.
+# from a stored 0/0 by its absence. A partial call ('./0', '0/.') is
+# also HOM_REF to cyvcf2 but proves nothing about the missing allele, so
+# build_genotype_rows stores no gt=0 row for it; './1' stays a het (gt=1).
 GT_ENCODE_KEEP_REF = {0: 0, 1: 1, 3: 2}
+
+
+_partial_mask_warned = False
+
+
+def _partial_calls(variant, n_samples: int):
+    """Per-sample flag: True where the GT has a missing allele (-1).
+
+    build_genotype_rows calls this only once gt_types has been read, so
+    the GT field is present. Should cyvcf2 still fail to give the allele
+    array, every sample is flagged: a gt=0 row is then not written for
+    the record (absence reads as "no call"), which is safe, where an
+    unflagged './0' would be stored as a provable 0/0. Logged once per
+    process with the record's position.
+    """
+    global _partial_mask_warned
+    try:
+        return (variant.genotype.array()[:, :-1] == -1).any(axis=1)
+    except Exception as err:  # cyvcf2 raises a bare Exception
+        if not _partial_mask_warned:
+            _partial_mask_warned = True
+            log.warning(
+                "[ingest] cannot read the alleles of %s:%s (%s); "
+                "hom-ref calls there are not stored as gt=0",
+                variant.CHROM,
+                variant.POS,
+                err,
+            )
+        return np.ones(n_samples, dtype=bool)
 
 
 def build_genotype_rows(
@@ -221,8 +374,16 @@ def build_genotype_rows(
     keep_reference: bool = False,
 ) -> list[list]:
     encode = GT_ENCODE_KEEP_REF if keep_reference else GT_ENCODE
-    gt_types = variant.gt_types
-    gt_phases = variant.gt_phases
+    try:
+        gt_types = variant.gt_types
+        gt_phases = variant.gt_phases
+    except Exception:
+        # cyvcf2 raises when GT is absent from the record (FORMAT without
+        # GT, or a sites-only record among called ones). called_counts
+        # reports the same record as NOT_RECORDED; there is nothing to
+        # store per sample.
+        return []
+    partial = _partial_calls(variant, len(samples)) if keep_reference else None
     scalar_arrs = {f: _format_arr(variant, f) for f in FORMAT_SCALAR}
     pair_arrs = {f: _format_arr(variant, f) for f in FORMAT_PAIR}
     triple_arrs = {f: _format_arr(variant, f) for f in FORMAT_TRIPLE}
@@ -238,6 +399,8 @@ def build_genotype_rows(
         encoded = encode.get(int(gt_types[i]))
         if encoded is None:
             continue
+        if encoded == 0 and partial is not None and partial[i]:
+            continue
 
         row: dict = {col: None for col in GENOTYPES_COLUMNS}
         row["ingest_id"] = ingest_id
@@ -251,7 +414,9 @@ def build_genotype_rows(
 
         for src, col in FORMAT_SCALAR.items():
             if col != "ft":
-                row[col] = _scalar_int(scalar_arrs[src], i)
+                row[col] = _scalar_int(
+                    scalar_arrs[src], i, _COLUMN_MAX.get(col, _UINT16_MAX)
+                )
 
         ft_arr = scalar_arrs.get("FT")
         if ft_arr is not None:

@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
+import json
+
 import click
 
 from cli.main import _set_db, db
-
-
-def _quote_str(s: str) -> str:
-    """SQL-standard single-quoted string literal."""
-    return "'" + s.replace("'", "''") + "'"
+from storage.sql import sql_quote_str
 
 
 @db.command(name="diff")
@@ -43,19 +41,20 @@ def db_diff(name: str, cohort_a: str, cohort_b: str, top: int, fmt: str) -> None
     _set_db(name)
     sess = get_session(name)
 
-    a = _quote_str(cohort_a)
-    b = _quote_str(cohort_b)
+    a = sql_quote_str(cohort_a)
+    b = sql_quote_str(cohort_b)
 
-    rows = (
+    # JSONCompact, not TSV: TSV escapes a backslash in a name (`c\\ne`), so
+    # the stored name would never equal the one typed.
+    rows = json.loads(
         sess.query(
             f"SELECT cohort FROM samples WHERE cohort IN ({a}, {b}) GROUP BY cohort",
-            "TSV",
+            "JSONCompact",
         )
         .bytes()
         .decode()
-        .strip()
-    )
-    found = set(rows.splitlines()) if rows else set()
+    )["data"]
+    found = {r[0] for r in rows}
     missing = sorted({cohort_a, cohort_b} - found)
     if missing:
         raise click.ClickException(

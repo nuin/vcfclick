@@ -11,35 +11,58 @@ depends on so call sites stay unchanged. The two engines differ in:
     plus a chDB-specific FORMAT clause. DuckDB returns Python rows via
     `cursor.fetchall()`. The `DuckDBSession` class below renders
     fetchall rows into the formats vcfclick actually uses
-    (JSONCompact, TSV, CSV, default), all decode-to-str at call
-    sites that look like `sess.query(...).bytes().decode()`.
+    (JSON, JSONCompact, JSONEachRow, TSV and CSV with their *WithNames
+    forms byte for byte as chDB prints them; Vertical and Pretty*
+    approximately), all decode-to-str at call sites that look like
+    `sess.query(...).bytes().decode()`. An unknown format raises.
 
   * Concurrency model — chDB has the EmbeddedServer / async-load race
     handled by `_open_session_with_retry`. DuckDB uses POSIX file
     locking on its own file handle; multi-process access to the same
     DuckDB file is single-writer enforced by DuckDB itself. The
     storage layer's `ingest_id_lock` (fcntl) still serialises
-    same-(DB, ingest_id) ingests at the application level.
+    same-(DB, ingest_id) ingests at the application level. Within one
+    process a DuckDBPyConnection is not thread-safe (two threads
+    sharing its cursor read each other's rows), and `vcfclick web`
+    serves its endpoints from a threadpool on the one cached session,
+    so every query runs on a cursor of its own (`connection.cursor()`:
+    a duplicate connection to the same database).
 """
 
 from __future__ import annotations
 
-import csv
-import io
-import json
 import logging
 import re
+import time
 from pathlib import Path
 
 import duckdb
 
+from storage import _duckdb_format
+
 log = logging.getLogger(__name__)
 
 
-# Map `FORMAT <name>` suffix on a chDB-style query to a renderer.
-# Only the formats vcfclick actually uses are supported; anything
-# else falls back to a default Pretty rendering for `db query`.
-_SUPPORTED_FORMATS = {"JSONCompact", "TSV", "CSV", "Vertical", "PrettyCompact"}
+# Box-table formats, rendered approximately: chDB's own depend on terminal
+# width and block boundaries. Every other format renders as chDB does
+# (storage._duckdb_format) or raises.
+_PRETTY_FORMATS = {
+    "pretty",
+    "prettycompact",
+    "prettycompactmonoblock",
+    "prettynoescapes",
+    "prettycompactnoescapes",
+    "prettyspace",
+}
+
+_SUPPORTED_FORMATS = ", ".join(
+    [
+        *dict.fromkeys(_duckdb_format.FORMAT_ALIASES.values()),
+        "Pretty",
+        "PrettyCompact",
+        "Vertical",
+    ]
+)
 
 # Strip an arbitrary trailing `FORMAT <name>` clause off a SQL statement.
 # chDB accepts the clause as a query terminator. DuckDB does not — the
@@ -69,50 +92,6 @@ class _DuckDBQueryResult:
 
     def __str__(self) -> str:
         return self._payload.decode()
-
-
-def _render_jsoncompact(columns: list[str], rows: list[tuple]) -> bytes:
-    """chDB's JSONCompact format: `{"meta": [...], "data": [[...], ...], "rows": N}`."""
-    payload = {
-        "meta": [{"name": c} for c in columns],
-        "data": [list(r) for r in rows],
-        "rows": len(rows),
-    }
-    return json.dumps(payload, default=str).encode()
-
-
-def _fmt_cell(v: object) -> str:
-    """Render one cell of a TSV/CSV row in a way that matches chDB output:
-
-    * NULL → literal `\\N`.
-    * float → `.6g` to cap at Float32-ish precision (DuckDB returns
-      REAL values widened to Python double, whose default `str()` form
-      shows trailing ULP noise like `0.9200000166893005`; chDB hides
-      that at the renderer level).
-    * everything else → `str(v)`.
-    """
-    if v is None:
-        return "\\N"
-    if isinstance(v, float):
-        # `.6g` drops trailing zeros, prints integers without a decimal
-        # point, and caps at six significant digits — visually identical
-        # to chDB's Float32 rendering for the value ranges vcfclick uses.
-        return f"{v:.6g}"
-    return str(v)
-
-
-def _render_tsv(rows: list[tuple]) -> bytes:
-    """Match chDB's TabSeparated: raw tab-joined fields, NULL → `\\N`."""
-    out = ["\t".join(_fmt_cell(v) for v in r) for r in rows]
-    return ("\n".join(out) + ("\n" if out else "")).encode()
-
-
-def _render_csv(rows: list[tuple]) -> bytes:
-    buf = io.StringIO()
-    writer = csv.writer(buf, lineterminator="\n")
-    for r in rows:
-        writer.writerow([_fmt_cell(v) for v in r])
-    return buf.getvalue().encode()
 
 
 def _render_vertical(columns: list[str], rows: list[tuple]) -> bytes:
@@ -176,32 +155,48 @@ class DuckDBSession:
             sql = _FORMAT_CLAUSE_RE.sub("", sql).rstrip().rstrip(";")
             format = m.group(1)
 
-        cur = self._conn.execute(sql)
+        # Format names are case-insensitive, as on chDB. A name outside the
+        # rendered set fails before the statement runs. chDB knows formats
+        # this renderer does not (Markdown, Values, TSVRaw, ...), so the
+        # message says the backend lacks it, not that the name is unknown.
+        fmt = (format or "PrettyCompact").strip()
+        key = fmt.lower()
+        canonical = _duckdb_format.FORMAT_ALIASES.get(key)
+        if canonical is None and key != "vertical" and key not in _PRETTY_FORMATS:
+            raise ValueError(
+                f"Format {fmt} is not supported on the DuckDB backend. "
+                f"Supported: {_SUPPORTED_FORMATS}."
+            )
 
-        # DDL/DML — no rows to render. Return empty payload.
-        if cur.description is None:
-            return _DuckDBQueryResult(b"")
+        started = time.perf_counter()
+        cur = self._conn.cursor()
+        try:
+            cur.execute(sql)
+            # DDL/DML — no rows to render. Return empty payload.
+            if cur.description is None:
+                return _DuckDBQueryResult(b"")
+            columns = [d[0] for d in cur.description]
+            types = [d[1] for d in cur.description]
+            rows = cur.fetchall()
+        finally:
+            cur.close()
+        elapsed = time.perf_counter() - started
 
-        columns = [d[0] for d in cur.description]
-        rows = cur.fetchall()
-
-        fmt = (format or "PrettyCompact").strip().lower()
-        # chDB has overlapping format aliases; map them to our four
-        # canonical renderers so callers can use either name.
-        if fmt in ("jsoncompact", "json"):
-            return _DuckDBQueryResult(_render_jsoncompact(columns, rows))
-        if fmt in ("tsv", "tabseparated", "tabseparatedwithnames"):
-            return _DuckDBQueryResult(_render_tsv(rows))
-        if fmt in ("csv", "csvwithnames"):
-            return _DuckDBQueryResult(_render_csv(rows))
-        if fmt == "vertical":
+        if canonical is not None:
+            return _DuckDBQueryResult(
+                _duckdb_format.render(canonical, columns, types, rows, elapsed)
+            )
+        if key == "vertical":
             return _DuckDBQueryResult(_render_vertical(columns, rows))
-        # Default + PrettyCompact + anything unknown — Pretty render.
         return _DuckDBQueryResult(_render_pretty(columns, rows))
 
     def query_arrow(self, sql: str):
         """Run a SELECT and return a pyarrow Table (no text rendering)."""
-        return self._conn.execute(sql).fetch_arrow_table()
+        cur = self._conn.cursor()
+        try:
+            return cur.execute(sql).fetch_arrow_table()
+        finally:
+            cur.close()
 
     def close(self) -> None:
         try:
