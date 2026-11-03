@@ -190,6 +190,81 @@ def test_record_without_gt_builds_no_genotype_rows(tmp_path):
     assert missing_rows == []
 
 
+# ─── finding 7: partial calls under --keep-reference ────────────────────
+
+
+def test_keep_reference_stores_no_row_for_a_partial_reference_call(tmp_path):
+    """A call with a missing allele is never a proven 0/0: './0' and '0/.'
+    get no row under --keep-reference. './1' stays a het (gt = 1), a full
+    '0/0' and a haploid '0' are stored as gt = 0, './.' is never stored."""
+    vcf = _write_vcf(
+        tmp_path / "partial.vcf",
+        ["A", "B", "C", "D", "E", "F"],
+        ["chr1\t100\t.\tA\tG\t50\tPASS\tDP=9\tGT\t./0\t0/.\t./1\t0/0\t0\t./."],
+    )
+    _, rows = _rows(vcf, keep_reference=True)
+    gts = _gt_dict(rows[0][1])
+    assert {s: g["gt"] for s, g in gts.items()} == {"C": 1, "D": 0, "E": 0}
+    variant = _variant_dict(rows[0][0])
+    assert variant["n_called"] == 3  # C, with one missing allele, is not called
+    assert [r[-1] for r in rows[0][2]] == ["F"]  # missing_genotypes: ./. only
+
+
+@pytest.mark.parametrize("backend", ["duckdb", "chdb"])
+def test_half_called_parent_is_no_denovo_evidence(vcfclick_home, tmp_path, backend):
+    """Father './0' at a site where the child is 0/1: with --keep-reference
+    the father has no stored row, so de novo does not report the site."""
+    src = _write_vcf(
+        tmp_path / "trio.vcf",
+        ["kid", "dad", "mom"],
+        [
+            "chr1\t100\t.\tA\tG\t50\tPASS\tDP=9\tGT\t0/1\t./0\t0/0",
+            "chr1\t200\t.\tC\tT\t50\tPASS\tDP=9\tGT\t0/1\t0/0\t0/0",
+        ],
+    )
+    gz = bgzip_vcf(src, tmp_path / "trio.vcf.gz")
+    run_cli(vcfclick_home, backend, "db", "create", "c2")
+    run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ingest",
+        "c2",
+        str(gz),
+        "--serial",
+        "--keep-reference",
+        "--ingest-id",
+        "fam",
+    )
+    run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "ped",
+        "c2",
+        "--proband",
+        "kid",
+        "--father",
+        "dad",
+        "--mother",
+        "mom",
+    )
+    r = run_cli(
+        vcfclick_home,
+        backend,
+        "db",
+        "trio",
+        "c2",
+        "--category",
+        "denovo",
+        "--format",
+        "json",
+    )
+    doc = json.loads(r.stdout)
+    positions = sorted(c["pos"] for c in doc["models"]["denovo"]["candidates"])
+    assert positions == [200]
+
+
 # ─── finding 39: a record with no ALT allele ────────────────────────────
 
 
