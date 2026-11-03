@@ -388,3 +388,50 @@ def test_batch_row_cap_bounds_worker_memory():
     from ingest.vcf_rows import MAX_BATCH_ROWS
 
     assert MAX_BATCH_ROWS <= 250_000
+
+
+# ─── finding 45: one rollback-on-failure helper ─────────────────────────
+
+
+@pytest.mark.parametrize("tag", ["ingest", "parallel-ingest", "parquet-ingest"])
+def test_ingest_failure_helper_rolls_back_only_after_commit(monkeypatch, caplog, tag):
+    """The serial, parallel and Parquet loaders share one failure path:
+    roll back only once engine writes began, log a rollback that fails,
+    and say 'no engine writes' (not 'chDB') for a parse failure."""
+    import logging
+
+    import storage
+    from ingest._rollback import handle_ingest_failure
+
+    calls: list[str] = []
+    monkeypatch.setattr(storage, "rollback_ingest", calls.append)
+    with caplog.at_level(logging.WARNING):
+        handle_ingest_failure(False, "i1", tag)
+    assert calls == []
+    assert f"[{tag}] failed during parse" in caplog.text
+    assert "no engine writes" in caplog.text
+
+    handle_ingest_failure(True, "i1", tag)
+    assert calls == ["i1"]
+
+    def broken(ingest_id):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(storage, "rollback_ingest", broken)
+    caplog.clear()
+    with caplog.at_level(logging.WARNING):
+        handle_ingest_failure(True, "i1", tag)
+    assert f"[{tag}] rollback FAILED: disk full" in caplog.text
+
+
+def test_loaders_share_the_failure_helper():
+    import inspect
+
+    import ingest.parallel
+    import ingest.parquet_load
+    import ingest.vcf_load
+
+    for module in (ingest.vcf_load, ingest.parallel, ingest.parquet_load):
+        source = inspect.getsource(module)
+        assert "handle_ingest_failure(" in source, module.__name__
+        assert "rollback FAILED" not in source, module.__name__

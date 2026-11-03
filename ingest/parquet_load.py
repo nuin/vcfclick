@@ -47,6 +47,7 @@ from ingest._arrow import (
     VARIANTS_CALLED_COLUMNS,
     column_list_sql,
 )
+from ingest._rollback import handle_ingest_failure
 from storage import (
     count_expr,
     delete_where_sql,
@@ -327,14 +328,7 @@ def _ingest_parquet_locked(
             ],
         )
     except BaseException:
-        if commit_started:
-            log.warning(
-                "[parquet-ingest] failed mid-commit — rolling back %s", ingest_id
-            )
-            try:
-                rollback_ingest(ingest_id)
-            except Exception as rb_err:
-                log.error("[parquet-ingest] rollback FAILED: %s", rb_err)
+        handle_ingest_failure(commit_started, ingest_id, "parquet-ingest")
         raise
 
     log.info("[parquet-ingest] done. %d variants, %d samples.", n_variants, n_samples)

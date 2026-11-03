@@ -38,6 +38,7 @@ from ingest._arrow import (
     VARIANTS_ARROW_SCHEMA,
     write_parquet,
 )
+from ingest._rollback import handle_ingest_failure
 from ingest.routing import classify_header
 from ingest.vcf_rows import MAX_BATCH_ROWS, build_record_rows, require_single_alt
 from storage import (
@@ -291,21 +292,6 @@ def _commit_staged_ingest(
     )
 
 
-def _handle_ingest_failure(commit_started: bool, ingest_id: str) -> None:
-    if commit_started:
-        log.warning("[ingest] failed mid-commit — rolling back %s", ingest_id)
-        try:
-            rollback_ingest(ingest_id)
-        except Exception as rb_err:
-            log.error("[ingest] rollback FAILED: %s", rb_err)
-    else:
-        log.warning(
-            "[ingest] failed during parse — no chDB writes occurred, "
-            "prior data under ingest_id=%s preserved",
-            ingest_id,
-        )
-
-
 def _ingest_locked(
     vcf_path: str,
     cohort: str,
@@ -349,7 +335,7 @@ def _ingest_locked(
                 staging_path, vcf_path, cohort, ingest_id, samples, n_variants
             )
     except BaseException:
-        _handle_ingest_failure(commit_started, ingest_id)
+        handle_ingest_failure(commit_started, ingest_id, "ingest")
         raise
 
     elapsed = time.time() - started
