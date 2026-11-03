@@ -369,9 +369,8 @@ def _validate_document(doc: object, allow_unknown: bool) -> Validated:
         if _has_nonfinite(value):
             bad("bad_value", f"{key[:40]} holds a number that is not finite", key[:40])
 
-    if not any(p.level == ERROR for p in problems):
-        for message in fr.cross_key_problems(ordered["filters"]):
-            bad("inconsistent", message)
+    # cross-key rules (min_ab above max_ab) are judged on the RESOLVED values
+    # (`preset_options`), so a flag can repair a file: not refused here
     return Validated(ordered, tuple(problems), tuple(unknown))
 
 

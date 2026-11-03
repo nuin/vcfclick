@@ -381,8 +381,10 @@ does one whose declared name is not a valid name, such as `"Old Name"`.)
   ignored, except a never-presettable key that starts with `x_` (`x_guard`), which
   is refused like the others. A `null`, a boolean where a number goes, `NaN`, an infinity (or a
   number too large for a float, anywhere in the file, `x_` keys included) or an
-  out-of-range number is an error. `min_ab` above `max_ab` is checked on the resolved values, so
-  a flag can repair it.
+  out-of-range number is an error. `min_ab` above `max_ab` is checked on the resolved values only, so
+  a flag can repair it: `preset validate` and `import` accept such a file, and
+  `preset save` and `preset set` store it with a warning when the pair, with the
+  defaults for a key the preset leaves out, would refuse a plain run.
 - **Never in a preset** (an error with the reason): which sample or family is
   analysed, output control (`format`, `limit`), paths and environment, safety
   checks (`parentage`, the X guard) and attestations. This holds for any key of

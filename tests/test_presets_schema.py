@@ -168,7 +168,6 @@ def test_a_minimal_preset_is_valid_and_normalised():
         (envelope(meta=[]), "bad_type"),
         (envelope(meta={"locked": "yes"}), "bad_type"),
         (envelope(meta={"approved_by": 3}), "bad_type"),
-        (envelope({"min_ab": 0.8, "max_ab": 0.2}), "inconsistent"),
     ],
 )
 def test_every_error_code(doc, code):
@@ -248,6 +247,12 @@ def test_a_never_preset_key_in_the_extension_namespace_is_still_refused():
         assert [p.code for p in checked.errors] == ["never_presettable"], key
         assert fr.NEVER_PRESET[key] in checked.errors[0].message
         assert ps.filter_identity_problem(key)
+
+
+def test_min_ab_above_max_ab_in_a_file_is_left_to_the_resolved_values():
+    """A flag can repair the band at run time, so the file alone is not refused."""
+    checked = ps.validate_document(envelope({"min_ab": 0.9, "max_ab": 0.8}))
+    assert checked.ok and "inconsistent" not in [p.code for p in checked.problems]
 
 
 def test_the_envelopes_own_keys_and_other_unknown_ones_are_not_identity():

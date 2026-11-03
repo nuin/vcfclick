@@ -96,7 +96,6 @@ def test_save_takes_only_the_flags_typed(run, vcfclick_home):
         (["Upper"], "lowercase"),
         (["broad-first-pass"], "built-in"),
         (["ok", "--min-gq", "500"], "min_gq"),
-        (["ok", "--min-ab", "0.9", "--max-ab", "0.1"], "min_ab"),
         (["ok", "--from-preset", "nope"], "nope"),
         (["ok", "--from-preset", "rare-dominant", "--from-json", "-"], "choose one"),
     ],
@@ -267,6 +266,20 @@ def test_set_parses_bare_text_for_list_and_text_keys_and_reports_bad_json(
     assert f["genes"] == ["KRAS"] and f["genes_label"] == "Lab panel"
     assert "is not an integer" in run("set", "p1", "min_gq=abc", ok=False).output
     assert "is not a number" in run("set", "p1", "max_af=abc", ok=False).output
+
+
+def test_set_warns_when_min_ab_would_sit_above_the_default_max_ab(
+    run, vcfclick_home
+):
+    run("save", "p1", "--min-gq", "20")
+    r = run("set", "p1", "min_ab=0.9")
+    assert "min_ab (0.9) is above max_ab (0.75)" in r.output
+    assert saved(vcfclick_home, "p1")["filters"]["min_ab"] == 0.9
+    assert "above max_ab" not in run("set", "p1", "max_ab=0.95").output
+    # an inverted pair is stored with the warning: `--min-ab` can repair it
+    r = run("save", "inv", "--min-ab", "0.9", "--max-ab", "0.1")
+    assert "min_ab (0.9) is above max_ab (0.1)" in r.output
+    assert "[unavailable]" not in run("list").output
 
 
 def test_a_stored_file_that_declares_an_invalid_name_takes_its_file_name(

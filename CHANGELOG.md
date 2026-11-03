@@ -209,6 +209,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- A preset file with `min_ab` above `max_ab` is no longer refused by
+  `preset validate`, `import` or `save`: the band is checked on the
+  resolved values at run time, so `--min-ab` or `--max-ab` can repair
+  it, as the docs said. `preset save` and `preset set` warn when the
+  pair, against the defaults, would refuse a plain run (`preset set p
+  min_ab=0.9` against the default `max_ab` 0.75).
 - **X guard (behaviour change on chrX data).** On sure non-PAR chrX, `denovo`,
   `recessive`, `dominant` and `comphet` now drop a het father and, for a male
   proband, a het proband: genotypes a single X cannot have. Counts change only

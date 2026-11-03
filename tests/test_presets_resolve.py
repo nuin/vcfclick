@@ -189,6 +189,10 @@ def test_a_band_made_empty_by_a_flag_is_refused_and_a_flag_can_repair_it(put):
     put("p", {"min_ab": 0.8})
     assert "above max_ab" in invoke("--preset", "p", ok=False).output
     assert invoke("--preset", "p", "--max-ab", "0.9")["values"]["max_ab"] == 0.9
+    # a file whose own pair is inverted is read, and a flag repairs it too
+    put("inv", {"min_ab": 0.9, "max_ab": 0.8})
+    assert "above max_ab" in invoke("--preset", "inv", ok=False).output
+    assert invoke("--preset", "inv", "--min-ab", "0.1")["values"]["min_ab"] == 0.1
 
 
 def test_a_layer_between_default_and_preset(put):
