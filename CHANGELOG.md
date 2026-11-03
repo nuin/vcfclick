@@ -333,6 +333,44 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   on a cursor of its own (a duplicate connection to the same database), and
   the session cache opens one session per database under concurrent first
   calls.
+- Parallel `db ingest` (the default) lands the same rows as `--serial`.
+  Four shapes lost or duplicated rows while exiting 0:
+  - a small or sparse VCF whose records share one BGZF block gave every
+    16 kb tabix window a byte delta of 0, and those windows were skipped,
+    so the planned region was the last 100 kb bucket alone (150 variants
+    20 kb apart on one contig stored 5);
+  - the last tabix window of a contig was credited to the 100 kb bucket of
+    its first base only, so when it straddled a bucket boundary the
+    variants past the boundary were never read (20,000 sites at POS
+    1000..200990 stored 19,901);
+  - a region query returns every record that overlaps the region, so a
+    deletion starting before a region boundary was staged by two workers
+    and stored twice;
+  - on the cyvcf2 pre-pass path (no `.tbi`), a contig whose first record
+    sits at an exact multiple of 100,000 fell outside every region.
+  After staging, the ingest now compares the staged variant count against
+  the record count from the tabix index's pseudo-bins (or from the pre-pass)
+  and fails with both numbers, before any database write, when they differ;
+  a stale `.tbi` is the usual cause. Re-ingesting a header-only VCF under an
+  id that held data recorded 0 variants on the serial path but raised on
+  the parallel path after the prior rows were gone; it records 0 now. A
+  failed parallel ingest removes its staging directory (the library's
+  `keep_staging=True` keeps it) instead of leaving the staged Parquet
+  under the database.
+- `ingest_parallel(staging_dir=...)` (library API; the CLI does not expose
+  it) stages into a fresh `<ingest_id>.*` subdirectory of the given
+  directory and removes only that subdirectory. It used to glob stale
+  `variants_*.parquet` files already in the directory into the import and
+  then delete the whole directory, with whatever else it held.
+- The published wheel ships `vcfclick_web` again. The sdist include list
+  omitted the package, and `uv build` builds the wheel from the sdist, so
+  `pip install vcfclick[web]` followed by `vcfclick web NAME` failed with
+  `ModuleNotFoundError: vcfclick_web` (0.14.3 wheel and sdist; bioconda
+  builds from the same sdist). `tests/test_packaging.py` builds both from
+  an export of the tracked tree and checks them, and a CI job installs the
+  wheel into a clean venv. The sdist patterns are root-anchored, so a
+  nested copy of the tree under an untracked directory (a `.claude/worktrees/`
+  checkout) no longer reaches a locally built sdist.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased

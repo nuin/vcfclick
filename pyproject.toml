@@ -130,23 +130,29 @@ packages = [
     "vcfclick_web",
 ]
 
+# `uv build` builds the wheel FROM this sdist, and bioconda builds from it
+# too, so every wheel package above must be listed here as well
+# (tests/test_packaging.py checks). Patterns are root-anchored with a
+# leading slash: a bare `schema` matches at any depth and would ship a
+# nested copy under an untracked .claude/worktrees/ directory.
 [tool.hatch.build.targets.sdist]
 include = [
-    "annotations",
-    "benchmark",
-    "cli",
-    "export",
-    "ingest",
-    "popgen",
-    "schema",
-    "storage",
-    "tui",
-    "vcfclick_mcp",
-    "bench/BENCHMARK.md",
-    "bench/run.sh",
-    "examples",
-    "LICENSE",
-    "LICENSING.md",
-    "README.md",
-    "pyproject.toml",
+    "/annotations",
+    "/benchmark",
+    "/cli",
+    "/export",
+    "/ingest",
+    "/popgen",
+    "/schema",
+    "/storage",
+    "/tui",
+    "/vcfclick_mcp",
+    "/vcfclick_web",
+    "/bench/BENCHMARK.md",
+    "/bench/run.sh",
+    "/examples",
+    "/LICENSE",
+    "/LICENSING.md",
+    "/README.md",
+    "/pyproject.toml",
 ]
