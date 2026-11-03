@@ -230,3 +230,59 @@ def test_float_text_is_clickhouse_notation(value, single, text):
     from storage._duckdb_format import float_text
 
     assert float_text(value, single=single) == text
+
+
+def test_fast_float_text_matches_the_general_path():
+    """The per-column Float64 / Float32 formatters print what `float_text`
+    prints, on 20,000 random values across the fixed-point and exponent
+    ranges and their edges."""
+    import random
+    import struct
+
+    from storage._duckdb_format import _double_text, _float32_text, float_text
+
+    rng = random.Random(7)
+    edges = [1e-4, 9.999e-5, 1e16, 9.999999e15, 1e-6, 1e21, 0.5, 100.0, -0.0]
+    values = edges + [
+        rng.uniform(-1, 1) * 10 ** rng.uniform(-9, 23) for _ in range(20_000)
+    ]
+    for v in values:
+        assert _double_text(v) == float_text(v), v
+        f32 = struct.unpack("f", struct.pack("f", v))[0]
+        assert _float32_text(f32) == float_text(f32, single=True), f32
+
+
+def test_per_column_formatters_render_every_column_kind():
+    """Integer, bool, float, string and NULL columns take the per-column
+    path; list, map, struct and decimal take the general one. Non-finite
+    floats, `/`, U+2028, quotes and newlines are each escaped as chDB does."""
+    duckdb = pytest.importorskip("duckdb")
+    from storage._duckdb_format import render
+
+    cur = duckdb.connect().execute(
+        "SELECT 7::INTEGER AS i, true AS b, 'nan'::DOUBLE AS d, "
+        "CAST(0.33 AS REAL) AS r, 'a/b\"c' || chr(10) || chr(8232) AS s, "
+        "NULL::VARCHAR AS n, [1, NULL] AS l, MAP {'k': 1.5} AS m, "
+        "{'x': 'q,'} AS st, 1.50::DECIMAL(4, 2) AS dec "
+        "UNION ALL SELECT NULL, NULL, 1e21, NULL, NULL, 'x', NULL, NULL, NULL, NULL"
+    )
+    cols = [d[0] for d in cur.description]
+    types = [d[1] for d in cur.description]
+    rows = cur.fetchall()
+
+    def out(fmt):
+        return render(fmt, cols, types, rows, 0.5).decode()
+
+    assert (
+        '\t\t[7, true, null, 0.33, "a\\/b\\"c\\n\\u2028", null, [1,null], '
+        '{"k":1.5}, {"x":"q,"}, 1.5],\n'
+        '\t\t[null, null, 1e21, null, null, "x", null, null, null, null]\n'
+    ) in out("JSONCompact")
+    assert out("TSV") == (
+        "7\ttrue\tnan\t0.33\ta/b\"c\\n\u2028\t\\N\t[1,NULL]\t{'k':1.5}\t('q,')\t1.5\n"
+        "\\N\t\\N\t1e21\t\\N\t\\N\tx\t\\N\t\\N\t\\N\t\\N\n"
+    )
+    assert out("CSV") == (
+        '7,true,nan,0.33,"a/b""c\n\u2028",\\N,"[1,NULL]","{\'k\':1.5}","q,",1.5\n'
+        '\\N,\\N,1e21,\\N,\\N,"x",\\N,\\N,\\N,\\N\n'
+    )

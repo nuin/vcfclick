@@ -20,6 +20,7 @@ import decimal
 import math
 import struct
 import uuid
+from json.encoder import encode_basestring as _c_json_string
 
 # Format name (lower case, as chDB accepts any case) -> canonical name.
 FORMAT_ALIASES = {
@@ -145,6 +146,67 @@ def float_text(v: float, single: bool = False) -> str:
     return sign + body
 
 
+def _double_text(v: float) -> str:
+    """`float_text` of a Float64. Between 1e-4 and 1e16 Python's repr is
+    already fixed point with the shortest digits, so only a trailing `.0`
+    goes; elsewhere the slow path decides the notation."""
+    if 1e-4 <= abs(v) < 1e16:
+        r = repr(v)
+        return r[:-2] if r.endswith(".0") else r
+    return float_text(v)
+
+
+def _float32_text(v: float) -> str:
+    """`float_text(v, single=True)`. Between 1e-4 and 1e16 numpy prints a
+    float32 fixed point with its shortest round-trip digits."""
+    if 1e-4 <= abs(v) < 1e16:
+        import numpy as np
+
+        return np.format_float_positional(np.float32(v), unique=True, trim="-")
+    return float_text(v, single=True)
+
+
+def _bool_text(v: bool) -> str:
+    return "true" if v else "false"
+
+
+_INT_IDS = frozenset(
+    (
+        "utinyint",
+        "usmallint",
+        "uinteger",
+        "ubigint",
+        "uhugeint",
+        "tinyint",
+        "smallint",
+        "integer",
+        "bigint",
+        "hugeint",
+    )
+)
+
+
+def _scalar_number_fn(t: _Type):
+    """Text of a non-null value of a number or bool column, chosen once per
+    column; None for any other column type."""
+    if t.id in _INT_IDS:
+        return str
+    if t.id == "boolean":
+        return _bool_text
+    if t.id == "double":
+        return _double_text
+    if t.id == "float":
+        return _float32_text
+    return None
+
+
+def _nullable(fn, null: str):
+    def text(v):
+        return null if v is None else fn(v)
+
+    return text
+
+
 def _decimal_text(v: decimal.Decimal) -> str:
     """Decimal without trailing zeros, as ClickHouse prints it."""
     s = format(v, "f")
@@ -196,31 +258,19 @@ def _map_items(v) -> list:
 
 # ----------------------------------------------------------------- JSON
 
-_JSON_ESCAPES = {
-    '"': '\\"',
-    "\\": "\\\\",
-    "/": "\\/",
-    "\b": "\\b",
-    "\f": "\\f",
-    "\n": "\\n",
-    "\r": "\\r",
-    "\t": "\\t",
-    " ": "\\u2028",
-    " ": "\\u2029",
-}
-
 
 def json_string(s: str) -> str:
-    out = []
-    for ch in s:
-        esc = _JSON_ESCAPES.get(ch)
-        if esc is not None:
-            out.append(esc)
-        elif ord(ch) < 0x20:
-            out.append(f"\\u{ord(ch):04x}")
-        else:
-            out.append(ch)
-    return '"' + "".join(out) + '"'
+    """A JSON string as chDB writes it: the C encoder's escapes (control
+    characters as \\b \\f \\n \\r \\t or \\u00xx, quote, backslash), plus
+    `/`, U+2028 and U+2029, which chDB also escapes."""
+    out = _c_json_string(s)
+    if "/" in out:
+        out = out.replace("/", "\\/")
+    if "\u2028" in out:
+        out = out.replace("\u2028", "\\u2028")
+    if "\u2029" in out:
+        out = out.replace("\u2029", "\\u2029")
+    return out
 
 
 def json_value(v, t: _Type, indent: int | None = None) -> str:
@@ -292,56 +342,6 @@ def _json_tail(n_rows: int, elapsed: float) -> str:
     )
 
 
-def render_json(columns, types, rows, elapsed: float) -> str:
-    """chDB `JSON`: meta with types, data as one object per row."""
-    data = []
-    for r in rows:
-        fields = ",\n".join(
-            f"\t\t\t{json_string(c)}: {json_value(v, t, 3)}"
-            for c, t, v in zip(columns, types, r, strict=True)
-        )
-        data.append("\t\t{\n" + fields + "\n\t\t}")
-    body = ",\n".join(data) if data else ""
-    return (
-        "{\n"
-        + _json_meta(columns, types)
-        + '\t"data":\n\t[\n'
-        + body
-        + "\n\t],\n\n"
-        + _json_tail(len(rows), elapsed)
-    )
-
-
-def render_jsoncompact(columns, types, rows, elapsed: float) -> str:
-    """chDB `JSONCompact`: meta with types, data as one array per row."""
-    data = [
-        "\t\t["
-        + ", ".join(json_value(v, t) for t, v in zip(types, r, strict=True))
-        + "]"
-        for r in rows
-    ]
-    return (
-        "{\n"
-        + _json_meta(columns, types)
-        + '\t"data":\n\t[\n'
-        + ",\n".join(data)
-        + "\n\t],\n\n"
-        + _json_tail(len(rows), elapsed)
-    )
-
-
-def render_jsoneachrow(columns, types, rows) -> str:
-    keys = [json_string(c) for c in columns]
-    return "".join(
-        "{"
-        + ",".join(
-            f"{k}:{json_value(v, t)}" for k, t, v in zip(keys, types, r, strict=True)
-        )
-        + "}\n"
-        for r in rows
-    )
-
-
 # ------------------------------------------------------------ TSV / CSV
 
 _TSV_ESCAPES = {
@@ -356,8 +356,11 @@ _TSV_ESCAPES = {
 }
 
 
+_TSV_TABLE = str.maketrans(_TSV_ESCAPES)
+
+
 def _escape(s: str) -> str:
-    return "".join(_TSV_ESCAPES.get(ch, ch) for ch in s)
+    return s.translate(_TSV_TABLE)
 
 
 def _quoted_text(v, t: _Type) -> str:
@@ -416,21 +419,107 @@ def _csv_fields(v, t: _Type) -> list[str]:
     return [_csv_quote(_datetime_text(v) if _is_temporal(v) else _as_str(v))]
 
 
-def render_tsv(columns, types, rows, names: bool = False) -> str:
-    lines = ["\t".join(_escape(c) for c in columns)] if names else []
-    lines += [
-        "\t".join(_tsv_field(v, t) for t, v in zip(types, r, strict=True)) for r in rows
+# --------------------------------------------------- per-column formatters
+#
+# Each formatter is chosen once per column from its result type. Integer,
+# bool, float and string columns get a direct function; every other type
+# goes through the general per-value path above.
+
+
+def _json_fn(t: _Type, indent: int | None = None):
+    num = _scalar_number_fn(t)
+    if num is not None:
+        if t.id in ("double", "float"):
+
+            def finite(v):
+                return num(v) if math.isfinite(v) else "null"
+
+            return _nullable(finite, "null")
+        return _nullable(num, "null")
+    if t.id == "varchar":
+        return _nullable(json_string, "null")
+    return lambda v: json_value(v, t, indent)
+
+
+def _tsv_fn(t: _Type):
+    num = _scalar_number_fn(t)
+    if num is not None:
+        return _nullable(num, "\\N")
+    if t.id == "varchar":
+        return _nullable(_escape, "\\N")
+    return lambda v: _tsv_field(v, t)
+
+
+def _csv_fn(t: _Type):
+    num = _scalar_number_fn(t)
+    if num is not None:
+        return _nullable(num, "\\N")
+    if t.id == "varchar":
+        return _nullable(_csv_quote, "\\N")
+    return lambda v: ",".join(_csv_fields(v, t))
+
+
+def render_json(columns, types, rows, elapsed: float) -> str:
+    """chDB `JSON`: meta with types, data as one object per row."""
+    keys = [f"\t\t\t{json_string(c)}: " for c in columns]
+    fns = [_json_fn(t, 3) for t in types]
+    data = [
+        "\t\t{\n"
+        + ",\n".join([k + f(v) for k, f, v in zip(keys, fns, r, strict=True)])
+        + "\n\t\t}"
+        for r in rows
     ]
+    return (
+        "{\n"
+        + _json_meta(columns, types)
+        + '\t"data":\n\t[\n'
+        + ",\n".join(data)
+        + "\n\t],\n\n"
+        + _json_tail(len(rows), elapsed)
+    )
+
+
+def render_jsoncompact(columns, types, rows, elapsed: float) -> str:
+    """chDB `JSONCompact`: meta with types, data as one array per row."""
+    fns = [_json_fn(t) for t in types]
+    data = [
+        "\t\t[" + ", ".join([f(v) for f, v in zip(fns, r, strict=True)]) + "]"
+        for r in rows
+    ]
+    return (
+        "{\n"
+        + _json_meta(columns, types)
+        + '\t"data":\n\t[\n'
+        + ",\n".join(data)
+        + "\n\t],\n\n"
+        + _json_tail(len(rows), elapsed)
+    )
+
+
+def render_jsoneachrow(columns, types, rows) -> str:
+    keys = [f"{json_string(c)}:" for c in columns]
+    fns = [_json_fn(t) for t in types]
+    return "".join(
+        [
+            "{"
+            + ",".join([k + f(v) for k, f, v in zip(keys, fns, r, strict=True)])
+            + "}\n"
+            for r in rows
+        ]
+    )
+
+
+def render_tsv(columns, types, rows, names: bool = False) -> str:
+    fns = [_tsv_fn(t) for t in types]
+    lines = ["\t".join(_escape(c) for c in columns)] if names else []
+    lines += ["\t".join([f(v) for f, v in zip(fns, r, strict=True)]) for r in rows]
     return "".join(line + "\n" for line in lines)
 
 
 def render_csv(columns, types, rows, names: bool = False) -> str:
+    fns = [_csv_fn(t) for t in types]
     lines = [",".join(_csv_quote(c) for c in columns)] if names else []
-    for r in rows:
-        fields = []
-        for t, v in zip(types, r, strict=True):
-            fields.extend(_csv_fields(v, t))
-        lines.append(",".join(fields))
+    lines += [",".join([f(v) for f, v in zip(fns, r, strict=True)]) for r in rows]
     return "".join(line + "\n" for line in lines)
 
 
