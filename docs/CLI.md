@@ -1684,7 +1684,7 @@ Move databases between machines and backends.
 
 ### db export
 
-Write an ingestion back to VCF, whole or sliced by region, BED, gene, samples or a SQL condition. `.vcf.gz` output is BGZF, so `tabix -p vcf` indexes it. Genotypes are stored sparsely, so samples with no stored call are written `0/0` by default (`--absent-as nocall` for `./.`); ingestions made with `--keep-reference` keep true no-calls. Phase, PL/GL, and the difference between FILTER `PASS` and `.` are not recoverable and the header says so.
+Write an ingestion back to VCF, whole or sliced by region, BED, gene, samples or a SQL condition. `.vcf.gz` output is BGZF, so `tabix -p vcf` indexes it. Genotypes are stored sparsely: a sample recorded as a no-call at ingest (`missing_genotypes`, on by default) is written `./.`, and a sample with no stored call at all is written `0/0` by default (`--absent-as nocall` for `./.`). An ingestion made with `--no-record-missing` has no recorded no-calls, so every absent sample follows the `--absent-as` rule; ingestions made with `--keep-reference` keep true no-calls. Phase, PL/GL, and the difference between FILTER `PASS` and `.` are not recoverable and the header says so.
 
 ```bash
 vcfclick db export cohort -o cohort.vcf.gz
