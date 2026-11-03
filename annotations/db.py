@@ -393,8 +393,6 @@ def gnomad_af_many(
     return found
 
 
-# ───────────────────────────── gene resolution ─────────────────────────────
-
 # How a token found its gene, best first: a token that is a current symbol is
 # that gene even when it is also another gene's previous symbol.
 RESOLVED_BY: tuple[str, ...] = (

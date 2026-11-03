@@ -465,10 +465,12 @@ def _editor_text(path: Path, name: str) -> str:
         raise PresetError(f"cannot read the preset ({e.strerror})") from None
     try:
         doc = parse_json(text)
-        if isinstance(doc, dict) and doc.get("name") not in (None, name):
-            return to_text(named(doc, name))
     except PresetError:
-        pass  # a file that is not valid yet is shown as it is: edit is the repair
+        return (
+            text  # a file that is not valid JSON yet is shown as it is: edit repairs it
+        )
+    if isinstance(doc, dict) and doc.get("name") not in (None, name):
+        return to_text(named(doc, name))
     return text
 
 

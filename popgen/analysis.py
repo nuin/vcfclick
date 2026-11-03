@@ -461,9 +461,6 @@ def prepare(
     )
 
 
-# ───────────────────────────── statistics ───────────────────────────────
-
-
 def projection_size(prep: Prepared, group: str, project: int | None) -> int | None:
     """The SFS projection size: `project` if given, else the smallest
     number of called haplotypes at any retained site in the group."""

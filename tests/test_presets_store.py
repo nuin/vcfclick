@@ -852,3 +852,15 @@ def test_save_from_a_result_without_a_preset_block_says_what_to_do(run, tmp_path
         "name": "u", "source": "user", "resolved": {"min_gq": {"value": 21, "from": "flag"}}
     }}]}))  # fmt: skip
     run("save", "fromfirst", "--from-result", str(docs))
+
+
+def test_edit_shows_a_file_that_is_not_valid_json_as_it_is(
+    run, vcfclick_home, monkeypatch
+):
+    run("save", "p", "--min-gq", "21")
+    path = vcfclick_home / "presets" / "p.json"
+    path.write_text('{"name": "p", broken\n')
+    shown: list[str] = []
+    monkeypatch.setattr("click.edit", lambda text, **k: shown.append(text))
+    assert "no changes" in run("edit", "p").output
+    assert shown == ['{"name": "p", broken\n']
