@@ -302,6 +302,15 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- The published wheel ships `vcfclick_web` again. The sdist include list
+  omitted the package, and `uv build` builds the wheel from the sdist, so
+  `pip install vcfclick[web]` followed by `vcfclick web NAME` failed with
+  `ModuleNotFoundError: vcfclick_web` (0.14.3 wheel and sdist; bioconda
+  builds from the same sdist). `tests/test_packaging.py` builds both from
+  an export of the tracked tree and checks them, and a CI job installs the
+  wheel into a clean venv. The sdist patterns are root-anchored, so a
+  nested copy of the tree under an untracked directory (a `.claude/worktrees/`
+  checkout) no longer reaches a locally built sdist.
 - Gene symbols that HGNC spells with lower-case letters (`C9orf72`,
   `C19orf12`, `C12orf57`) now resolve. `position_for_gene` (used by `db gene`,
   `db export --gene`, `db popgen --gene`, the MCP tool and the TUI) upper-cased
