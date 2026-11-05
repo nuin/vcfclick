@@ -131,6 +131,13 @@ Use it when:
 Current caveat: `vcfclick db stats` is not yet implemented for DuckDB.
 Use `vcfclick db info` for basic counts.
 
+DuckDB lets one process open a database file at a time. A command that
+finds the file held by another `vcfclick` process waits up to 60 seconds
+for it, then stops with `Error: the database 'study' is in use by process
+N`. Set `VCFCLICK_DUCKDB_LOCK_WAIT` to the number of seconds to wait (`0`
+fails at once). Two commands on one database still run one after the
+other: the second starts when the first exits.
+
 `vcfclick db query --format` prints the same bytes on DuckDB as on chDB
 for `JSON`, `JSONCompact`, `JSONEachRow`, `TSV` (`TabSeparated`),
 `TSVWithNames`, `CSV` and `CSVWithNames`. Three parts differ:

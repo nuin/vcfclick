@@ -48,15 +48,17 @@ def _setup_logging() -> None:
 
 class _Cli(click.Group):
     """The root group: an annotation store another process is writing (or
-    that cannot be read) ends any command with its message, not a traceback."""
+    that cannot be read), or a database another process kept past the lock
+    wait, ends any command with its message instead of a traceback."""
 
     def invoke(self, ctx: click.Context):
         try:
             return super().invoke(ctx)
         except Exception as e:
             from annotations.db import AnnotationStoreUnavailable
+            from storage.db import DatabaseBusy
 
-            if isinstance(e, AnnotationStoreUnavailable):
+            if isinstance(e, (AnnotationStoreUnavailable, DatabaseBusy)):
                 raise click.ClickException(str(e)) from None
             raise
 

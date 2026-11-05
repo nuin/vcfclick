@@ -240,9 +240,16 @@ def db_query(name: str, sql: str, fmt: str) -> None:
     if not db_path(name).exists():
         raise click.ClickException(f"db {name!r} not found")
 
+    import duckdb
+
     _set_db(name)
     sess = get_session(name)
-    out = sess.query(sql, fmt).bytes().decode()
+    try:
+        out = sess.query(sql, fmt).bytes().decode()
+    except (RuntimeError, ValueError, duckdb.Error) as e:
+        # chDB raises RuntimeError, DuckDB duckdb.Error, an unknown format
+        # ValueError: the engine's message, without a Python traceback
+        raise click.ClickException(str(e).strip()) from None
     click.echo(out)
 
 

@@ -146,6 +146,10 @@ def db_path(name: str | None = None) -> Path:
     return _db_root() / resolved
 
 
+class DatabaseBusy(RuntimeError):
+    """Another process held the database file for longer than the lock wait."""
+
+
 def _open_session(path: Path):
     """Open a backend-specific session at `path`."""
     if backend() == "duckdb":
