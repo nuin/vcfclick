@@ -32,6 +32,7 @@ depends on so call sites stay unchanged. The two engines differ in:
 from __future__ import annotations
 
 import logging
+import os
 import re
 import time
 from pathlib import Path
@@ -41,6 +42,43 @@ import duckdb
 from storage import _duckdb_format
 
 log = logging.getLogger(__name__)
+
+# How long opening a database waits for another process to release the
+# file. DuckDB lets one process hold the file at a time, and front-ends
+# run several commands on one database at once (db qc and db relatedness).
+_LOCK_WAIT_ENV = "VCFCLICK_DUCKDB_LOCK_WAIT"
+_LOCK_WAIT_DEFAULT_S = 60.0
+
+
+def _lock_wait_s() -> float:
+    raw = os.environ.get(_LOCK_WAIT_ENV, "")
+    try:
+        return max(0.0, float(raw)) if raw else _LOCK_WAIT_DEFAULT_S
+    except ValueError:
+        return _LOCK_WAIT_DEFAULT_S
+
+
+def _connect_waiting(db_file: Path) -> duckdb.DuckDBPyConnection:
+    """Connect, retrying while another process holds the file lock."""
+    from storage.db import DatabaseBusy
+
+    deadline = time.monotonic() + _lock_wait_s()
+    delay = 0.05
+    while True:
+        try:
+            return duckdb.connect(str(db_file))
+        except duckdb.IOException as e:
+            if "Could not set lock" not in str(e):
+                raise
+            if time.monotonic() >= deadline:
+                pid = re.search(r"PID (\d+)", str(e))
+                who = f"process {pid.group(1)}" if pid else "another process"
+                raise DatabaseBusy(
+                    f"the database {db_file.parent.name!r} is in use by {who}; "
+                    f"waited {_lock_wait_s():g}s (set {_LOCK_WAIT_ENV} to wait longer)"
+                ) from None
+            time.sleep(delay)
+            delay = min(delay * 2, 0.5)
 
 
 # Box-table formats, rendered approximately: chDB's own depend on terminal
@@ -142,7 +180,7 @@ class DuckDBSession:
         # co-located with locks/ and any other vcfclick working files,
         # matching the chDB directory model.
         self._db_file = self._path / "store.duckdb"
-        self._conn = duckdb.connect(str(self._db_file))
+        self._conn = _connect_waiting(self._db_file)
 
     def query(self, sql: str, format: str | None = None) -> _DuckDBQueryResult:
         """Run a SQL statement. Format defaults to a Pretty render."""

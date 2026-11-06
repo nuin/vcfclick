@@ -407,6 +407,12 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- DuckDB backend: a command on a database another `vcfclick` process has
+  open waits for it (up to `VCFCLICK_DUCKDB_LOCK_WAIT` seconds, default
+  60) instead of failing with "Could not set lock on file". The desktop
+  apps run `db qc` and `db relatedness` together, and QC came up empty.
+- `db query`: an SQL error prints one `Error:` line with the engine's
+  message on both backends instead of a Python traceback.
 - `db relatedness --min-kinship` below 0.0442 reports the pairs at or above
   it. The pairs were selected by kinship and then dropped again for being
   classified `unrelated`, so `--min-kinship 0.01` returned the default list.

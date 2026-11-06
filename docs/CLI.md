@@ -140,6 +140,8 @@ vcfclick db query trio "SELECT count() FROM variants"
 An unknown format name is an error. On DuckDB, any format outside those
 seven and `Pretty` / `PrettyCompact` / `Vertical` is an error too, though
 chDB prints it.
+An SQL error exits 1 and prints `Error: ` and the engine's message on
+stderr.
 
 <details><summary>options</summary>
 
