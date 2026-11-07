@@ -55,8 +55,10 @@ def test_query_sql_error_is_one_line(vcfclick_home, backend, tiny_vcf):
         ok=False,
     )
     assert "Traceback" not in r.stderr
-    assert r.stderr.startswith("Error: ")
-    assert "nope" in r.stderr.splitlines()[0]
+    # chDB on Linux prints a jemalloc line ("Default dirty pages decay
+    # period") to stderr before the error, so look for the Error line
+    errors = [ln for ln in r.stderr.splitlines() if ln.startswith("Error: ")]
+    assert len(errors) == 1 and "nope" in errors[0], r.stderr
 
 
 def test_duckdb_command_waits_for_the_lock(vcfclick_home, tiny_vcf):
@@ -81,6 +83,6 @@ def test_duckdb_lock_wait_runs_out_cleanly(vcfclick_home, tiny_vcf, monkeypatch)
         holder.kill()
         holder.wait(timeout=30)
     assert "Traceback" not in r.stderr
-    assert r.stderr.startswith("Error: ")
+    assert "Error: the database" in r.stderr
     assert "is in use by process" in r.stderr
     assert "VCFCLICK_DUCKDB_LOCK_WAIT" in r.stderr
