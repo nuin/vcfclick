@@ -232,7 +232,11 @@ class DuckDBSession:
         """Run a SELECT and return a pyarrow Table (no text rendering)."""
         cur = self._conn.cursor()
         try:
-            return cur.execute(sql).fetch_arrow_table()
+            cur.execute(sql)
+            # to_arrow_table from DuckDB 1.4; fetch_arrow_table, which warns
+            # from then on, before it
+            fetch = getattr(cur, "to_arrow_table", None) or cur.fetch_arrow_table
+            return fetch()
         finally:
             cur.close()
 
