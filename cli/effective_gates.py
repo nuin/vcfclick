@@ -239,6 +239,29 @@ def _num(v: float | None) -> float | int | None:
     return int(v) if float(v).is_integer() else v
 
 
+def _rows_in_scope(sess, sql: str, scope) -> list[tuple]:
+    """The rows of a statement grouped by `stats_predicate`'s site columns
+    (its last two) that `scope` contains, without those two columns (a key
+    can repeat; the callers add its counts up). Read as Arrow and judged a
+    contig at a time: a scope of hundreds of intervals leaves tens of
+    thousands of edge-bucket rows, and rendering them as text and testing
+    them one by one doubled a scoped run's time."""
+    import pyarrow as pa
+
+    from cli.scope import sites_in_scope
+    from storage import query_arrow
+
+    table = query_arrow(sql, sess)
+    n = table.num_columns
+    chrom = table.column(n - 2)
+    if pa.types.is_dictionary(chrom.type):
+        chrom = chrom.cast(pa.string())
+    keep = sites_in_scope(scope, chrom.to_pylist(), table.column(n - 1).to_pylist())
+    # filtered in Python: Table.filter imports pandas (0.15 s)
+    rows = zip(*(table.column(i).to_pylist() for i in range(n - 2)))
+    return [r for r, k in zip(rows, keep.tolist()) if k]
+
+
 def sample_stats_sql(
     ingest_id: str, samples: Sequence[str], scope=None
 ) -> tuple[str, bool]:
@@ -275,11 +298,7 @@ def collect_sample_stats(
     samples there are. With a scope (cli/scope.Scope), only the rows inside it,
     exactly in every mode: these shares are what a gate falls back to."""
     sql, trim = sample_stats_sql(ingest_id, [s for s, _ in samples], scope)
-    data = query_rows(sess, sql)
-    if trim:
-        from cli.scope import site_in_scope
-
-        data = [r[:6] for r in data if site_in_scope(scope, r[6], r[7])]
+    data = _rows_in_scope(sess, sql, scope) if trim else query_rows(sess, sql)
     acc = {s: [0, 0, 0, 0, {}, {}] for s, _ in samples}  # rows gq dp ad, hists
     by_class: dict[str, dict[str, list[int]]] = {s: {} for s, _ in samples}
     for sample, gt, dp, n, n_gq, n_ad in data:
@@ -569,11 +588,7 @@ def collect_variant_stats(
     chromosome. With a scope (cli/scope.Scope), only the variants inside it,
     exactly in every mode: the INFO/AF and FILTER gates can act only there."""
     sql, trim = variant_stats_sql(ingest_id, filter_present=filter_present, scope=scope)
-    data = query_rows(sess, sql)
-    if trim:
-        from cli.scope import site_in_scope
-
-        data = [r[:4] for r in data if site_in_scope(scope, r[4], r[5])]
+    data = _rows_in_scope(sess, sql, scope) if trim else query_rows(sess, sql)
     merged: dict[str, list[int]] = {}
     for c, n, w, x in data:  # a chromosome split over edge-bucket rows
         m = merged.setdefault(c, [0, 0, 0])

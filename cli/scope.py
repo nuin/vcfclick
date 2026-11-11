@@ -204,6 +204,19 @@ class IntervalSet:
         i = bisect_right(self._starts[c], int(pos)) - 1
         return i >= 0 and ivs[i][1] >= int(pos)
 
+    def contains_many(self, chrom: str, pos):
+        """`contains` for a numpy array of positions on one contig: a bool
+        array."""
+        import numpy as np
+
+        ivs = self._by.get(canonical_chrom(chrom))
+        if not ivs:
+            return np.zeros(len(pos), dtype=bool)
+        starts = np.fromiter((lo for lo, _ in ivs), np.int64, len(ivs))
+        ends = np.fromiter((hi for _, hi in ivs), np.int64, len(ivs))
+        i = np.searchsorted(starts, pos, side="right") - 1
+        return (i >= 0) & (ends[np.maximum(i, 0)] >= pos)
+
     def sql(self, alias: str) -> str:
         """Exact: `((a.chrom IN (...) AND (a.pos BETWEEN lo AND hi OR ...)) OR
         ...)`."""
@@ -289,6 +302,19 @@ class Scope:
 
     def contains(self, chrom: str, pos: int) -> bool:
         return self.included(chrom, pos) and not self.excluded(chrom, pos)
+
+    def contains_many(self, chrom: str, pos):
+        """`contains` for a numpy array of positions on one contig."""
+        import numpy as np
+
+        keep = (
+            np.ones(len(pos), dtype=bool)
+            if self.include is None
+            else self.include.contains_many(chrom, pos)
+        )
+        if self.exclude:
+            keep &= ~self.exclude.contains_many(chrom, pos)
+        return keep
 
     @property
     def interval_count(self) -> int:
@@ -423,6 +449,20 @@ def site_in_scope(scope: Scope, chrom: str, pos) -> bool:
     """For a row of a `stats_predicate` statement: ('', 0) is a decided bucket,
     in scope; anything else is judged by the scope."""
     return chrom == "" or scope.contains(chrom, int(pos))
+
+
+def sites_in_scope(scope: Scope, chroms: Sequence[str], positions):
+    """`site_in_scope` for whole columns at once: a numpy bool mask, judged a
+    contig at a time."""
+    import numpy as np
+
+    chroms = np.asarray(chroms, dtype=object)
+    pos = np.asarray(positions, dtype=np.int64)
+    keep = np.zeros(len(pos), dtype=bool)
+    for chrom in set(chroms.tolist()):
+        at = chroms == chrom
+        keep[at] = True if chrom == "" else scope.contains_many(chrom, pos[at])
+    return keep
 
 
 def filter_rows(rows: Sequence[Sequence], scope: Scope | None) -> list:
