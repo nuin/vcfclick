@@ -407,6 +407,11 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `db trio` with a preset and 65 to 500 scope intervals: the effective-gate
+  counts read the edge-bucket rows as Arrow and judge them a contig at a
+  time, instead of rendering each row as text and testing it alone (0.58 s
+  to 0.52 s on the 20,000-site timing store, DuckDB). DuckDB Arrow reads use
+  `to_arrow_table`, so DuckDB 1.4+ no longer warns on every one.
 - DuckDB backend: a command on a database another `vcfclick` process has
   open waits for it (up to `VCFCLICK_DUCKDB_LOCK_WAIT` seconds, default
   60) instead of failing with "Could not set lock on file". The desktop

@@ -76,6 +76,30 @@ def test_interval_set_merges_and_matches_every_contig_spelling():
     assert x.contains("X", 15) and x.contains("23", 15) and not x.contains("chr7", 15)
 
 
+def test_sites_in_scope_matches_site_in_scope_row_by_row():
+    """The column form the effective-gate counts use decides every row as the
+    one-row form does: decided buckets ('', 0), contig spellings, interval
+    ends, an exclusion inside an inclusion, and no inclusion at all."""
+    include = sc.IntervalSet([("chr1", 100, 200), ("1", 300, 300), ("chrX", 5, 9)])
+    exclude = sc.IntervalSet([("chr1", 150, 160)])
+    rows = [("", 0)] + [
+        (c, p)
+        for c in ("chr1", "1", "X", "23", "chr2")
+        for p in (4, 5, 9, 10, 99, 100, 149, 150, 160, 161, 200, 201, 300, 301)
+    ]
+    chroms, positions = [c for c, _ in rows], [p for _, p in rows]
+    for scope in (
+        sc.Scope(include=include, exclude=exclude),
+        sc.Scope(include=include, exclude=sc.IntervalSet([])),
+        sc.Scope(include=None, exclude=exclude),
+    ):
+        mask = sc.sites_in_scope(scope, chroms, positions).tolist()
+        assert mask == [sc.site_in_scope(scope, c, p) for c, p in rows]
+    assert (
+        sc.sites_in_scope(sc.Scope(include=include, exclude=exclude), [], []).size == 0
+    )
+
+
 def test_scope_sql_text_and_threshold(monkeypatch):
     scope = _scope(
         regions=["chr7:100-200", "7:500-600"], exclude_regions=["chr7:150-160"]
