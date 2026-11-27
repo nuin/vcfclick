@@ -14,6 +14,9 @@ from __future__ import annotations
 import click
 
 
+MAX_API_LIMIT = 10000  # candidates per model for a caller that is not a terminal
+
+
 def segregate_api(
     *,
     family: str | None = None,
@@ -44,6 +47,13 @@ def segregate_api(
         )
     if limit < 1:
         raise click.ClickException("limit must be at least 1")
+    limit_clamped = limit > MAX_API_LIMIT
+    limit = min(limit, MAX_API_LIMIT)
+    from cli.filter_registry import cross_key_problems
+
+    problems = cross_key_problems({"min_ab": min_ab, "max_ab": max_ab})
+    if problems:
+        raise click.ClickException(problems[0])
     models = seg.select_models([t.strip() for t in category.split(",")])
     ingest_id = _sole_ingest_id(None)
     if ingest_id is None:
@@ -88,6 +98,8 @@ def segregate_api(
                 n_samples=n_samples,
             )
             docs.append(seg.segregation_document(ctx, render, run_notes))
+    if limit_clamped:
+        notes = [*notes, f"limit was lowered to {MAX_API_LIMIT} (the cap here)."]
     if notes:
         for doc in docs:
             doc["notes"] = [*doc["notes"], *notes]

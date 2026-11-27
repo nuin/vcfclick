@@ -84,10 +84,21 @@ class SegOptions:
         )
 
 
-def select_models(category: Sequence[str] | str) -> tuple[str, ...]:
+def select_models(
+    category: Sequence[str] | str, *, typed: bool = True
+) -> tuple[str, ...]:
     """The models `--category` names, in document order. `all` anywhere is all
-    of them; `xlinked` is not a model of this command."""
+    of them; `xlinked` is not a model of this command. A typed `xlinked` is a
+    usage error; one that came from a preset (`typed=False`) is dropped, so a
+    built-in such as rare-recessive still runs."""
     tokens = (category,) if isinstance(category, str) else tuple(category)
+    if "xlinked" in tokens and not typed:
+        tokens = tuple(t for t in tokens if t != "xlinked")
+        if not tokens:
+            raise click.UsageError(
+                "the preset's category is xlinked only; db segregate has no "
+                "xlinked model"
+            )
     if "xlinked" in tokens:
         raise click.UsageError(
             "db segregate has no xlinked model: sex and mitochondrial contigs "
@@ -620,11 +631,11 @@ def run_comphet(ctx: RunContext, render) -> dict:
     truncated = False
     n_genes = 0
     for sym in sorted(genes):
-        entry = _gene_entry(sym, genes[sym], ctx, policy, by_status)
+        entry, cut = _gene_entry(sym, genes[sym], ctx, policy, by_status)
+        truncated = truncated or cut
         if entry is None:
             continue
         n_genes += 1
-        truncated = truncated or entry.pop("_truncated")
         entries.append(entry)
     shown = entries[: opts.limit]
     from cli.trio_output import decorate_rows
@@ -676,7 +687,9 @@ def _gene_entry(
     ctx: RunContext,
     policy: sv.Policy,
     by_status: dict[str, int],
-) -> dict | None:
+) -> tuple[dict | None, bool]:
+    """The gene's listing (None when no pair is listed) and whether the pair
+    cap `MAX_PAIRS_PER_GENE` cut the search, which holds even with no listing."""
     sib, opts = ctx.sib, ctx.opts
     pairs = []
     used: dict[str, dict[tuple, Site]] = {"paternal": {}, "maternal": {}}
@@ -720,14 +733,13 @@ def _gene_entry(
         if truncated:
             break
     if not pairs:
-        return None
+        return None, truncated
     return {
         "gene": sym,
         "paternal": [_half_dict(sib, s, ctx) for s in used["paternal"].values()],
         "maternal": [_half_dict(sib, s, ctx) for s in used["maternal"].values()],
         "pairs": pairs,
-        "_truncated": truncated,
-    }
+    }, truncated
 
 
 # ───────────────────────────── the document ─────────────────────────────

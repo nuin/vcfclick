@@ -468,37 +468,51 @@ def trio(
 
 
 def _segregation_envelope(doc: dict) -> dict:
-    """A table over the first sibship's candidates, in the `_run_sql` envelope
-    the page renders: one row per candidate (comphet: per pair), one column per
-    child with its genotype as `db segregate` prints it."""
+    """A table over every sibship's candidates, in the `_run_sql` envelope the
+    page renders: one row per candidate (comphet: per pair) with the family id,
+    then one column per child (the widest sibship) with its genotype as
+    `db segregate` prints it."""
     from cli.segregation_output import gt_text
 
-    first = doc["families"][0] if "families" in doc else doc
-    children = [c["sample"] for c in first["family"]["children"]]
+    fams = doc["families"] if "families" in doc else [doc]
+    width = max((len(f["family"]["children"]) for f in fams), default=0)
     rows = []
-    for model, m in first["models"].items():
-        for c in m.get("candidates", []):
-            rows.append(
-                [model, c["chrom"], c["pos"], c["ref"], c["alt"], c["af"], c["status"]]
-                + [gt_text(k["state"], k["gt"]) for k in c["calls"]]
-            )
-        for g in m.get("genes", []):
-            for p in g["pairs"]:
+    for fam in fams:
+        fid = fam["family"]["family_id"]
+        pad = [None] * (width - len(fam["family"]["children"]))
+        for model, m in fam["models"].items():
+            for c in m.get("candidates", []):
                 rows.append(
-                    [
-                        model,
-                        g["gene"],
-                        None,
-                        p["paternal"],
-                        p["maternal"],
-                        None,
-                        p["status"],
-                    ]
-                    + [None] * len(children)
+                    [fid, model, c["chrom"], c["pos"], c["ref"], c["alt"], c["af"]]
+                    + [c["status"]]
+                    + [gt_text(k["state"], k["gt"]) for k in c["calls"]]
+                    + pad
                 )
+            for g in m.get("genes", []):
+                for p in g["pairs"]:
+                    rows.append(
+                        [fid, model, g["gene"], None, p["paternal"], p["maternal"]]
+                        + [None, p["status"]]
+                        + [None] * width
+                    )
+    child_cols = (
+        [c["sample"] for c in fams[0]["family"]["children"]]
+        if len(fams) == 1
+        else [f"child{i + 1}" for i in range(width)]
+    )
     return {
         "sql": None,
-        "columns": ["model", "chrom", "pos", "ref", "alt", "af", "status", *children],
+        "columns": [
+            "family",
+            "model",
+            "chrom",
+            "pos",
+            "ref",
+            "alt",
+            "af",
+            "status",
+            *child_cols,
+        ],
         "rows": rows,
         "row_count": len(rows),
     }

@@ -663,6 +663,12 @@ A database that predates the pedigree table says `no pedigree loaded` (from
 mother, and asks, for each model, which variants every affected child carries
 and no unaffected child contradicts.
 
+`db trio --affected-only` does not exist: `db trio` without `--proband` already
+skips unaffected children, and `--all-trios` restores them. A preset category
+that lists `xlinked` (rare-recessive) runs the other models and prints a note;
+a typed `--category xlinked` is refused. Text output marks a listing cut by
+`--limit`.
+
 ```bash
 vcfclick db ped fam1 fam1.ped            # S1 S2 affected, S3 S4 unaffected, S5 unknown
 vcfclick db segregate fam1               # a count per model

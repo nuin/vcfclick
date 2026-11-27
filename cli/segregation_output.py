@@ -79,6 +79,8 @@ def summary_line(doc: dict, model: str) -> str:
             extra += f"  (+{m['n_compatible']} compatible)"
         if by[sv.REDUCED_PENETRANCE]:
             extra += f"  (incl. {by[sv.REDUCED_PENETRANCE]} reduced penetrance)"
+        if m["truncated"]:
+            extra += "  (truncated, raise --limit)"
     unit = "  genes" if model == "comphet" else ""
     return f"  {model:10s} {m['count']:>6}{unit}{extra}"
 
@@ -114,6 +116,8 @@ def detail(doc: dict, model: str) -> list[str]:
     if model != "comphet":
         lines = [f"\n{model} candidates: {m['count']}"]
         lines += [_row_line(doc, c) for c in m["candidates"]]
+        if m["truncated"]:
+            lines.append(f"  (showing {len(m['candidates'])}, raise --limit)")
         return lines
     lines = [f"\ncomphet candidate genes: {m['count']}"]
     for g in m["genes"]:
@@ -126,6 +130,8 @@ def detail(doc: dict, model: str) -> list[str]:
                 )
         for p in g["pairs"]:
             lines.append(f"    pair {p['paternal']} + {p['maternal']}  {p['status']}")
+    if m["truncated"]:
+        lines.append(f"  (showing {len(m['genes'])} genes, raise --limit)")
     return lines
 
 

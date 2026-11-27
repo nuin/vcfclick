@@ -219,7 +219,14 @@ def db_segregate(options: SegregateOptions) -> None:
         raise click.ClickException(f"db {options.name!r} does not exist.")
     if options.limit < 1:
         raise click.UsageError("--limit must be at least 1")
-    models = seg.select_models(options.category)
+    cat_ctx = click.get_current_context()
+    cat_typed = is_explicit(cat_ctx, "category")
+    models = seg.select_models(options.category, typed=cat_typed)
+    if not cat_typed and "xlinked" in options.category:
+        click.echo(
+            "note: the preset's xlinked category is not a segregation model; skipped.",
+            err=True,
+        )
     mz_pairs = parse_mz_pairs(options.mz_pair)
     _set_db(options.name)
     sess = get_session(options.name)
@@ -367,4 +374,4 @@ def _build_scope(ctx: click.Context, options: SegregateOptions, sess, ingest_id:
     """The run's cli.scope.Scope (genes, regions) as `db trio` builds it."""
     from cli.db_trio import _build_scope as build
 
-    return build(ctx, options, sess, ingest_id)
+    return build(ctx, options, sess, ingest_id, "segregate")

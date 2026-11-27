@@ -637,6 +637,50 @@ def test_limit_truncates_and_says_so(kr):
     assert len(m["candidates"]) == 2 and m["truncated"] is True and m["count"] == 6
 
 
+def test_text_marks_a_listing_cut_by_limit(kr):
+    one = kr.text("--limit", "2", "--category", "dominant")
+    assert "dominant candidates: 6" in one and "(showing 2, raise --limit)" in one
+    many = kr.text("--limit", "2")
+    assert "(truncated, raise --limit)" in many
+    assert "raise --limit" not in kr.text("--category", "dominant")
+
+
+def test_a_pair_cap_is_reported_even_when_no_pair_is_listed(monkeypatch):
+    from types import SimpleNamespace
+
+    from cli import segregation as seg
+
+    monkeypatch.setattr(seg, "MAX_PAIRS_PER_GENE", 3)
+    monkeypatch.setattr(seg, "children_of", lambda sib, site: ())
+    monkeypatch.setattr(seg.sv, "judge_pair", lambda **kw: None)
+
+    def site(pos):
+        return SimpleNamespace(
+            chrom="chr1",
+            pos=pos,
+            ref="A",
+            alt="G",
+            pc=False,
+            states=("het", "hom_ref"),
+            key=("chr1", pos, "A", "G"),
+        )
+
+    sides = {"paternal": [site(1), site(2)], "maternal": [site(3), site(4)]}
+    ctx = SimpleNamespace(sib=None, opts=SimpleNamespace())
+    entry, cut = seg._gene_entry("G", sides, ctx, None, {})
+    assert entry is None and cut is True
+
+
+def test_a_preset_category_with_xlinked_is_dropped_with_a_note(kr):
+    r = kr.cli("db", "segregate", "t", "--format", "json", "--preset", "rare-recessive")
+    doc = json.loads(r.stdout)
+    doc = doc["families"][0] if "families" in doc else doc
+    assert set(doc["models"]) == {"recessive", "comphet"}
+    assert "xlinked" in r.stderr
+    typed = kr.cli("db", "segregate", "t", "--category", "xlinked", ok=False)
+    assert typed.returncode != 0 and "no xlinked model" in typed.stderr
+
+
 # ───────────────────────────── text ─────────────────────────────
 
 

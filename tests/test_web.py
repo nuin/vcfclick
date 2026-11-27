@@ -543,10 +543,58 @@ def test_segregate_returns_the_cli_document_and_a_table(trio_web_store):
     assert fam["models"]["dominant"]["count"] == 6
     assert set(fam["models"]) == {"dominant"}
     # the envelope the page renders
-    assert d["columns"][:7] == ["model", "chrom", "pos", "ref", "alt", "af", "status"]
-    assert d["columns"][7:] == ["S1", "S2", "S3", "S4", "S5"]
-    assert d["row_count"] == 6 and d["rows"][0][:2] == ["dominant", "chr1"]
-    assert d["rows"][0][7:] == ["0/1", "0/1", "0/0", "0/0", "0/1"]
+    assert d["columns"][:8] == [
+        "family",
+        "model",
+        "chrom",
+        "pos",
+        "ref",
+        "alt",
+        "af",
+        "status",
+    ]
+    assert d["columns"][8:] == ["S1", "S2", "S3", "S4", "S5"]
+    assert d["row_count"] == 6 and d["rows"][0][:3] == ["fam1", "dominant", "chr1"]
+    assert d["rows"][0][8:] == ["0/1", "0/1", "0/0", "0/0", "0/1"]
+
+
+def test_segregate_table_covers_every_sibship():
+    from vcfclick_web.app import _segregation_envelope
+
+    def fam(fid, kids):
+        cand = {
+            "chrom": "chr1",
+            "pos": 1,
+            "ref": "A",
+            "alt": "G",
+            "af": None,
+            "status": "consistent",
+            "calls": [{"state": "het", "gt": 1} for _ in kids],
+        }
+        return {
+            "family": {"family_id": fid, "children": [{"sample": k} for k in kids]},
+            "models": {"dominant": {"candidates": [cand]}},
+        }
+
+    env = _segregation_envelope(
+        {"families": [fam("A", ["a1", "a2"]), fam("B", ["b1", "b2", "b3"])]}
+    )
+    assert env["row_count"] == 2
+    assert [r[0] for r in env["rows"]] == ["A", "B"]
+    assert all(len(r) == len(env["columns"]) for r in env["rows"])
+
+
+def test_segregate_refuses_an_empty_allele_balance_band(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    d = client.get("/api/segregate", params={"min_ab": 0.8, "max_ab": 0.2}).json()
+    assert "min_ab (0.8) is above max_ab (0.2)" in d["error"]
+
+
+def test_segregate_caps_the_limit_and_says_so(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    d = client.get("/api/segregate", params={"limit": 10**7}).json()
+    assert d["families"][0]["options"]["limit"] == 10000
+    assert any("limit was lowered to 10000" in n for n in d["families"][0]["notes"])
 
 
 def test_segregate_with_a_selector_is_one_document(trio_web_store):
