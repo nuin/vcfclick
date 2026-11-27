@@ -335,7 +335,8 @@ def _build_scope(ctx: click.Context, options: TrioOptions, sess, ingest_id: str)
     from cli.scope import SCOPE_KEYS, ScopeError, ScopeRequest, build_scope
 
     state = preset_state(ctx)
-    resolved, _ = resolve_filters(ctx, "trio", state)
+    # the command id the filters are registered under (`trio`, `segregate`)
+    resolved, _ = resolve_filters(ctx, ctx.command.name, state)
     values = {k: resolved[k].value for k in SCOPE_KEYS if k in resolved}
     if state is not None:
         # the descriptive companions follow the lists they describe: a typed
