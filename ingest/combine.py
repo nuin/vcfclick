@@ -116,6 +116,11 @@ def combine_vcfs(
     carry_info: bool = False,
     reference: str | Path | None = None,
     atomize: bool = False,
+    genotype_merge: str = "prioritize",
+    merge_info_with_max_ac: bool = False,
+    gatk3: bool = False,
+    filtered_are_uncalled: bool = False,
+    priority: list[str] | None = None,
 ) -> Path:
     """Combine `inputs` (>=2 VCFs, priority = input order) into `output`.
 
@@ -123,12 +128,46 @@ def combine_vcfs(
     (default: derived from filenames). `min_callsets` keeps only sites
     present in at least that many inputs.
 
+    `gatk3=True` runs the GATK 3.8-1 emulation in `ingest.combine_gatk3`
+    (no normalisation, GATK's own counting, QUAL/FILTER/INFO/header rules).
+    `genotype_merge="unsorted"` keeps, in the normalising engine, the first
+    input's record for a sample even when its call is `./.` (GATK's UNSORTED
+    and PRIORITIZE-in-input-order). `merge_info_with_max_ac` takes INFO,
+    QUAL and FILTER from the input with the highest INFO AC for the allele.
+
     Returns the output Path.
     """
+    if genotype_merge not in ("prioritize", "unsorted"):
+        raise CombineError(
+            f"--genotype-merge must be 'prioritize' or 'unsorted', got {genotype_merge!r}."
+        )
+    if gatk3:
+        return _combine_gatk3(
+            inputs,
+            output,
+            names,
+            min_callsets,
+            reference,
+            genotype_merge,
+            merge_info_with_max_ac,
+            filtered_are_uncalled,
+            priority,
+            conflicting=dict(
+                pass_only=pass_only,
+                carry_info=carry_info,
+                atomize=atomize,
+                count_by_site=count_by != "allele",
+            ),
+        )
+    if filtered_are_uncalled or priority:
+        raise CombineError("--filtered-are-uncalled and --priority need --gatk3.")
     in_paths, set_names = _validate_inputs(
         inputs, names, min_callsets, count_by, reference, atomize
     )
-    combined = CombinedInputs(carry_info)
+    carry_info = carry_info or merge_info_with_max_ac
+    combined = CombinedInputs(
+        carry_info, genotype_merge == "unsorted", merge_info_with_max_ac
+    )
     normalizer = AlleleNormalizer(reference, atomize, combined.union.contigs)
     combined.read(in_paths, normalizer)
     out_path = Path(output)
@@ -157,6 +196,67 @@ def combine_vcfs(
         n_kept,
         len(combined.samples),
     )
+    return out_path
+
+
+def _combine_gatk3(
+    inputs,
+    output,
+    names,
+    min_callsets,
+    reference,
+    genotype_merge,
+    merge_info_with_max_ac,
+    filtered_are_uncalled,
+    priority,
+    conflicting,
+) -> Path:
+    from ingest.combine_gatk3 import combine_gatk3
+
+    bad = [k.replace("_", "-") for k, v in conflicting.items() if v]
+    if bad:
+        raise CombineError(
+            "--gatk3 does not take " + ", ".join("--" + b for b in bad) + "."
+        )
+    in_paths = [Path(p) for p in inputs]
+    if len(in_paths) < 2:
+        raise CombineError("combine needs at least two input VCFs.")
+    for p in in_paths:
+        if not p.exists():
+            raise CombineError(f"input not found: {p}")
+    if reference is not None and not Path(reference).exists():
+        raise CombineError(f"reference not found: {reference}")
+    used: set[str] = set()
+    set_names = list(names) if names else [_default_name(p, used) for p in in_paths]
+    if len(set_names) != len(in_paths):
+        raise CombineError("number of --name values must match number of inputs.")
+    if len(set(set_names)) != len(set_names):
+        raise CombineError("input names must be unique.")
+    if min_callsets < 1:
+        raise CombineError("--min-callsets must be at least 1.")
+    out_path = Path(output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    gz = str(out_path).endswith(".gz")
+    plain_path = out_path.with_suffix("") if gz else out_path
+    # GATK only sorts by priority under PRIORITIZE; UNSORTED keeps input order.
+    prio = None
+    if genotype_merge == "prioritize" and priority:
+        prio = list(priority)
+    elif priority:
+        raise CombineError("--priority needs --genotype-merge prioritize.")
+    n = combine_gatk3(
+        in_paths,
+        plain_path,
+        set_names,
+        min_callsets=min_callsets,
+        merge_info_with_max_ac=merge_info_with_max_ac,
+        filtered_are_uncalled=filtered_are_uncalled,
+        priority=prio,
+        reference=reference,
+    )
+    if gz:
+        _bgzip_and_index(plain_path, out_path)
+    log.info("[combine] gatk3 %d inputs → %s (%d records)", len(in_paths), out_path, n)
     return out_path
 
 

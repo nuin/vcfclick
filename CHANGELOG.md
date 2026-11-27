@@ -8,6 +8,18 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- `combine --gatk3` reproduces GATK 3.8-1 `CombineVariants` record for record:
+  no normalisation, records merged by position and split by variant type,
+  `--min-callsets` as GATK's `--minimumN` (records at the position minus
+  filtered ones), GATK's QUAL / FILTER / ID / INFO / AC / AF / AN / `set=`
+  rules and header merge. New options: `--genotype-merge unsorted|prioritize`,
+  `--merge-info-with-max-ac`, `--filtered-are-uncalled`, `--priority`.
+  `--genotype-merge unsorted` and `--merge-info-with-max-ac` also work in the
+  normalising engine. The pipeline command
+  `--genotypemergeoption UNSORTED --mergeInfoWithMaxAC --minimumN 2` is
+  `combine --gatk3 ... --genotype-merge unsorted --merge-info-with-max-ac
+  --min-callsets 2`; see `docs/COMBINE.md`. Pinned by frozen GATK 3.8-1
+  output on synthetic fixtures (`tests/fixtures/gatk3_pipeline`).
 - `db trio --format json`: every model object gains `blocked_reason`
   (`null` when nothing is wrong, else `needs_keep_reference` or
   `needs_genes`, from one closed vocabulary), and `gates` gains `af_gate`

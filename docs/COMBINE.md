@@ -37,7 +37,8 @@ vcfclick combine a.vcf.gz b.vcf.gz -o out.vcf.gz --name gatk --name dv
 
 Inputs must be on the same reference and **decomposed** (one ALT per
 record) — the same precondition as ingest. Decompose first with
-`bcftools norm -m -` if needed.
+`bcftools norm -m -` if needed. (`--gatk3` and `--reference` lift this; see
+below.)
 
 A plain `.vcf` output is fully native (no external tools). A `.vcf.gz`
 output is BGZF-compressed and tabix-indexed via htslib's `bgzip` /
@@ -103,6 +104,196 @@ vcfclick combine freebayes.vcf gatk.vcf gatk3.vcf octopus.vcf \
     --name freebayes --name gatk --name gatk3 --name octopus
 ```
 
+## Reproducing GATK 3.8-1 CombineVariants (`--gatk3`)
+
+`--gatk3` runs a separate engine that follows GATK 3.8-1's
+`CombineVariants.map` and `GATKVariantContextUtils.simpleMerge` step by
+step. Raw caller output goes in (multi-allelic records, padded indels,
+non-PASS FILTER, VCFv4.3 headers) and the output matches GATK3 record for
+record and header line for header line.
+
+The clinical pipeline command
+
+```bash
+java -jar GenomeAnalysisTK.jar -T CombineVariants -R ref.fasta \
+    --variant:freebayes S_freebayes.final.vcf --variant:gatk S_GATK.vcf \
+    --variant:gatk3 S_GATK3.vcf --variant:octopus S_octopus.vcf \
+    -o S_merged.vcf --genotypemergeoption UNSORTED --mergeInfoWithMaxAC --minimumN 2
+```
+
+is, in vcfclick:
+
+```bash
+vcfclick combine --gatk3 \
+    S_freebayes.final.vcf S_GATK.vcf S_GATK3.vcf S_octopus.vcf \
+    -o S_merged.vcf --reference ref.fasta \
+    --name freebayes --name gatk --name gatk3 --name octopus \
+    --genotype-merge unsorted --merge-info-with-max-ac --min-callsets 2
+```
+
+Input order is GATK's `--variant` order. `--reference` only supplies the
+contig order and the `##contig` lines (GATK writes them from the reference
+dictionary and ignores the contig lines of the inputs); it needs the `.fai`
+and no pyfaidx. Without it the contig order comes from the input headers.
+`.vcf.gz` output works as in the normalising engine. The other GATK options
+map as `-priority a,b` to `--priority a,b` (with `--genotype-merge
+prioritize`), `-filteredAreUncalled` to `--filtered-are-uncalled`, and
+`--minimumN` to `--min-callsets`. `--gatk3` refuses `--pass-only`,
+`--count-by site`, `--carry-info` and `--atomize`: GATK does none of them.
+
+### What GATK 3.8-1 does (read from the source, then confirmed on its output)
+
+1. **`--genotypemergeoption UNSORTED`.** The genotype of a sample is the one
+   in the first record, in `--variant` order, that has the sample. A `./.`
+   there wins over a later called genotype. UNSORTED skips the sort that
+   PRIORITIZE does, so PRIORITIZE with the priority list equal to the input
+   order gives identical output (`test_prioritize_in_input_order_equals_unsorted`).
+   The normalising engine's default skips a `./.` and takes the next call;
+   `--genotype-merge unsorted` switches it to GATK's rule.
+2. **`--mergeInfoWithMaxAC`.** INFO is the INFO of the record with the highest
+   INFO `AC` (the largest value of a multi-allelic list; the first record wins
+   a tie; a record without `AC` never wins). `AC`, `AF` and `AN` are then
+   recomputed from the merged genotypes, and INFO keys sort alphabetically.
+   When no record has an `AC`, GATK3 writes no `set=` and no other INFO key,
+   only the recomputed `AC`/`AF`/`AN` (Octopus and DeepVariant write no `AC`,
+   so this happens). `--merge-info-with-max-ac` also works without `--gatk3`:
+   it makes `--carry-info` take QUAL, FILTER and INFO from the input with the
+   highest `AC` for the allele.
+3. **`--minimumN 2`.** GATK counts *records* that start at the position,
+   minus records whose FILTER is neither `PASS` nor `.`. It does not count
+   inputs and does not look at alleles. Filtered records do not count:
+   3.8-1 subtracts them (`vcs.size() - numFilteredRecords < minimumN`), and
+   `-filteredAreUncalled` only decides whether they take part in the merge.
+   One input with a SNP and an indel at one position therefore satisfies
+   `--minimumN 2`. `--count-by site` in the normalising engine counts inputs
+   with a record at the position, so it differs on that case, and on filtered
+   records unless `--pass-only` is also set.
+4. **No normalisation.** Records merge only when they start at the same
+   position. Two spellings of one indel at different start positions stay two
+   records (`--reference` in the normalising engine would join them).
+   Multi-allelic records stay multi-allelic. The normalising engine without
+   `--reference` also does not left-align, but it refuses multi-allelic input
+   and writes one record per exact allele, where GATK3 puts the alleles of one
+   position into one record (A>C and A>G from two inputs become `A C,G`).
+   Records at one position are split
+   by type (SNP, MNP, INDEL, SYMBOLIC, MIXED) with GATK's allele-subset rule;
+   each type group is one output record, in that type order. `*` is typed by
+   length like any allele. When REFs differ in length at one position the
+   longest REF is kept and shorter records' ALTs are extended with its extra
+   bases.
+5. **Record fields.**
+   - QUAL: the first non-missing QUAL, printed with two decimals and the
+     trailing `.00` trimmed (`60.50`, `99`).
+   - FILTER: `PASS` when any merged record is not filtered, else the sorted
+     union; `.` when no record had FILTER applied.
+   - ID: the comma-joined union of non-`.` IDs.
+   - `set=`: `Intersection` (no filtered record and every input present),
+     `FilteredInAll`, `ReferenceInAll`, else the names in record order,
+     `filterIn<name>` for a filtered record.
+   - FORMAT: `GT` then the other keys alphabetically; `GQ` is rounded and
+     capped at 99; `GL` becomes `PL`; trailing missing values are trimmed;
+     `AD` and `PL` are dropped on every sample when any record's allele list
+     differs from the merged one.
+6. **Header.** Lines merge in the iteration order of a Java `HashMap` keyed
+   by input name (so `gatk` wins before `freebayes` for the names above),
+   first line wins a description, an `Integer`/`Float` clash keeps the first
+   line, a `Number` clash becomes `.`, standard INFO/FORMAT lines whose type
+   or number is wrong are replaced by the standard line (a `Float` `GQ`
+   becomes `Integer`), and `AC`/`AF`/`AN`/`set` lines are added. Lines are
+   sorted as text. GATK3 stops on a FILTER, INFO or FORMAT key that no input
+   header defines; so does `--gatk3`.
+
+### Validation
+
+Synthetic golden sets (`tests/fixtures/gatk3_pipeline`, GATK 3.8-1 under Java
+8, docker `broadinstitute/gatk3:3.8-1`): four single-sample VCFs, one
+reference, three GATK3 runs. Every data-carrying header line (`##fileformat`,
+`##INFO`, `##FORMAT`, `##FILTER`, `##contig`, `#CHROM`) and every record match
+in all three (48, 53 and 47 records; 0 differ).
+`tests/test_combine_gatk3_pipeline.py` asserts it.
+
+Public data, GIAB HG001 (NA12878) Garvan HiSeq exome, library NIST7035 lane 1,
+hg19 `chr20`, reads sliced from the public BAM. Callers: GATK 4.6.0.0
+HaplotypeCaller, GATK 3.8-1 HaplotypeCaller, FreeBayes 1.3.6, Octopus (the
+`dancooke/octopus` image) and DeepVariant 1.6.1 (WES model). Octopus writes
+`VCFv4.3`, which GATK3 refuses, so its header line was changed to `VCFv4.2`
+for the GATK3 run only (`--gatk3` reads both).
+
+| Region | Callers merged | Records GATK3 / vcfclick | Differing |
+|---|---|---|---|
+| chr20:3.6-3.9 Mb (18,568 reads) | freebayes, gatk4, gatk3, octopus, `--minimumN 2` | 76 / 76 | 0 |
+| chr20:3.6-3.9 Mb | freebayes, gatk4, gatk3, deepvariant, `--minimumN 2` | 77 / 77 | 0 |
+| chr20:3.6-3.9 Mb | freebayes, gatk4, deepvariant, `--minimumN 2` (2 of 3) | 75 / 75 | 0 |
+| chr20 three windows, 1.2 Mb (82,988 reads) | freebayes, gatk4, gatk3, octopus, `--minimumN 2` | 350 / 350 | 0 |
+| same | freebayes, gatk4, gatk3, deepvariant, `--minimumN 2` | 353 / 353 | 0 |
+| same | freebayes, gatk4, deepvariant, `--minimumN 2` (2 of 3) | 346 / 346 | 0 |
+
+The merged real sets include multi-allelic records (3 per set), a `*`
+spanning-deletion allele (Octopus sets), 13 to 50 records with a `filterIn` label, DeepVariant
+`RefCall` records, and 6 positions with two records of different type. Headers
+match line for line (91 and 79 data-carrying lines, same order).
+
+Rule comparison on the DeepVariant sets (GATK3 output). The 2-of-3 rule
+(freebayes, gatk4, deepvariant) loses records the four-caller rule keeps
+because gatk4 and gatk3 are one engine and count as two callers: 2 of 77 sites
+at 3.6-3.9 Mb and 7 of 353 in the 1.2 Mb set, all labelled `gatk-gatk3` (6) or
+`gatk-gatk3-filterIndeepvariant` (1). The 2-of-3 rule keeps nothing the
+four-caller rule drops. Replacing Octopus by DeepVariant changes 1 record
+(3.6-3.9 Mb) and 9 (3 gone, 6 new, 1.2 Mb), all sites called by freebayes and
+one of the two.
+
+To repeat the public-data check (Docker, `samtools`, about 20 MB of
+download; the BAM is read over HTTPS, only the slice is fetched):
+
+```bash
+G=https://ftp-trace.ncbi.nlm.nih.gov/ReferenceSamples/giab/data/NA12878/Garvan_NA12878_HG001_HiSeq_Exome
+B=$G/project.NIST_NIST7035_H7AP8ADXX_TAAGGCGA_1_NA12878.bwa.markDuplicates.bam
+# hg19 chr20 from UCSC, named chr20; BAM header cut to chr20
+curl -O https://hgdownload.soe.ucsc.edu/goldenPath/hg19/chromosomes/chr20.fa.gz
+gunzip -c chr20.fa.gz | sed 's/^>.*/>chr20/' > ref.fa && samtools faidx ref.fa
+# ref.dict: one @SQ line (SN, LN, M5 = md5 of the sequence)
+{ printf '@HD\tVN:1.5\tSO:coordinate\n@SQ\tSN:chr20\tLN:63025520\n'
+  samtools view -H $B | grep '^@RG'
+  samtools view $B chr20:3600000-3900000; } | samtools view -b - | samtools sort -o region.bam -
+samtools index region.bam
+freebayes -f ref.fa -r chr20:3600000-3900000 region.bam > freebayes.vcf
+gatk HaplotypeCaller -R ref.fa -I region.bam -L chr20:3600000-3900000 -O gatk4.vcf
+java -jar GenomeAnalysisTK.jar -T HaplotypeCaller -R ref.fa -I region.bam \
+    -L chr20:3600000-3900000 -o gatk3.vcf
+octopus -R ref.fa -I region.bam -T chr20:3600000-3900000 -o octopus.vcf
+sed -i 's/^##fileformat=VCFv4.3/##fileformat=VCFv4.2/' octopus.vcf   # GATK3 only
+run_deepvariant --model_type=WES --ref=ref.fa --reads=region.bam \
+    --regions=chr20:3600000-3900000 --output_vcf=dv.vcf.gz
+```
+
+Then run the GATK3 command above and the `--gatk3` command on the same
+inputs and compare the records.
+
+### Remaining differences from GATK3
+
+- GATK3 writes `##GATKCommandLine` and `##reference`; `--gatk3` writes
+  neither and adds `##vcfclickCombine=gatk3-compatible`. Other header text
+  (`##source`, `##ALT`, ...) is kept the way GATK3 keeps it.
+- A malformed number (`DP=.`, `AC=.` in INFO, a non-integer genotype `DP`)
+  stops GATK3 with a `NumberFormatException`; `--gatk3` stops with a
+  `CombineError` naming the record.
+- GATK3 rejects `VCFv4.3` inputs and INFO/FORMAT lines with `Source=` or
+  `Version=`; `--gatk3` reads them. Structured header lines are written back
+  with only `ID`, `Number`, `Type` and `Description`.
+- Alleles are upper-cased on read, as htsjdk does.
+- Not covered by a golden run: multi-sample inputs beyond a two-file check
+  (samples sort alphabetically, a sample absent from every record at a site
+  is `./.`), `--filteredRecordsMergeType` other than the default,
+  `--multipleAllelesMergeType MIX_TYPES`, `-minimalVCF`,
+  `-excludeNonVariants`, and UNIQUIFY. They are not implemented.
+- The normalising engine (without `--gatk3`) still differs from GATK3 by
+  design: it normalises and splits, refuses an INFO header type clash that
+  GATK3 resolves (Octopus `MQ` Integer against GATK `MQ` Float), and writes a
+  different header. On the DeepVariant 1.2 Mb set the documented legacy
+  command (`--reference --pass-only --count-by site --carry-info`) shares
+  329 of 353 records with GATK3 by position and alleles, and none of the
+  shared records is identical in INFO.
+
 ## Output and limits
 
 - Output is a fresh VCF with the union of input samples (priority
@@ -152,9 +343,9 @@ and `1/1` in `second` at chr1:202), both tools produce the same core —
 | 404 | `second` | ./. | 0/0 | 1/1 |
 
 The `-V:name` binding GATK3 uses for the `set=` label is `--name` in
-vcfclick; `-priority a,b` is just the input order. Differences are
-representational, not behavioural: GATK3 also recomputes `AC/AF/AN`
-INFO, whereas vcfclick emits `set=` plus the `GQ/DP/AD` passthrough.
+vcfclick; `-priority a,b` is just the input order. Without `--gatk3`, differences are representational: GATK3 also recomputes
+`AC/AF/AN` INFO, whereas vcfclick emits `set=` plus the `GQ/DP/AD`
+passthrough. `--gatk3` removes them (see above).
 
 This equivalence is pinned by a test against **real** GATK 3.8-1 output:
 `tests/test_combine_gatk3.py` runs `combine` on the checked-in call sets

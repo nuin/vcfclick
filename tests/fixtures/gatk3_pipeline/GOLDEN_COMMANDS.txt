@@ -1,0 +1,21 @@
+Frozen GATK 3.8-1-0-gf15c1c3ef output (Java 1.8.0_111, docker image
+broadinstitute/gatk3:3.8-1, linux/amd64) on the four S_*.vcf files in this
+directory with reference ref.fasta (ref.fasta.fai, ref.dict). Inputs are bound
+in this order: freebayes (S_freebayes.final.vcf), gatk (S_GATK.vcf), gatk3
+(S_GATK3.vcf), octopus (S_octopus.vcf).
+
+golden_pipeline.gatk3.vcf  (the clinical pipeline command)
+  java -jar GenomeAnalysisTK.jar -T CombineVariants -R ref.fasta \
+    --variant:freebayes S_freebayes.final.vcf --variant:gatk S_GATK.vcf \
+    --variant:gatk3 S_GATK3.vcf --variant:octopus S_octopus.vcf \
+    -o golden_pipeline.gatk3.vcf --genotypemergeoption UNSORTED \
+    --mergeInfoWithMaxAC --minimumN 2
+
+golden_unsorted_minn1.gatk3.vcf  (default INFO merge, every site kept)
+  same inputs, -o golden_unsorted_minn1.gatk3.vcf --genotypemergeoption UNSORTED --minimumN 1
+
+golden_prioritize_uncalled.gatk3.vcf  (priority order differs from input order)
+  same inputs, -o golden_prioritize_uncalled.gatk3.vcf --genotypemergeoption PRIORITIZE \
+    -priority octopus,gatk3,gatk,freebayes --mergeInfoWithMaxAC --minimumN 2 -filteredAreUncalled
+
+Regenerate the inputs with: python3 generate_fixtures.py
