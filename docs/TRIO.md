@@ -485,8 +485,9 @@ individual is one row of `pedigree` (`family_id`, `father_id`, `mother_id`,
 `sex`, `affected`); `0` means no parent declared. Every individual and
 every named parent must be a sample ingested under the same `ingest_id`.
 Each proband is analysed as its own trio against its own parents, so a de
-novo call in one sibling and not the other is the expected picture; shared
-candidates have to be read across the reports.
+novo call in one sibling and not the other is the expected picture. What the
+siblings share, and what the unaffected ones rule out, is
+[`db segregate`](#sibling-segregation).
 
 ### Declaring a family without a PED file
 
@@ -654,6 +655,205 @@ still gives the "missing a parent" error.
 
 A database that predates the pedigree table says `no pedigree loaded` (from
 `db families`, `db trio` and the web UI) instead of failing in SQL.
+
+## Sibling segregation
+
+`db trio` reads one proband against its parents. `db segregate` reads a
+**sibship**, the children of one family with the same declared father and
+mother, and asks, for each model, which variants every affected child carries
+and no unaffected child contradicts.
+
+```bash
+vcfclick db ped fam1 fam1.ped            # S1 S2 affected, S3 S4 unaffected, S5 unknown
+vcfclick db segregate fam1               # a count per model
+vcfclick db segregate fam1 --category dominant --allow-unresolved
+vcfclick db segregate fam1 --format json
+```
+
+A sibship needs two or more children, both parents in the data and at least
+one affected child; fewer is a trio, and the error points at `db trio`. A
+child's phenotype is affected, unaffected or unknown (`db ped --unknown`);
+unknown children are shown and never constrain a model. Half siblings are
+separate sibships, chosen with `--father` and `--mother`. At most 12 children.
+
+### Member states
+
+Every member (father, mother, each child) gets one state at a candidate site.
+The candidate sites are the union of every affected child's alt rows, ungated,
+so a result does not depend on the order of the children or on one child's
+quality.
+
+| state | meaning |
+|---|---|
+| `hom_ref` | a stored 0/0 that passes the gates (`--keep-reference` ingest) |
+| `het`, `hom_alt` | a stored row that passes the gates |
+| `absent_called` | no row anywhere, and the site's call accounting is complete (`variants.n_called` + samples with a `missing_genotypes` row = `ingestions.n_samples`): called, no ALT, but no GQ or DP evidence |
+| `no_call` | a `missing_genotypes` row |
+| `low_quality` | a stored row that fails GQ, DP or the allele-balance gates |
+| `absent_unknown` | no row anywhere and the accounting is not complete (older ingests, `--no-record-missing`, a partial call at the site) |
+| `ref_partial_site` | a stored 0/0 at a site where some sample has a partial call (`./1`). A partial `0/.` has no row at all, so that sample is `absent_unknown` |
+| `ref_alt_reads` | de novo only: a stored 0/0 with at least two alt reads and an alt fraction at or above `--max-parent-alt-frac` |
+
+The gates are `db trio`'s, applied to every member. The allele-balance band
+applies to every child's het (an unaffected het that fails it is
+`low_quality`, unresolved, instead of a carrier that wrongly excludes a true
+candidate); `--min-homalt-ab` (0.85) to an affected child's hom-alt; parents'
+hets are not allele-balance gated, as in `db trio`.
+
+### Models
+
+| model | affected | parents | unaffected |
+|---|---|---|---|
+| `denovo` | carry (het or hom-alt) | both stored `hom_ref` | proven reference |
+| `dominant` | every one het | one carries, the other proven reference | proven reference |
+| `recessive` | every one hom-alt | both het | not hom-alt (`hom_ref`, `het` or `absent_called`) |
+| `comphet` | per gene: a paternal and a maternal het, in every affected child | each hit: one parent carries, the other proven reference | no child carries both |
+
+At least one affected child must be strictly satisfied; an affected child that
+is `no_call`, `low_quality` or `absent_unknown` is unresolved, and one that
+is reference (or, for dominant, hom-alt) excludes the site. A parent is never
+unresolved except by `ref_partial_site`; a no-call or low-quality parent drops
+the candidate, as `db trio` does. A hom-alt carrier parent is allowed in
+dominant and comphet halves and reported (`carrier_parent`), and makes the
+transmission uninformative. A de novo plus an inherited hit is a recognised
+second compound-het class that this command does not generate.
+
+The sex and mitochondrial contigs (`chrX`, `X`, `chr23`, `chrY`, `chrXY`,
+`chrM`, `MT`, ...) are skipped and counted in `counts.skipped_sites`: a haploid
+male call is stored as hom-alt and no model here can read it. PAR on chrX is
+skipped too. There is no X-linked model in `db segregate`; use
+`db trio --category xlinked`.
+
+### Status
+
+| status | meaning |
+|---|---|
+| `consistent` | every constrained child positively resolved on stored, gated evidence |
+| `consistent_inferred` | the same, but a reference proof used `absent_called` (`--absent called`) |
+| `compatible` | nothing contradicts it, but a child is unresolved or a parent is `ref_partial_site` |
+| `reduced_penetrance` | an unaffected child contradicts the model and `--max-unaffected-carriers N` tolerated it; or `--parent-phenotype use` and the carrier parent is declared unaffected |
+
+Listed by default: everything but `compatible`; `--allow-unresolved` adds it.
+The counts always include it (`n_compatible`, `by_status`). A comphet pair has
+the same statuses; `--max-unaffected-carriers` is ignored for comphet.
+
+**`consistent` is not evidence of segregation.** With one affected and one
+unaffected child a dominant site passes by chance 25 percent of the time.
+`n_informative_meioses` (independent resolved children; zero when the carrier
+parent is hom-alt; `null` for de novo) and `p_random` (dominant `0.5^k`;
+recessive and comphet `0.25^a * 0.75^u` for `a` resolved affected and `u`
+resolved unaffected children; `null` for de novo) say how much it could mean.
+Monozygotic twins and duplicate samples are not detected: declare them with
+`--mz-pair A,B` (both must share a phenotype), and they count as one meiosis
+and one affected group. How much a count of meioses is worth under ACMG/AMP
+(PP1, BS4) is for the caller to decide; this command reports no strength.
+
+### Absence, partial calls and reduced penetrance
+
+* `--absent strict` (default): only a stored 0/0 proves reference. On a sparse
+  ingest, `denovo`, `dominant` and `comphet` are `blocked`
+  (`needs_keep_reference`); `recessive` works, as it needs no reference proof
+  for the unaffected children beyond "not hom-alt".
+* `--absent called`: a member with no row at a fully accounted site counts as
+  reference. The candidate is `consistent_inferred`, never `consistent`. De novo
+  still needs stored 0/0 parents: a de novo claim needs positive parental
+  reference evidence, and "called, no ALT" is not that.
+* `--partial-calls strict` (default): at a site where any sample has a partial
+  call, a stored 0/0 is `ref_partial_site`, so a candidate resting on it is only
+  `compatible`, and an unaffected het there is unresolved rather than a
+  carrier. `counts.partial_call_sites` says how many candidate sites are
+  affected. `ignore` trusts the stored 0/0, as `db trio` does.
+* `--max-unaffected-carriers N` (0 to unaffected children minus one) tolerates
+  up to `N` unaffected children that contradict the model. It is non-standard and
+  noisy at `N >= 1`; every such candidate is `reduced_penetrance` with
+  `contradicting` naming the children.
+* `--parent-phenotype use` downgrades a dominant candidate whose carrier parent
+  is declared unaffected. The default is `ignore`: a pedigree made without a PED
+  file declares no parent phenotype.
+* Older databases (no `missing_genotypes` table, no `variants.n_called`) run on
+  a reduced query: `absent_called` and `ref_partial_site` never arise, every
+  absent member is `absent_unknown`, and a note says to re-ingest.
+
+### The rarity gate
+
+`--max-af` reads `variants.info_AF`, as `db trio` does, with the same
+[cohort-derived INFO/AF](#cohort-derived-infoaf) skip: a variant carried by a
+family's affected children can reach a cohort AF of 0.2 and be dropped by a
+gate meant for population frequencies. `gates.af_gate` says what happened
+(`applied`, `cohort_derived_suspected`, `skipped_cohort_derived`,
+`unavailable`); use `--gnomad-max-af` when the skip applies.
+`n_af_filtered` counts what the gate removed per model.
+
+### JSON
+
+`--format json` prints one document per sibship (`{"families": [...]}` unless
+`--family`, `--father` or `--mother` names one sibship). Keys are
+snake_case, no object is keyed by a sample id, and the order of
+`family.children` is the order of every `calls` list.
+
+```json
+{"family": {"ingest_id": "i1", "family_id": "fam1", "father": "FA", "mother": "MO",
+            "children": [{"sample": "S1", "affected": "affected", "sex": "male"},
+                         {"sample": "S3", "affected": "unaffected", "sex": "male"},
+                         {"sample": "S5", "affected": null, "sex": "male"}],
+            "mz_pairs": []},
+ "counts": {"children": 3, "affected": 1, "unaffected": 1, "unknown": 1,
+            "skipped_sites": 0, "partial_call_sites": 0},
+ "keep_reference": true, "absent": "strict", "partial_calls": "strict",
+ "parent_phenotype": "ignore",
+ "gates": {"min_gq": 20, "min_dp": 10, "max_af": 0.01, "af_gate": "applied",
+           "min_ab": 0.25, "max_ab": 0.75, "min_homalt_ab": 0.85,
+           "max_parent_alt_frac": 0.05, "gnomad_max_af": null},
+ "options": {"allow_unresolved": false, "max_unaffected_carriers": 0, "limit": 1000},
+ "annotations": {"genes": true, "clinvar": false, "gnomad": false},
+ "notes": ["..."],
+ "models": {
+   "dominant": {"count": 1, "n_compatible": 0,
+                "by_status": {"consistent": 1, "consistent_inferred": 0,
+                              "compatible": 0, "reduced_penetrance": 0},
+                "n_af_filtered": 0, "blocked": false, "blocked_reason": null,
+                "truncated": false,
+                "candidates": [{"chrom": "chr1", "pos": 1000000, "ref": "A", "alt": "G",
+                  "af": 0.001, "genes": [], "gnomad_popmax": null, "clinvar": null,
+                  "status": "consistent", "father_gt": 1, "mother_gt": 0,
+                  "father_state": "het", "mother_state": "hom_ref",
+                  "calls": [{"sample": "S1", "gt": 1, "state": "het", "evidence": "stored"}],
+                  "n_affected_carrying": 1, "n_unaffected_carrying": 0,
+                  "n_unaffected_ref": 1, "unresolved": [], "contradicting": [],
+                  "inferred_reference": false, "reduced_penetrance": false,
+                  "partial_call_site": false, "parental_mosaic_suspect": false,
+                  "parent_alt_reads": null,
+                  "carrier_parent": {"sample": "FA", "affected": null},
+                  "n_informative_meioses": 2, "p_random": 0.25}]},
+   "comphet": {"count": 1, "n_compatible": 0, "by_status": {"...": 0},
+               "n_af_filtered": 0, "blocked": false, "blocked_reason": null,
+               "needs_genes": false, "truncated": false,
+               "genes": [{"gene": "G1", "paternal": [{"chrom": "chr1", "pos": 5000100,
+                            "ref": "A", "alt": "G", "af": 0.001, "calls": ["..."]}],
+                          "maternal": ["..."],
+                          "pairs": [{"paternal": "chr1:5000100:A:G",
+                                     "maternal": "chr1:5000900:A:G",
+                                     "status": "consistent", "contradicting": [],
+                                     "unresolved": [], "n_informative_meioses": 4,
+                                     "p_random": 0.0625}]}]}}}
+```
+
+`state` is one of `hom_ref`, `het`, `hom_alt`, `absent_called`, `no_call`,
+`low_quality`, `absent_unknown`, `ref_partial_site`, `ref_alt_reads`; `gt` is the
+stored value for a stored row and `null` otherwise; `evidence` is `stored`,
+`inferred` (an `absent_called` member a reference proof used) or `null`.
+`parent_alt_reads` (alt read counts of the stored parental rows) appears on de
+novo candidates only; `parental_mosaic_suspect` is true there when a parent has
+alt reads or two independent affected groups share the site. A comphet
+`paternal` / `maternal` entry is the `db trio` hit shape plus `calls`, and holds
+only the hits that belong to a listed pair. With `--preset` or a strictness
+flag the document gains `preset` and `effective`, and with a scope `scope`, as
+`db trio`'s does; a consumer treats an unknown key, state or status as a plain
+string.
+
+The web UI serves it at `GET /api/segregate` (same parameters, the document
+plus a `columns` / `rows` table) and `/api/meta` lists the eligible `sibships`;
+the MCP server has a `segregate` tool. See [WEB](WEB.md) and [MCP](MCP.md).
 
 ## Natural language
 

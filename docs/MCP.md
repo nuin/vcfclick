@@ -22,6 +22,7 @@ The server exposes:
 | `get_schema` | Return the schema and query rules given to the client. |
 | `run_sql` | Execute read-only SQL (one `SELECT`/`WITH`/`SHOW`/`DESCRIBE`/`EXPLAIN` statement over the cohort tables; no table function, file path, `system.*` table or `SETTINGS` clause) against the active vcfclick database. The session it runs on is locked read-only at the engine level as well (DuckDB `enable_external_access = false`, chDB `readonly = 1`). |
 | `position_for_gene` | Resolve an HGNC gene symbol to GRCh38 coordinates. |
+| `segregate` | Sibling segregation: per model (denovo, recessive, dominant, comphet) the variants the affected children of a sibship carry and the unaffected ones do not contradict, with each member's state and a status (`consistent`, `consistent_inferred`, `compatible`, `reduced_penetrance`). Same JSON as `vcfclick db segregate --format json`; reads only. See [TRIO.md](TRIO.md#sibling-segregation). |
 | `variants_in_gene` | Every variant in a gene (± flank) with carrier and hom-alt counts, plus the SQL that ran. |
 | `gene_at` | Return genes overlapping one position. |
 | `clinvar_lookup` | Return ClinVar significance for one allele. |
