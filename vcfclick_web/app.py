@@ -138,6 +138,7 @@ def meta() -> dict:
         "samples": samples,
         "probands": probands,
         "families": families,
+        "sibships": _sibships_meta(ingest_ids),
     }
 
 
@@ -199,6 +200,34 @@ def _pedigree_meta(ingest_ids: list[str]) -> tuple[list[str], list[dict]]:
         ),
         [],
     )
+
+
+def _sibships_meta(ingest_ids: list[str]) -> list[dict]:
+    """The sibships `db segregate` can analyse: per sibship its family, parents
+    and children with their phenotype (the pickers of the sibship view). Empty
+    when there is no single-ingestion pedigree to read."""
+    if len(ingest_ids) != 1 or not table_exists("pedigree"):
+        return []
+    try:
+        from cli.pedigree_load import load_pedigree_graph
+        from cli.segregation import find_sibships
+
+        graph = load_pedigree_graph(get_session(), ingest_ids[0])
+        sibships, _ = find_sibships(graph)
+    except Exception:
+        # no eligible sibship is an error for the command, an empty list here
+        return []
+    return [
+        {
+            "family_id": s.family_id,
+            "father": s.father,
+            "mother": s.mother,
+            "children": [
+                {"sample": c.sample, "affected": c.affected} for c in s.children
+            ],
+        }
+        for s in sibships
+    ]
 
 
 @app.post("/api/query")
@@ -436,6 +465,90 @@ def trio(
     except Exception:
         _log.exception("trio analysis failed")
         return {"error": "trio analysis failed (details in the vcfclick web log)"}
+
+
+def _segregation_envelope(doc: dict) -> dict:
+    """A table over the first sibship's candidates, in the `_run_sql` envelope
+    the page renders: one row per candidate (comphet: per pair), one column per
+    child with its genotype as `db segregate` prints it."""
+    from cli.segregation_output import gt_text
+
+    first = doc["families"][0] if "families" in doc else doc
+    children = [c["sample"] for c in first["family"]["children"]]
+    rows = []
+    for model, m in first["models"].items():
+        for c in m.get("candidates", []):
+            rows.append(
+                [model, c["chrom"], c["pos"], c["ref"], c["alt"], c["af"], c["status"]]
+                + [gt_text(k["state"], k["gt"]) for k in c["calls"]]
+            )
+        for g in m.get("genes", []):
+            for p in g["pairs"]:
+                rows.append(
+                    [
+                        model,
+                        g["gene"],
+                        None,
+                        p["paternal"],
+                        p["maternal"],
+                        None,
+                        p["status"],
+                    ]
+                    + [None] * len(children)
+                )
+    return {
+        "sql": None,
+        "columns": ["model", "chrom", "pos", "ref", "alt", "af", "status", *children],
+        "rows": rows,
+        "row_count": len(rows),
+    }
+
+
+@app.get("/api/segregate")
+def segregate(
+    family: str | None = None,
+    father: str | None = None,
+    mother: str | None = None,
+    category: str = "all",
+    min_gq: int = 20,
+    min_dp: int = 10,
+    max_af: float | None = None,
+    min_ab: float = 0.25,
+    max_ab: float = 0.75,
+    absent: str = "strict",
+    allow_unresolved: bool = False,
+    max_unaffected_carriers: int = 0,
+    limit: int = 200,
+) -> dict:
+    # `max_af` omitted: the default 0.01, which a cohort-derived INFO/AF skips
+    # (as for `db segregate` without --max-af); a value is always honoured.
+    try:
+        from cli.segregation_api import segregate_api
+
+        doc = segregate_api(
+            family=family,
+            father=father,
+            mother=mother,
+            category=category,
+            min_gq=min_gq,
+            min_dp=min_dp,
+            max_af=max_af,
+            min_ab=min_ab,
+            max_ab=max_ab,
+            absent=absent,
+            allow_unresolved=allow_unresolved,
+            max_unaffected_carriers=max_unaffected_carriers,
+            limit=limit,
+        )
+        return {**doc, **_segregation_envelope(doc)}
+    except click.ClickException as e:
+        # Written for the user (e.g. "no sibship with >=2 children ...").
+        return {"error": e.message}
+    except Exception:
+        _log.exception("segregation analysis failed")
+        return {
+            "error": "segregation analysis failed (details in the vcfclick web log)"
+        }
 
 
 @app.post("/api/combine")
