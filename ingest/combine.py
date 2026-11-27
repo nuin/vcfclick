@@ -156,7 +156,7 @@ def combine_vcfs(
                 pass_only=pass_only,
                 carry_info=carry_info,
                 atomize=atomize,
-                count_by_site=count_by != "allele",
+                count_by=count_by != "allele",
             ),
         )
     if filtered_are_uncalled or priority:
@@ -216,7 +216,9 @@ def _combine_gatk3(
     bad = [k.replace("_", "-") for k, v in conflicting.items() if v]
     if bad:
         raise CombineError(
-            "--gatk3 does not take " + ", ".join("--" + b for b in bad) + "."
+            "--gatk3 does not take "
+            + ", ".join("--count-by site" if b == "count-by" else "--" + b for b in bad)
+            + "."
         )
     in_paths = [Path(p) for p in inputs]
     if len(in_paths) < 2:

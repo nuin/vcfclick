@@ -419,6 +419,7 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- `combine --gatk3`: the `--filtered-are-uncalled` help said filtered records count toward `--min-callsets`; they never do. A record contig missing from the `--reference` index is now an error, as in GATK3. The conflict message names `--count-by site`.
 - `db trio` with a preset and 65 to 500 scope intervals: the effective-gate
   counts read the edge-bucket rows as Arrow and judge them a contig at a
   time, instead of rendering each row as text and testing it alone (0.58 s

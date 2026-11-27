@@ -418,8 +418,9 @@ Options:
                                   lines.
   --filtered-are-uncalled         With --gatk3: treat filtered records as
                                   uncalled (GATK -filteredAreUncalled): they
-                                  are left out of the merge but still counted
-                                  toward --min-callsets.
+                                  are left out of the merge. Filtered records
+                                  never count toward --min-callsets, with or
+                                  without this flag.
   --priority TEXT                 With --gatk3 and --genotype-merge
                                   prioritize: comma-separated input names,
                                   highest priority first (GATK -priority).

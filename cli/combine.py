@@ -139,8 +139,8 @@ class CombineOptions:
     is_flag=True,
     default=False,
     help="With --gatk3: treat filtered records as uncalled (GATK "
-    "-filteredAreUncalled): they are left out of the merge but still counted "
-    "toward --min-callsets.",
+    "-filteredAreUncalled): they are left out of the merge. Filtered records "
+    "never count toward --min-callsets, with or without this flag.",
 )
 @click.option(
     "--priority",

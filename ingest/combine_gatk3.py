@@ -824,6 +824,10 @@ def combine_gatk3(
         )
     for c, _p in by_pos:
         if c not in contig_order:
+            if reference is not None:
+                raise CombineError(
+                    f"contig {c} is not in the reference index {reference}.fai."
+                )
             contig_order.append(c)
     cidx = {c: i for i, c in enumerate(contig_order)}
 

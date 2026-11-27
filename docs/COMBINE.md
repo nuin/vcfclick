@@ -157,8 +157,9 @@ prioritize`), `-filteredAreUncalled` to `--filtered-are-uncalled`, and
    When no record has an `AC`, GATK3 writes no `set=` and no other INFO key,
    only the recomputed `AC`/`AF`/`AN` (Octopus and DeepVariant write no `AC`,
    so this happens). `--merge-info-with-max-ac` also works without `--gatk3`:
-   it makes `--carry-info` take QUAL, FILTER and INFO from the input with the
-   highest `AC` for the allele.
+   it implies `--carry-info` and takes QUAL, FILTER and INFO from the input with
+   the highest `AC` for the allele. An input without `AC` never wins: a later
+   input with an `AC` replaces an earlier one without, as in GATK3.
 3. **`--minimumN 2`.** GATK counts *records* that start at the position,
    minus records whose FILTER is neither `PASS` nor `.`. It does not count
    inputs and does not look at alleles. Filtered records do not count:

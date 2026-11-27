@@ -387,3 +387,41 @@ def test_header_description_keeps_escaped_quotes(tmp_path):
         [tmp_path / "a.vcf", tmp_path / "b.vcf"], out, gatk3=True, min_callsets=1
     )
     assert 'Description="Depth, \\"quoted\\""' in out.read_text()
+
+
+def test_filtered_record_never_counts_toward_min_callsets(tmp_path):
+    a = _mini(tmp_path, "a", [(100, 10, "AC=1;DP=10", "0/1")])
+    b = tmp_path / "b.vcf"
+    b.write_text(a.read_text().replace("\tPASS\t", "\tq10\t"))
+    for flag in (False, True):
+        out = tmp_path / f"f{flag}.vcf"
+        combine_vcfs(
+            [a, b],
+            out,
+            gatk3=True,
+            min_callsets=2,
+            filtered_are_uncalled=flag,
+        )
+        assert not [ln for ln in out.read_text().splitlines() if ln[0] != "#"]
+
+
+def test_gatk3_reference_missing_contig_is_an_error(tmp_path):
+    a = _mini(tmp_path, "a", [(100, 10, "AC=1;DP=10", "0/1")])
+    b = tmp_path / "b.vcf"
+    b.write_text(a.read_text().replace("chr1\t", "chrZ\t"))
+    with pytest.raises(CombineError, match="chrZ is not in the reference"):
+        combine_vcfs([a, b], tmp_path / "x.vcf", gatk3=True, reference=REF)
+
+
+def test_gatk3_conflict_message_names_count_by_site(tmp_path):
+    with pytest.raises(CombineError, match="--count-by site"):
+        combine_vcfs(INPUTS, tmp_path / "x.vcf", gatk3=True, count_by="site")
+
+
+def test_max_ac_input_without_ac_never_replaces_one_with_ac(tmp_path):
+    a = _mini(tmp_path, "a", [(100, 10, "DP=10", "0/1")])
+    b = _mini(tmp_path, "b", [(100, 20, "AC=1;DP=20", "0/1")])
+    for order in ([a, b], [b, a]):
+        out = tmp_path / "m.vcf"
+        combine_vcfs(order, out, merge_info_with_max_ac=True)
+        assert "DP=20" in _first_record(out)[7]
