@@ -146,6 +146,9 @@ class Gates(NamedTuple):
     # as af_gate. Set when --max-af-x was typed while af_gate skipped --max-af:
     # an explicit threshold is always honoured.
     af_gate_x: str | None = None
+    # `db segregate`: the alt-fraction floor of an affected child's hom-alt call
+    # (an affected hom-alt with 20 ref and 20 alt reads is not a clean 1/1).
+    min_homalt_ab: float = DEFAULTS["min_homalt_ab"]
 
     def strict_for(self, key: str) -> bool:
         """Does strict_missing apply to the gate `key`?"""
