@@ -9,7 +9,7 @@ Run `vcfclick --help` or `vcfclick <command> --help` any time for the same infor
 - **Databases** — [`db create`](#db-create) · [`db list`](#db-list) · [`db info`](#db-info) · [`db path`](#db-path) · [`db rm`](#db-rm) · [`db query`](#db-query) · [`db stats`](#db-stats) · [`db diff`](#db-diff) · [`db gene`](#db-gene)
 - **Ingesting variants** — [`db ingest`](#db-ingest) · [`db ingest-batch`](#db-ingest-batch) · [`merge`](#merge) · [`combine`](#combine) · [`discover`](#discover)
 - **Population genetics** — [`db panel`](#db-panel) · [`db popgen`](#db-popgen) ([`summary`](#db-popgen-summary) · [`sfs`](#db-popgen-sfs) · [`fst`](#db-popgen-fst) · [`windows`](#db-popgen-windows))
-- **Family / trio analysis** — [`db ped`](#db-ped) · [`db families`](#db-families) · [`db trio`](#db-trio) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
+- **Family / trio analysis** — [`db ped`](#db-ped) · [`db families`](#db-families) · [`db trio`](#db-trio) · [`db segregate`](#db-segregate) · [`db qc`](#db-qc) · [`db relatedness`](#db-relatedness)
 - **Filter presets** — [`preset list`](#preset-list) · [`preset show`](#preset-show) · [`preset save`](#preset-save) · [`preset set` / `unset` / `edit` / `rename` / `rm`](#preset-set-unset-edit-rename-rm) · [`preset export` / `import`](#preset-export-import) · [`preset validate`](#preset-validate) · [`preset path`](#preset-path)
 - **Benchmarking** — [`benchmark`](#benchmark) · [`benchmark-cohort`](#benchmark-cohort)
 - **Annotations** — [`annotations load`](#annotations-load) · [`annotations load-clinvar`](#annotations-load-clinvar) · [`annotations load-transcripts`](#annotations-load-transcripts) · [`annotations load-gnomad`](#annotations-load-gnomad) · [`annotations load-hgnc`](#annotations-load-hgnc)
@@ -1040,6 +1040,244 @@ Options:
                                   `trios` list with one document per proband,
                                   and the `families` they are in.  [default:
                                   text]
+  --limit INTEGER                 json: at most this many candidates per
+                                  model.  [default: 1000]
+  --preset NAME|PATH              Apply a filter preset (`vcfclick preset
+                                  list`): its values are the defaults, and a
+                                  flag typed here wins. NAME@FINGERPRINT fails
+                                  the run if the preset's content changed; a
+                                  value with a path separator or ending .json
+                                  is a file.
+  --preset-fingerprint HEX12      Fail unless the preset's fingerprint is this
+                                  (also for a preset given as a path).
+  --preset-ignore KEY             Switch one preset key off for this run
+                                  (repeatable).
+  --preset-skip-unavailable       Apply the preset keys this vcfclick knows
+                                  and skip the rest (they are NOT applied, and
+                                  the output says so); the default is an
+                                  error.
+  --help                          Show this message and exit.
+```
+
+</details>
+
+### db segregate
+
+Sibling segregation: for a sibship (children with the same declared father and
+mother) the variants the affected children carry and the unaffected children
+do not contradict, per model (`denovo`, `recessive`, `dominant`, `comphet`),
+with every member's state at the site and a status. Read-only. See
+[TRIO.md](TRIO.md#sibling-segregation).
+
+```bash
+vcfclick db segregate fam1                             # every sibship, a count per model
+vcfclick db segregate fam1 --family famA --category dominant
+vcfclick db segregate fam1 --father FA --mother MO --format json
+vcfclick db segregate fam1 --absent called             # sparse ingest: infer reference
+vcfclick db segregate fam1 --max-unaffected-carriers 1 # reduced penetrance, labelled
+vcfclick db segregate fam1 --mz-pair S1,S2             # monozygotic twins
+```
+
+A sibship needs two or more children, both parents declared and in the data,
+and at least one affected child (`db ped` sets phenotypes; `--unaffected` and
+`--unknown` are flags there). Without `--family`, `--father` or `--mother`
+every eligible sibship is analysed and `--format json` prints
+`{"families": [...]}`; with a selector exactly one sibship must match and the
+output is one document (half siblings are separate sibships; an ambiguous
+selector lists them as `FATHER x MOTHER: children`).
+
+Each member gets one of nine states: `hom_ref`, `het`, `hom_alt`,
+`absent_called` (no row at a site whose calls are all accounted for),
+`no_call`, `low_quality`, `absent_unknown`, `ref_partial_site` (a stored 0/0
+at a site where some sample has a partial call) and `ref_alt_reads` (de novo
+only: a stored 0/0 whose alt reads say otherwise). A candidate is
+`consistent` when every constrained child is positively resolved on stored,
+gated evidence; `consistent_inferred` when `--absent called` supplied a
+reference; `compatible` when nothing contradicts it but a child is unresolved
+(listed with `--allow-unresolved`, always counted); `reduced_penetrance` when
+`--max-unaffected-carriers N` tolerated an unaffected carrier (never
+consistent). `consistent` is not evidence of segregation: it carries
+`n_informative_meioses` and `p_random`, the chance a random Mendelian
+transmission gives the same pattern (one affected and one unaffected child
+pass a dominant site 25 percent of the time).
+
+The gates are `db trio`'s (`--min-gq`, `--min-dp`, `--min-ab`, `--max-ab`,
+`--max-af` with the same cohort-derived-AF skip, `--gnomad-max-af`,
+`--strict-missing`, `--pass-only`, `--require-bound-gates`, scope flags and
+`--preset`), applied to every member: allele balance to every child's het,
+`--min-homalt-ab` to an affected child's hom-alt, `--max-parent-alt-frac` to
+the stored 0/0 of a parent or an unaffected child in the de novo model.
+Sex and mitochondrial contigs are skipped and counted (`counts.skipped_sites`);
+there is no X-linked model here. The effective-gate report and the preset
+echo are computed for the sibship's first affected child with the parents.
+
+<details><summary>options</summary>
+
+```
+Usage: vcfclick db segregate [OPTIONS] NAME
+
+  Report, per inheritance model, the variants the affected children of a
+  sibship carry and the unaffected children do not contradict, with every
+  member's state and a status (consistent, consistent_inferred, compatible,
+  reduced_penetrance).
+
+Options:
+  --family TEXT                   Only the sibship(s) of this family_id.
+                                  Without --family, --father or --mother,
+                                  every eligible sibship is analysed (json: a
+                                  `families` list).
+  --father TEXT                   The sibship whose declared father is this
+                                  sample (with --family or --mother to pick
+                                  one half-sibship).
+  --mother TEXT                   The sibship whose declared mother is this
+                                  sample.
+  --category [denovo|recessive|dominant|comphet|xlinked|all]
+                                  Inheritance model: a name, a comma list
+                                  (recessive,comphet) or 'all'. 'all' prints
+                                  per-model candidate counts. (db segregate
+                                  has no xlinked: sex contigs are skipped
+                                  there.)  [default: all]
+  --min-gq INTEGER                Minimum genotype quality (GQ) of the proband
+                                  and both parents (db segregate: of every
+                                  member of the sibship). A call with no GQ
+                                  passes unless --strict-missing.  [default:
+                                  20]
+  --min-dp INTEGER                Minimum read depth (DP) of the proband and
+                                  both parents (db segregate: of every member
+                                  of the sibship). A call with no DP passes
+                                  unless --strict-missing.  [default: 10]
+  --max-af FLOAT                  Keep variants with population info_AF <=
+                                  this (rarity filter). If INFO/AF turns out
+                                  to be this cohort's own frequency (GATK-
+                                  style family VCFs), the filter is skipped
+                                  with a note unless this option is given
+                                  explicitly.  [default: 0.01]
+  --min-ab FLOAT                  Lowest allele balance (alt reads / all
+                                  reads) a proband het call may have (db
+                                  segregate: any child).  [default: 0.25]
+  --max-ab FLOAT                  Highest allele balance a proband het call
+                                  may have (db segregate: any child).
+                                  [default: 0.75]
+  --gnomad-max-af FLOAT           Additionally drop candidates whose gnomAD
+                                  popmax AF exceeds this (needs `vcfclick
+                                  annotations load-gnomad`). Variants absent
+                                  from the loaded gnomAD slice are kept as
+                                  rare.
+  --strict-missing / --no-strict-missing
+                                  A missing GQ, DP or (for a het call) AD on
+                                  the proband or a parent counts as a fail,
+                                  not a pass, for each of those gates that is
+                                  asked for. A gate whose field is absent from
+                                  more than 10% of the rows the selected
+                                  models read at their candidate sites cannot
+                                  be enforced and is an error (--no-require-
+                                  bound-gates runs anyway, with that gate
+                                  tolerant for the run).
+  --pass-only / --no-pass-only    Keep only variants whose VCF FILTER is PASS
+                                  or unset.
+  --max-parent-alt-frac FLOAT     With --parent-alt-screen: the parent alt-
+                                  read fraction at and above which a stored
+                                  0/0 is not trusted. (db segregate always
+                                  applies it, to the stored 0/0 of a parent or
+                                  an unaffected child in the de novo model.)
+                                  [default: 0.05]
+  --require-bound-gates / --no-require-bound-gates
+                                  Error, instead of a warning, when a
+                                  requested gate cannot bind in this data (the
+                                  field is missing on too many rows), a
+                                  selected model cannot run on this database,
+                                  or no population-frequency filter is in
+                                  effect. --strict-missing implies it for the
+                                  GQ, DP and AD gates; --no-require-bound-
+                                  gates overrides both for this run.
+  --genes SYMBOL[,SYMBOL...]      Only variants inside these genes: symbols
+                                  (any case), Ensembl gene ids (ENSG...) and,
+                                  after `vcfclick annotations load-hgnc`,
+                                  previous symbols, HGNC ids (HGNC:1234) and
+                                  Entrez ids. Comma list, repeatable. A gene
+                                  is its whole span (introns and UTRs);
+                                  promoters need --gene-flank. Needs `vcfclick
+                                  annotations load`. --gene-file FILE reads
+                                  one per line (# comments); typed with
+                                  --genes, the two are joined.
+  --gene-file FILE                Read --genes values from a file (see
+                                  --genes).
+  --exclude-genes SYMBOL[,SYMBOL...]
+                                  Leave out variants inside these genes (same
+                                  tokens as --genes). --exclude-gene-file FILE
+                                  reads one per line.
+  --exclude-gene-file FILE        Read --exclude-genes values from a file (see
+                                  --exclude-genes).
+  --gene-flank INTEGER            Widen every gene of --genes and --exclude-
+                                  genes by this many base pairs on each side
+                                  (promoters, upstream elements).  [default:
+                                  0]
+  --region REGION                 Only variants inside this region, chrN:FROM-
+                                  TO, 1-based and inclusive (repeatable). With
+                                  --genes, a variant in either is kept.
+                                  --region-file BED reads 0-based half-open
+                                  BED intervals.
+  --region-file BED               Read --region values from a file (see
+                                  --region).
+  --exclude-region REGION         Leave out variants inside this region,
+                                  chrN:FROM-TO (repeatable).
+  --min-homalt-ab FLOAT           Lowest alt fraction (alt reads / all reads)
+                                  of an AFFECTED child's hom-alt call: an
+                                  affected 1/1 with 20 ref and 20 alt reads is
+                                  not a clean hom-alt. A call without allele
+                                  depths passes.  [default: 0.85]
+  --partial-calls [strict|ignore]
+                                  strict: at a site where some sample has a
+                                  partial call ('0/.', './1') a stored 0/0 is
+                                  not proof of reference, so a candidate that
+                                  rests on one is only compatible. ignore:
+                                  trust the stored 0/0, as db trio does.
+                                  [default: strict]
+  --parent-phenotype [ignore|use]
+                                  use: a dominant candidate whose carrier
+                                  parent is declared unaffected becomes
+                                  reduced_penetrance. Default ignore, because
+                                  a pedigree built from flags declares no
+                                  parent phenotype.  [default: ignore]
+  --allow-unresolved / --no-allow-unresolved
+                                  Also list compatible candidates: nothing
+                                  contradicts the model, but a child could not
+                                  be resolved (no-call, low quality, no row)
+                                  or a partial call blocks a reference proof.
+                                  Counts always include them.
+  --allow-unresolved-genes        Run even when tokens of --genes / --exclude-
+                                  genes resolve to no gene (by default a list
+                                  of 20 or fewer may miss none, a longer one
+                                  at most 5%); they are left out of the scope
+                                  and reported.
+  --build [auto|GRCh37|GRCh38]    Assembly of the database, for --genes /
+                                  --region (auto: from chrX positions when the
+                                  data prove it).  [default: auto]
+  --absent [strict|called]        strict: only a stored 0/0 proves a parent or
+                                  an unaffected child does not carry the
+                                  allele. called: a member with no row at a
+                                  site whose calls are all accounted for
+                                  (n_called + missing = n_samples) counts as
+                                  reference; the candidate is then
+                                  consistent_inferred, never consistent. De
+                                  novo still needs stored parental 0/0 rows.
+                                  [default: strict]
+  --max-unaffected-carriers INTEGER
+                                  Reduced penetrance (non-standard): tolerate
+                                  up to N unaffected children that contradict
+                                  the model (carry the variant; hom-alt for
+                                  recessive). Such candidates are status
+                                  reduced_penetrance, never consistent. 0 <= N
+                                  <= unaffected children - 1. Ignored for
+                                  comphet.  [default: 0]
+  --mz-pair A,B                   Two children who are monozygotic twins or
+                                  duplicate samples (repeatable): they count
+                                  as one informative meiosis and one affected
+                                  group. Both must share a phenotype. Not
+                                  detected automatically.
+  --format [text|json]            json: one document per sibship (`families`
+                                  list unless a selector names one sibship).
+                                  [default: text]
   --limit INTEGER                 json: at most this many candidates per
                                   model.  [default: 1000]
   --preset NAME|PATH              Apply a filter preset (`vcfclick preset

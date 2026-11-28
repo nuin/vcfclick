@@ -1,0 +1,6 @@
+##gff-version 3
+chr1	HAVANA	gene	5000000	5001000	.	+	.	ID=ENSG00000901.1;gene_id=ENSG00000901.1;gene_type=protein_coding;gene_name=G1
+chr1	HAVANA	gene	5100000	5101000	.	+	.	ID=ENSG00000902.1;gene_id=ENSG00000902.1;gene_type=protein_coding;gene_name=G2
+chr1	HAVANA	gene	5200000	5201000	.	+	.	ID=ENSG00000903.1;gene_id=ENSG00000903.1;gene_type=protein_coding;gene_name=G3
+chr1	HAVANA	gene	5300000	5301000	.	+	.	ID=ENSG00000904.1;gene_id=ENSG00000904.1;gene_type=protein_coding;gene_name=G4
+chr1	HAVANA	gene	5400000	5401000	.	+	.	ID=ENSG00000905.1;gene_id=ENSG00000905.1;gene_type=protein_coding;gene_name=G5

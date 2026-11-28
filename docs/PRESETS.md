@@ -380,7 +380,13 @@ does one whose declared name is not a valid name, such as `"Old Name"`.)
 
 - `filters` keys are the registered ones: `category`, `min_gq` (0-99), `min_dp`
   (0-10000), `max_af`, `min_ab`, `max_ab`, `gnomad_max_af` (0-1), `strict_missing`,
-  `pass_only`, `parent_alt_screen`, `max_parent_alt_frac`, `require_bound`. A key
+  `pass_only`, `parent_alt_screen`, `max_parent_alt_frac`, `require_bound`, the
+  scope keys, and the `db segregate` keys `min_homalt_ab` (0-1), `partial_calls`
+  (`strict` or `ignore`), `parent_phenotype` (`ignore` or `use`) and
+  `allow_unresolved` (`db trio` skips these four with a note; `db segregate`
+  skips `parent_alt_screen` and the X keys). `absent` and
+  `max_unaffected_carriers` are never presettable: a preset may only make a run
+  stricter. A key
   not in that list is an error with a did-you-mean (and the vcfclick version
   recorded in `meta.created_with`, if different); `x_...` keys are kept and
   ignored, except a never-presettable key that starts with `x_` (`x_guard`), which

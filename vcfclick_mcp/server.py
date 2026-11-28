@@ -133,10 +133,28 @@ _TRIO_XLINKED = f"""\
    (`db trio --category xlinked --format json`) rather than hand-written
    SQL for X: it resolves sex and build first."""
 
+_TRIO_SIBSHIP = """\
+   SIBSHIPS: children with the same declared father and mother. For a
+   variant the affected children carry and the unaffected ones may or may
+   not, use the `segregate` tool (CLI: `vcfclick db segregate`) rather than
+   hand-written SQL: it reports, per model (denovo, recessive, dominant,
+   comphet), every member's STATE at the site and a status ladder
+   (consistent > consistent_inferred > compatible > reduced_penetrance).
+   Absence is not reference: pivot the members with conditional
+   aggregation, max(CASE WHEN sample_id = 'S3' THEN gt + 1 ELSE 0 END)
+   (0 = no stored row, 1 = gt 0, 2 = het, 3 = hom-alt; never LEFT JOIN, a
+   chDB default reads gt = 0), and treat a sibling with no row as no-call
+   unless missing_genotypes and variants.n_called prove the site fully
+   called (n_called + missing = n_samples). A sibling no-call is unresolved,
+   not unaffected-reference. `consistent` is not evidence: with one
+   affected and one unaffected child a dominant site passes by chance 25
+   percent of the time; read n_informative_meioses and p_random."""
+
 _TRIO_CONVENTION = "\n\n".join(
     [
         _TRIO_PEDIGREE,
         _TRIO_FAMILIES,
+        _TRIO_SIBSHIP,
         _TRIO_MODELS,
         _TRIO_XLINKED,
         _TRIO_DENOVO_CAVEAT,
@@ -350,6 +368,52 @@ def run_sql(query: str) -> dict:
         "rows": parsed.get("data", []),
         "row_count": len(parsed.get("data", [])),
     }
+
+
+@mcp.tool()
+def segregate(
+    family: str | None = None,
+    father: str | None = None,
+    mother: str | None = None,
+    category: str = "all",
+    min_gq: int = 20,
+    min_dp: int = 10,
+    max_af: float | None = None,
+    absent: str = "strict",
+    allow_unresolved: bool = False,
+    max_unaffected_carriers: int = 0,
+    limit: int = 200,
+) -> dict:
+    """Sibling segregation: for a sibship (children with the same declared
+    parents) the variants the affected children carry and the unaffected ones
+    do not contradict, per model (denovo, recessive, dominant, comphet), with
+    every member's state and a status (consistent, consistent_inferred,
+    compatible, reduced_penetrance). No selector: every eligible sibship,
+    `{"families": [...]}`; a selector (family, father, mother): one document.
+    `max_af` omitted means 0.01 and lets a cohort-derived INFO/AF skip the
+    gate. `absent="called"` infers reference from a fully accounted site and
+    caps the status at consistent_inferred. Same JSON as
+    `vcfclick db segregate --format json`."""
+    import click
+
+    from cli.segregation_api import segregate_api
+
+    try:
+        return segregate_api(
+            family=family,
+            father=father,
+            mother=mother,
+            category=category,
+            min_gq=min_gq,
+            min_dp=min_dp,
+            max_af=max_af,
+            absent=absent,
+            allow_unresolved=allow_unresolved,
+            max_unaffected_carriers=max_unaffected_carriers,
+            limit=limit,
+        )
+    except click.ClickException as e:  # includes UsageError
+        return {"error": e.message}
 
 
 @mcp.tool()

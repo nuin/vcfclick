@@ -1,0 +1,8 @@
+#family individual father mother sex phenotype
+fam1 FA 0 0 1 0
+fam1 MO 0 0 2 0
+fam1 S1 FA MO 1 2
+fam1 S2 FA MO 2 2
+fam1 S3 FA MO 1 1
+fam1 S4 FA MO 2 1
+fam1 S5 FA MO 1 0

@@ -47,6 +47,7 @@ EXPECTED_TOOLS = {
     "canonical_transcript",
     "splice_site_distance",
     "variants_in_gene",
+    "segregate",
 }
 
 
@@ -93,6 +94,15 @@ def test_tool_argument_schemas_match_signatures():
     ga = schemas["gene_at"]["properties"]
     assert ga["chrom"]["type"] == "string"
     assert ga["pos"]["type"] == "integer"
+
+    sg = schemas["segregate"]["properties"]
+    assert set(sg) == {
+        "family", "father", "mother", "category", "min_gq", "min_dp", "max_af",
+        "absent", "allow_unresolved", "max_unaffected_carriers", "limit",
+    }  # fmt: skip
+    assert sg["min_gq"]["type"] == "integer"
+    assert sg["allow_unresolved"]["type"] == "boolean"
+    assert not schemas["segregate"].get("required")
 
     cv = schemas["clinvar_lookup"]["properties"]
     assert cv["chrom"]["type"] == "string"
@@ -176,6 +186,41 @@ def test_briefing_teaches_families_and_the_proband_rule():
     assert SCHEMA_DESCRIPTION.index("FAMILIES:") < SCHEMA_DESCRIPTION.index(
         "Inheritance models"
     )
+
+
+def test_briefing_teaches_sibships_and_the_segregate_tool():
+    """Sibling segregation: a no-call sibling is unresolved, not reference; the
+    tool is named; `consistent` carries the chance warning."""
+    from vcfclick_mcp.server import SCHEMA_DESCRIPTION
+
+    assert "SIBSHIPS:" in SCHEMA_DESCRIPTION
+    assert "`segregate` tool" in SCHEMA_DESCRIPTION
+    assert "vcfclick db segregate" in SCHEMA_DESCRIPTION
+    assert "gt + 1" in SCHEMA_DESCRIPTION
+    assert "unresolved" in SCHEMA_DESCRIPTION
+    assert (
+        SCHEMA_DESCRIPTION.index("FAMILIES:")
+        < SCHEMA_DESCRIPTION.index("SIBSHIPS:")
+        < SCHEMA_DESCRIPTION.index("Inheritance models")
+    )
+
+
+def test_segregate_tool_reports_a_refusal_as_an_error(monkeypatch):
+    """A selection the command refuses comes back as {"error": ...}, never an
+    exception (the tool talks to an LLM, not a terminal)."""
+    import click
+
+    import cli.segregation_api as api
+    from vcfclick_mcp.server import mcp
+
+    def refuse(**kwargs):
+        raise click.ClickException("no sibship with >=2 children")
+
+    monkeypatch.setattr(api, "segregate_api", refuse)
+    import json
+
+    content = _run(mcp.call_tool("segregate", {"family": "nope"}))
+    assert json.loads(content[0].text) == {"error": "no sibship with >=2 children"}
 
 
 # ─────────────────────── DuckDB-backed tools ───────────────────────

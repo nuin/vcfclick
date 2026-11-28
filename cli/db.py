@@ -18,6 +18,7 @@ for _module in (
     "cli.db_ped",
     "cli.db_families",
     "cli.db_trio",
+    "cli.db_segregate",
     "cli.db_qc",
     "cli.db_relatedness",
     "cli.db_gene",

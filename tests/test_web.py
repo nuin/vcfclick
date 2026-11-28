@@ -504,3 +504,121 @@ def test_trio_endpoint_serves_xlinked_and_guards_the_classic_models(trio_web_sto
     blocked = get("ZKID", "xlinked")
     assert blocked["rows"] == [] and "needs proband sex" in blocked["note"]
     assert "unknown category" in get("XSON", "ylinked")["error"]
+
+
+# ───────────────────── /api/segregate on a sibship ─────────────────────
+
+
+def test_meta_lists_the_sibships(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    m = client.get("/api/meta").json()
+    assert m["sibships"] == [
+        {
+            "family_id": "fam1",
+            "father": "FA",
+            "mother": "MO",
+            "children": [
+                {"sample": "S1", "affected": "affected"},
+                {"sample": "S2", "affected": "affected"},
+                {"sample": "S3", "affected": "unaffected"},
+                {"sample": "S4", "affected": "unaffected"},
+                {"sample": "S5", "affected": None},
+            ],
+        }
+    ]
+    # the existing keys are untouched
+    assert m["probands"] == ["S1", "S2", "S5"]
+
+
+def test_meta_sibships_empty_without_a_pedigree(duckdb_cohort):
+    assert client.get("/api/meta").json()["sibships"] == []
+
+
+def test_segregate_returns_the_cli_document_and_a_table(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    d = client.get("/api/segregate", params={"category": "dominant"}).json()
+    assert "error" not in d, d
+    fam = d["families"][0]  # no selector: the `families` list, as the CLI
+    assert fam["family"]["family_id"] == "fam1"
+    assert fam["models"]["dominant"]["count"] == 6
+    assert set(fam["models"]) == {"dominant"}
+    # the envelope the page renders
+    assert d["columns"][:8] == [
+        "family",
+        "model",
+        "chrom",
+        "pos",
+        "ref",
+        "alt",
+        "af",
+        "status",
+    ]
+    assert d["columns"][8:] == ["S1", "S2", "S3", "S4", "S5"]
+    assert d["row_count"] == 6 and d["rows"][0][:3] == ["fam1", "dominant", "chr1"]
+    assert d["rows"][0][8:] == ["0/1", "0/1", "0/0", "0/0", "0/1"]
+
+
+def test_segregate_table_covers_every_sibship():
+    from vcfclick_web.app import _segregation_envelope
+
+    def fam(fid, kids):
+        cand = {
+            "chrom": "chr1",
+            "pos": 1,
+            "ref": "A",
+            "alt": "G",
+            "af": None,
+            "status": "consistent",
+            "calls": [{"state": "het", "gt": 1} for _ in kids],
+        }
+        return {
+            "family": {"family_id": fid, "children": [{"sample": k} for k in kids]},
+            "models": {"dominant": {"candidates": [cand]}},
+        }
+
+    env = _segregation_envelope(
+        {"families": [fam("A", ["a1", "a2"]), fam("B", ["b1", "b2", "b3"])]}
+    )
+    assert env["row_count"] == 2
+    assert [r[0] for r in env["rows"]] == ["A", "B"]
+    assert all(len(r) == len(env["columns"]) for r in env["rows"])
+
+
+def test_segregate_refuses_an_empty_allele_balance_band(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    d = client.get("/api/segregate", params={"min_ab": 0.8, "max_ab": 0.2}).json()
+    assert "min_ab (0.8) is above max_ab (0.2)" in d["error"]
+
+
+def test_segregate_caps_the_limit_and_says_so(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    d = client.get("/api/segregate", params={"limit": 10**7}).json()
+    assert d["families"][0]["options"]["limit"] == 10000
+    assert any("limit was lowered to 10000" in n for n in d["families"][0]["notes"])
+
+
+def test_segregate_with_a_selector_is_one_document(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    d = client.get(
+        "/api/segregate",
+        params={"family": "fam1", "category": "recessive", "allow_unresolved": True},
+    ).json()
+    assert "families" not in d and d["family"]["father"] == "FA"
+    assert d["models"]["recessive"]["count"] == 6  # 3 consistent + 3 compatible
+
+
+def test_segregate_says_why_it_refuses(trio_web_store):
+    trio_web_store(FIX / "segregation.vcf", ped=FIX / "segregation.ped")
+    d = client.get("/api/segregate", params={"family": "nope"}).json()
+    assert "no sibship matches" in d["error"]
+    d = client.get("/api/segregate", params={"category": "xlinked"}).json()
+    assert "no xlinked model" in d["error"]
+    d = client.get("/api/segregate", params={"absent": "maybe"}).json()
+    assert "absent must be" in d["error"]
+
+
+def test_segregate_on_a_database_without_a_pedigree_table(trio_web_store):
+    trio_web_store(FIX / "trio.vcf.gz")
+    _query("DROP TABLE pedigree")
+    d = client.get("/api/segregate").json()
+    assert "no pedigree loaded" in d["error"]

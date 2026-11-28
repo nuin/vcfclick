@@ -20,6 +20,28 @@ follows [SemVer](https://semver.org/spec/v2.0.0.html).
   `combine --gatk3 ... --genotype-merge unsorted --merge-info-with-max-ac
   --min-callsets 2`; see `docs/COMBINE.md`. Pinned by frozen GATK 3.8-1
   output on synthetic fixtures (`tests/fixtures/gatk3_pipeline`).
+- `vcfclick db segregate`: sibling segregation. For a sibship (children with
+  the same declared parents) it reports, per model (`denovo`, `recessive`,
+  `dominant`, `comphet`), the variants the affected children carry and the
+  unaffected children do not contradict, with each member's state at the site
+  (`hom_ref`, `het`, `hom_alt`, `absent_called`, `no_call`, `low_quality`,
+  `absent_unknown`, `ref_partial_site`, `ref_alt_reads`) and a status ladder
+  (`consistent`, `consistent_inferred`, `compatible`, `reduced_penetrance`).
+  A no-call or low-quality sibling makes a candidate `compatible`, never
+  `consistent`; `n_informative_meioses` and `p_random` say how little a
+  one-affected, one-unaffected sibship proves. Options: `--absent strict|called`,
+  `--partial-calls`, `--max-unaffected-carriers`, `--parent-phenotype`,
+  `--mz-pair`, `--allow-unresolved`, `--min-homalt-ab`, and `db trio`'s gates,
+  cohort-derived-AF skip, presets, scope and strict gates. Sex and
+  mitochondrial contigs are skipped and counted. JSON is
+  `{"families": [...]}`, or one document when `--family`, `--father` or
+  `--mother` names the sibship. Also `GET /api/segregate`, the `sibships` list
+  of `/api/meta` and an MCP `segregate` tool (the web table covers every
+  sibship; web and MCP cap `limit` at 10000). A preset's `xlinked` category is
+  skipped with a note. See `docs/TRIO.md`.
+- Filter registry: `min_homalt_ab`, `partial_calls`, `parent_phenotype` and
+  `allow_unresolved` (commands: `segregate`), and `category` now also applies
+  to `segregate`. `absent` and `max_unaffected_carriers` are never presettable.
 - `db trio --format json`: every model object gains `blocked_reason`
   (`null` when nothing is wrong, else `needs_keep_reference` or
   `needs_genes`, from one closed vocabulary), and `gates` gains `af_gate`
