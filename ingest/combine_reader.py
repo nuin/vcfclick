@@ -20,6 +20,18 @@ from ingest.combine_records import (
 )
 
 
+def _info_ac(info: str) -> int | None:
+    """The largest value of INFO AC in an INFO string, or None."""
+    for item in info.split(";"):
+        key, _, val = item.partition("=")
+        if key == "AC" and val:
+            try:
+                return max(int(x) for x in val.split(","))
+            except ValueError:
+                return None
+    return None
+
+
 class AlleleNormalizer:
     """Optional reference normalization, with contig order from the FASTA index."""
 
@@ -92,6 +104,8 @@ class CombinedInputs:
     """Accumulated records, sample order, and carried header definitions."""
 
     carry_info: bool
+    keep_first_record: bool = False  # GATK UNSORTED: a ./. in the first input wins
+    info_from_max_ac: bool = False
     union: _Union = field(
         default_factory=lambda: _Union({}, {}, {}, {}, {}, {}, {}, set())
     )
@@ -146,13 +160,8 @@ class CombinedInputs:
         record_pass = _is_pass(variant)
         for key, alt_index in rows:
             self.add_presence(key, idx, record_pass)
-            if self.carry_info and key not in self.union.meta:
-                cols = str(variant).rstrip("\n").split("\t")
-                self.union.meta[key] = {
-                    "qual": cols[5],
-                    "filter": cols[6],
-                    "info": _project_info(cols[7], alt_index, self.info_numbers),
-                }
+            if self.carry_info:
+                self.carry_meta(key, variant, alt_index)
             gts = self.union.gts.setdefault(key, {})
             for sample_idx, sample in enumerate(samples):
                 if sample in gts or sample_idx >= len(genotypes):
@@ -162,8 +171,26 @@ class CombinedInputs:
                     if alt_index is None
                     else _remap_gt(genotypes[sample_idx], alt_index)
                 )
+                if gt is None and self.keep_first_record:
+                    gt = "./."
                 if gt is not None:
                     gts[sample] = _sample_cell(gt, fmt_arrs, sample_idx, alt_index)
+
+    def carry_meta(self, key, variant, alt_index):
+        """Keep QUAL/FILTER/INFO of the first input that has the allele, or with
+        info_from_max_ac of the input whose INFO AC for the allele is highest
+        (the first input wins a tie, and an input without AC never replaces)."""
+        cols = str(variant).rstrip("\n").split("\t")
+        info = _project_info(cols[7], alt_index, self.info_numbers)
+        ac = _info_ac(info) if self.info_from_max_ac else None
+        held = self.union.meta.get(key)
+        if held is None or (ac is not None and (held["ac"] is None or ac > held["ac"])):
+            self.union.meta[key] = {
+                "qual": cols[5],
+                "filter": cols[6],
+                "info": info,
+                "ac": ac,
+            }
 
     def add_presence(self, key, idx, record_pass):
         union = self.union

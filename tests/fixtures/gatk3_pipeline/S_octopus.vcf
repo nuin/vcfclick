@@ -1,0 +1,36 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=q10,Description="Quality below 10">
+##FILTER=<ID=LowQual,Description="Low quality">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes">
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele frequency">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total depth">
+##INFO=<ID=MQ,Number=1,Type=Float,Description="RMS mapping quality">
+##INFO=<ID=MP,Number=1,Type=Float,Description="Model posterior">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">
+##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set">
+##contig=<ID=chr1,length=1400>
+##contig=<ID=chr2,length=400>
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE
+chr1	100	.	T	A	50	PASS	AC=1;AF=0.5;AN=2;DP=25;MP=30.2	GT:GQ:DP:PS	0/1:60:30:.
+chr1	150	.	C	A	500	PASS	AC=2;AF=1;AN=2;DP=30;MP=40	GT:GQ:DP:PS	1/1:60:30:.
+chr1	250	.	G	A	50	PASS	AC=1;AF=0.5;AN=2;DP=30;MP=22	GT:GQ:DP:PS	0/1:60:30:.
+chr1	300	.	C	A	50	PASS	AC=2;AF=1;AN=2;DP=30;MP=31	GT:GQ:DP:PS	1/1:60:30:.
+chr1	450	.	A	C	50	q10	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	455	.	A	C	50	q10	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	460	.	C	A	50	q10	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	500	.	A	G	50	PASS	AC=2;AF=1;AN=2;DP=30;MP=10	GT:GQ:DP:PS	1/1:60:30:.
+chr1	600	.	G	A	50	PASS	AC=2;AF=1;AN=2;DP=30;MP=44	GT:GQ:DP:PS	1/1:60:30:.
+chr1	804	.	TG	T	50	PASS	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	850	.	C	A	50	PASS	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	901	.	CAC	C	50	PASS	AC=2;AF=1;AN=2;DP=22	GT:GQ:DP:PS	1/1:60:30:.
+chr1	950	.	T	A	50	PASS	DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	1000	.	T	A	50	PASS	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	1010	.	C	CCT	50	q10	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	1250	.	T	A	50	PASS	AC=2;AF=1;AN=2;DP=30;MP=12	GT:GQ:DP:PS	1/1:60:30:.
+chr1	1300	.	A	C	50	q10	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	1380	.	C	A	50	PASS	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.
+chr1	1385	.	G	.	50	PASS	DP=28	GT:GQ:DP:PS	0/0:60:30:.
+chr2	50	.	C	A	50	PASS	AC=1;AF=0.5;AN=2;DP=30	GT:GQ:DP:PS	0/1:60:30:.

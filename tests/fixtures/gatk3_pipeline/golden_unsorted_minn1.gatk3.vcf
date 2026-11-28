@@ -1,0 +1,86 @@
+##fileformat=VCFv4.2
+##FILTER=<ID=LowQual,Description="Low quality">
+##FILTER=<ID=q10,Description="Quality below 10">
+##FORMAT=<ID=AD,Number=R,Type=Integer,Description="Allelic depths">
+##FORMAT=<ID=AO,Number=A,Type=Integer,Description="Alternate count">
+##FORMAT=<ID=DP,Number=1,Type=Integer,Description="Read depth">
+##FORMAT=<ID=GL,Number=G,Type=Float,Description="Genotype likelihoods">
+##FORMAT=<ID=GQ,Number=1,Type=Integer,Description="Genotype quality">
+##FORMAT=<ID=GT,Number=1,Type=String,Description="Genotype">
+##FORMAT=<ID=PL,Number=G,Type=Integer,Description="Phred likelihoods">
+##FORMAT=<ID=PS,Number=1,Type=Integer,Description="Phase set">
+##FORMAT=<ID=RO,Number=1,Type=Integer,Description="Reference count">
+##GATKCommandLine.CombineVariants=<ID=CombineVariants,Version=3.8-1-0-gf15c1c3ef,Date="Fri Nov 27 12:59:07 UTC 2026",Epoch=1795784347292,CommandLineOptions="analysis_type=CombineVariants input_file=[] showFullBamList=false read_buffer_size=null read_filter=[] disable_read_filter=[] intervals=null excludeIntervals=null interval_set_rule=UNION interval_merging=ALL interval_padding=0 reference_sequence=ref.fasta nonDeterministicRandomSeed=false disableDithering=false maxRuntime=-1 maxRuntimeUnits=MINUTES downsampling_type=BY_SAMPLE downsample_to_fraction=null downsample_to_coverage=1000 baq=OFF baqGapOpenPenalty=40.0 refactor_NDN_cigar_string=false fix_misencoded_quality_scores=false allow_potentially_misencoded_quality_scores=false useOriginalQualities=false defaultBaseQualities=-1 performanceLog=null BQSR=null quantize_quals=0 static_quantized_quals=null round_down_quantized=false disable_indel_quals=false emit_original_quals=false preserve_qscores_less_than=6 globalQScorePrior=-1.0 secondsBetweenProgressUpdates=10 validation_strictness=SILENT remove_program_records=false keep_program_records=false sample_rename_mapping_file=null unsafe=null use_jdk_deflater=false use_jdk_inflater=false disable_auto_index_creation_and_locking_when_reading_rods=false no_cmdline_in_header=false sites_only=false never_trim_vcf_format_field=false bcf=false bam_compression=null simplifyBAM=false disable_bam_indexing=false generate_md5=false num_threads=1 num_cpu_threads_per_data_thread=1 num_io_threads=0 monitorThreadEfficiency=false num_bam_file_handles=null read_group_black_list=null pedigree=[] pedigreeString=[] pedigreeValidationType=STRICT allow_intervals_with_unindexed_bam=false generateShadowBCF=false variant_index_type=DYNAMIC_SEEK variant_index_parameter=-1 reference_window_stop=0 phone_home= gatk_key=null tag=NA logging_level=INFO log_to_file=null help=false version=false variant=[(RodBindingCollection [(RodBinding name=freebayes source=S_freebayes.final.vcf)]), (RodBindingCollection [(RodBinding name=gatk source=S_GATK.vcf)]), (RodBindingCollection [(RodBinding name=gatk3 source=S_GATK3.vcf)]), (RodBindingCollection [(RodBinding name=octopus source=S_octopus.vcf)])] out=/w/v2.vcf genotypemergeoption=UNSORTED filteredrecordsmergetype=KEEP_IF_ANY_UNFILTERED multipleallelesmergetype=BY_TYPE rod_priority_list=null printComplexMerges=false filteredAreUncalled=false minimalVCF=false excludeNonVariants=false setKey=set assumeIdenticalSamples=false minimumN=1 suppressCommandLineHeader=false mergeInfoWithMaxAC=false filter_reads_with_N_cigar=false filter_mismatching_base_and_quals=false filter_bases_not_stored=false">
+##INFO=<ID=AB,Number=1,Type=Float,Description="Allele balance">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes">
+##INFO=<ID=AC,Number=A,Type=Integer,Description="Allele count in genotypes, for each ALT allele, in the same order as listed">
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele Frequency, for each ALT allele, in the same order as listed">
+##INFO=<ID=AF,Number=A,Type=Float,Description="Allele frequency">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles in called genotypes">
+##INFO=<ID=AN,Number=1,Type=Integer,Description="Total number of alleles">
+##INFO=<ID=DB,Number=0,Type=Flag,Description="dbSNP membership">
+##INFO=<ID=DP,Number=1,Type=Integer,Description="Total depth">
+##INFO=<ID=FS,Number=1,Type=Float,Description="Strand bias">
+##INFO=<ID=MP,Number=1,Type=Float,Description="Model posterior">
+##INFO=<ID=MQ,Number=1,Type=Float,Description="RMS mapping quality">
+##INFO=<ID=QD,Number=1,Type=Float,Description="Qual by depth">
+##INFO=<ID=TYPE,Number=A,Type=String,Description="Variant type">
+##INFO=<ID=set,Number=1,Type=String,Description="Source VCF for the merged record in CombineVariants">
+##contig=<ID=chr1,length=1400>
+##contig=<ID=chr2,length=400>
+##reference=file:///w/ref.fasta
+##source=HaplotypeCaller
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	SAMPLE
+chr1	100	.	T	A	50	PASS	AC=1;AF=0.500;AN=2;DP=105;set=Intersection	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	150	.	C	A	77.70	PASS	AC=1;AF=0.500;AN=2;DP=120;set=Intersection	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	200	.	C	A	50	PASS	AC=1;AF=0.500;AN=2;DP=30;MQ=60;set=gatk3	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	250	.	G	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-octopus	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	300	.	C	A	50	PASS	AC=1;AF=0.500;AN=2;DP=90;set=gatk-gatk3-octopus	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	350	.	T	A	50	PASS	AC=1;AF=0.500;AN=2;DP=90;set=freebayes-filterIngatk-gatk3	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	400	.	G	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-filterIngatk3	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	450	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DP=90;set=freebayes-filterIngatk-filterInoctopus	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	455	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DP=120;set=freebayes-filterIngatk-gatk3-filterInoctopus	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	460	.	C	A	50	LowQual;q10	AC=1;AF=0.500;AN=2;DP=120;set=FilteredInAll	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	470	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	480	.	A	C	50	.	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	500	.	A	C,G	50	PASS	AC=1,0;AF=0.500,0.00;AN=2;DP=100;set=freebayes-gatk-octopus	GT:AO:DP:GQ:RO	0/1:15:30:60:15
+chr1	550	.	T	A,C	50	PASS	AC=1,1;AF=0.500,0.500;AN=2;DP=78;set=gatk-gatk3	GT:DP:GQ	1/2:30:60
+chr1	600	.	G	A,C	50	PASS	AC=1,1;AF=0.500,0.500;AN=2;DP=63;set=freebayes-octopus	GT:AO:DP:GQ:RO	1/2:15,15:30:60:15
+chr1	650	.	G	A	50	PASS	AC=0;AF=0.00;AN=0;DP=35;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	./.:0,0:15:30:0:0,0,0:15
+chr1	760	.	CGT	CT,C	50	PASS	AC=1,0;AF=0.500,0.00;AN=2;DP=60;set=freebayes-gatk	GT:AO:DP:GQ:RO	0/1:15:30:60:15
+chr1	761	.	G	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=gatk-gatk3	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	765	.	CTC	C	50	PASS	AC=1;AF=0.500;AN=2;DP=30;MQ=60;set=gatk	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	765	.	CT	C,CTAT,CG	50	PASS	AC=1,1,0;AF=0.500,0.500,0.00;AN=2;DP=30;set=freebayes	GT:AD:AO:DP:GQ:PL:RO	1/2:15,15,15,15:15,15,15:30:60:0,10,20,30,40,50,60,70,80,90:15
+chr1	799	.	CT	C	50	PASS	AC=1;AF=0.500;AN=2;DP=60;MQ=60;set=gatk-gatk3	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	804	.	TG	T	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-octopus	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	820	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DP=30;set=freebayes	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	820	.	A	ACC	50	PASS	AC=1;AF=0.500;AN=2;DP=30;set=gatk3	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	850	.	C	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=gatk-octopus	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	850	.	CG	AA	50	PASS	AC=1;AF=0.500;AN=2;DP=30;TYPE=mnp;set=freebayes	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	880	.	C	A	50	PASS	AC=1;AF=0.500;AN=2;DP=30;set=gatk	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	880	.	CA	C	50	PASS	AC=1;AF=0.500;AN=2;DP=30;MQ=60;set=gatk	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	899	.	GAC	G	50	PASS	AC=1;AF=0.500;AN=2;DP=44;set=gatk-gatk3	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	901	.	CAC	C	50	PASS	AC=2;AF=1.00;AN=2;DP=44;set=freebayes-octopus	GT:AD:AO:DP:GQ:PL:RO	1/1:15,15:15:30:60:0,10,20:15
+chr1	950	.	T	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=gatk3-octopus	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	1000	rs11,rs22	T	A	50	PASS	AC=1;AF=0.500;AN=2;DP=120;set=Intersection	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	1010	.	C	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	1010	.	C	CCT	50	LowQual;q10	AC=1;AF=0.500;AN=2;DP=60;set=FilteredInAll	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	1020	.	C	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:GQ:PL:RO	0/1:15,15:15:99:0,10,20:15
+chr1	1030	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=gatk-gatk3	GT:AD:DP:GQ:PL	0/1:15,15:30:99:0,10,20
+chr1	1040	.	T	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:13:0,10,20:15
+chr1	1045	.	G	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:12:0,10,20:15
+chr1	1050	.	A	C	60.50	PASS	AC=1;AF=0.500;AN=2;DP=90;set=freebayes-gatk-gatk3	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	1060	.	G	A	99	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	1070	.	A	C	0	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	1100	.	C	A	50	PASS	AC=0;AF=0.00;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/0:15,15:15:30:60:0,10,20:15
+chr1	1150	.	G	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0|1:15,15:15:30:60:0,10,20:15
+chr1	1200	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:2,0,24:15
+chr1	1250	.	T	A	50	PASS	AC=1;AF=0.500;AN=2;DP=90;set=freebayes-gatk3-octopus	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	1300	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DP=120;set=freebayes-gatk-gatk3-filterInoctopus	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr1	1350	.	A	C	50	PASS	AC=1;AF=0.500;AN=2;DB;DP=60;MQ=60;set=gatk-gatk3	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr1	1380	.	C	A	50	PASS	AC=0;AF=0.00;AN=2;DP=60;set=octopus	GT:AD:DP:GQ:PL	0/0:15:30:60:0
+chr1	1385	.	G	.	50	PASS	AN=2;DP=58;set=ReferenceInAll	GT:AD:DP:GQ:PL	0/0:15:30:60:0
+chr2	50	.	C	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=gatk-octopus	GT:AD:DP:GQ:PL	0/1:15,15:30:60:0,10,20
+chr2	100	.	T	A	50	PASS	AC=1;AF=0.500;AN=2;DP=60;set=freebayes-gatk3	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15
+chr2	200	.	C	A,CCC	50	PASS	AC=1,1;AF=0.500,0.500;AN=2;DP=90;set=freebayes-gatk-gatk3	GT:AO:DP:GQ:RO	1/2:15,15:30:60:15
+chr2	300	.	G	A	50	PASS	AC=1;AF=0.500;AN=2;DP=30;set=freebayes	GT:AD:AO:DP:GQ:PL:RO	0/1:15,15:15:30:60:0,10,20:15

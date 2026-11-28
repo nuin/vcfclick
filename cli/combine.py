@@ -37,6 +37,11 @@ class CombineOptions:
     reference: str | None
     atomize: bool
     carry_info: bool
+    genotype_merge: str
+    merge_info_with_max_ac: bool
+    gatk3: bool
+    filtered_are_uncalled: bool
+    priority: str | None
 
 
 @cli.command(name="combine")
@@ -100,6 +105,48 @@ class CombineOptions:
     help="Carry QUAL, FILTER, and INFO (plus their header lines) from the "
     "highest-priority input that called each allele.",
 )
+@click.option(
+    "--genotype-merge",
+    type=click.Choice(["prioritize", "unsorted"]),
+    default="prioritize",
+    show_default=True,
+    help="Genotype of a sample present in several inputs. 'prioritize' takes the "
+    "first input with a non-missing call (a ./. does not win). 'unsorted' is GATK3 "
+    "UNSORTED: the first input that has the sample wins, even with ./. "
+    "(identical to GATK3 PRIORITIZE in input order).",
+)
+@click.option(
+    "--merge-info-with-max-ac",
+    is_flag=True,
+    default=False,
+    help="Take INFO (and with the normalising engine QUAL and FILTER) from the "
+    "input with the highest INFO AC for the allele; the first input wins a tie "
+    "(GATK3 --mergeInfoWithMaxAC). Implies --carry-info without --gatk3.",
+)
+@click.option(
+    "--gatk3",
+    is_flag=True,
+    default=False,
+    help="Reproduce GATK 3.8-1 CombineVariants record for record: no "
+    "normalisation (records merge by position and exact alleles), records "
+    "counted and split by type as GATK does, GATK's QUAL/FILTER/ID/INFO/"
+    "AC/AF/AN/set rules and header merge. --min-callsets is then GATK "
+    "--minimumN (records at the position, minus filtered ones). --reference only "
+    "supplies contig order and ##contig lines.",
+)
+@click.option(
+    "--filtered-are-uncalled",
+    is_flag=True,
+    default=False,
+    help="With --gatk3: treat filtered records as uncalled (GATK "
+    "-filteredAreUncalled): they are left out of the merge. Filtered records "
+    "never count toward --min-callsets, with or without this flag.",
+)
+@click.option(
+    "--priority",
+    help="With --gatk3 and --genotype-merge prioritize: comma-separated input "
+    "names, highest priority first (GATK -priority). Default: input order.",
+)
 @command_options(CombineOptions)
 def combine(options: CombineOptions) -> None:
     """Combine two or more VCF call sets into one, with set= provenance.
@@ -112,6 +159,10 @@ def combine(options: CombineOptions) -> None:
     --pass-only, --count-by site, --reference (split + normalize internally,
     so raw multi-allelic/padded inputs combine with no bcftools step), and
     --carry-info (carry QUAL/FILTER/INFO from the priority input).
+
+    --gatk3 reproduces GATK 3.8-1 CombineVariants exactly (see docs/COMBINE.md
+    for the equivalent of `--genotypemergeoption UNSORTED
+    --mergeInfoWithMaxAC --minimumN 2`).
     """
     from ingest.combine import CombineError, combine_vcfs
 
@@ -128,6 +179,11 @@ def combine(options: CombineOptions) -> None:
             reference=options.reference,
             atomize=options.atomize,
             carry_info=options.carry_info,
+            genotype_merge=options.genotype_merge,
+            merge_info_with_max_ac=options.merge_info_with_max_ac,
+            gatk3=options.gatk3,
+            filtered_are_uncalled=options.filtered_are_uncalled,
+            priority=options.priority.split(",") if options.priority else None,
         )
     except CombineError as e:
         raise click.ClickException(str(e)) from e

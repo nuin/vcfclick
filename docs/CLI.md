@@ -331,10 +331,15 @@ vcfclick merge a.vcf.gz b.vcf.gz -o joint.vcf.gz
 
 ### combine
 
-Combine callers' call sets with `set=` provenance (GATK3 CombineVariants). See [COMBINE.md](COMBINE.md).
+Combine callers' call sets with `set=` provenance (GATK3 CombineVariants). `--gatk3` reproduces GATK 3.8-1 `CombineVariants` record for record. See [COMBINE.md](COMBINE.md).
 
 ```bash
 vcfclick combine gatk.vcf dv.vcf -o out.vcf --name gatk --name dv
+
+# GATK 3.8-1: --genotypemergeoption UNSORTED --mergeInfoWithMaxAC --minimumN 2
+vcfclick combine --gatk3 fb.vcf gatk.vcf gatk3.vcf octopus.vcf -o merged.vcf \
+    --reference ref.fasta --name freebayes --name gatk --name gatk3 --name octopus \
+    --genotype-merge unsorted --merge-info-with-max-ac --min-callsets 2
 ```
 
 <details><summary>options</summary>
@@ -344,22 +349,83 @@ Usage: vcfclick combine [OPTIONS] VCFS...
 
   Combine two or more VCF call sets into one, with set= provenance.
 
+  Inputs are unionized by (chrom, pos, ref, alt); a sample shared across
+  inputs is resolved by PRIORITY (input order, highest first). Output carries
+  GT + GQ/DP/AD from the priority source, plus a set= INFO field.
+
+  Opt-in GATK CombineVariants parity (defaults keep current behaviour):
+  --pass-only, --count-by site, --reference (split + normalize internally, so
+  raw multi-allelic/padded inputs combine with no bcftools step), and --carry-
+  info (carry QUAL/FILTER/INFO from the priority input).
+
+  --gatk3 reproduces GATK 3.8-1 CombineVariants exactly (see docs/COMBINE.md
+  for the equivalent of `--genotypemergeoption UNSORTED --mergeInfoWithMaxAC
+  --minimumN 2`).
+
 Options:
-  -o, --out FILE            Output combined VCF path (.vcf or .vcf.gz). [required]
-  --name TEXT               Set name for an input (repeat once per input, in order).
-  --min-callsets INTEGER    Keep only sites present in at least this many inputs.
-                            [default: 1]
-  --pass-only               Count only PASS calls toward --min-callsets; a filtered
-                            input is named filterIn<name> in set=. FILTER '.' = PASS.
-  --count-by [allele|site]  Count inputs by exact allele (default) or by position
-                            ('site' keeps every allele there; GATK --minimumN).
-                            [default: allele]
-  --reference FILE          Reference FASTA. Split multi-allelics and left-align/trim
-                            internally (bcftools norm -m - -f equivalent) instead of
-                            refusing. Needs pyfaidx (vcfclick[benchmark]).
-  --carry-info              Carry QUAL/FILTER/INFO (plus header lines) from the
-                            highest-priority input that called each allele.
-  --help                    Show this message and exit.
+  -o, --out FILE                  Output combined VCF path (.vcf or .vcf.gz).
+                                  [required]
+  --name TEXT                     Set name for an input (repeat once per
+                                  input, in order). Default: derived from each
+                                  filename.
+  --min-callsets INTEGER          Keep only sites present in at least this
+                                  many inputs (consensus filter).  [default:
+                                  1]
+  --pass-only                     Count only PASS calls toward --min-callsets;
+                                  a filtered input is still named
+                                  filterIn<name> in set= (GATK convention).
+                                  FILTER '.' counts as PASS.
+  --count-by [allele|site]        Count inputs by exact allele (default) or by
+                                  position. 'site' keeps every allele at a
+                                  position counted by enough inputs (GATK
+                                  --minimumN).  [default: allele]
+  --reference FILE                Reference FASTA. Split multi-allelics and
+                                  left-align/trim internally (the bcftools
+                                  norm -m - -f equivalent) instead of
+                                  refusing. Needs pyfaidx
+                                  (vcfclick[benchmark]).
+  --atomize                       Split complex alleles into primitives (SNPs
+                                  + one indel) after left-alignment, so a
+                                  caller packing substitutions into one record
+                                  converges with one that emits them
+                                  separately. Requires --reference.
+  --carry-info                    Carry QUAL, FILTER, and INFO (plus their
+                                  header lines) from the highest-priority
+                                  input that called each allele.
+  --genotype-merge [prioritize|unsorted]
+                                  Genotype of a sample present in several
+                                  inputs. 'prioritize' takes the first input
+                                  with a non-missing call (a ./. does not
+                                  win). 'unsorted' is GATK3 UNSORTED: the
+                                  first input that has the sample wins, even
+                                  with ./. (identical to GATK3 PRIORITIZE in
+                                  input order).  [default: prioritize]
+  --merge-info-with-max-ac        Take INFO (and with the normalising engine
+                                  QUAL and FILTER) from the input with the
+                                  highest INFO AC for the allele; the first
+                                  input wins a tie (GATK3
+                                  --mergeInfoWithMaxAC). Implies --carry-info
+                                  without --gatk3.
+  --gatk3                         Reproduce GATK 3.8-1 CombineVariants record
+                                  for record: no normalisation (records merge
+                                  by position and exact alleles), records
+                                  counted and split by type as GATK does,
+                                  GATK's QUAL/FILTER/ID/INFO/AC/AF/AN/set
+                                  rules and header merge. --min-callsets is
+                                  then GATK --minimumN (records at the
+                                  position, minus filtered ones). --reference
+                                  only supplies contig order and ##contig
+                                  lines.
+  --filtered-are-uncalled         With --gatk3: treat filtered records as
+                                  uncalled (GATK -filteredAreUncalled): they
+                                  are left out of the merge. Filtered records
+                                  never count toward --min-callsets, with or
+                                  without this flag.
+  --priority TEXT                 With --gatk3 and --genotype-merge
+                                  prioritize: comma-separated input names,
+                                  highest priority first (GATK -priority).
+                                  Default: input order.
+  --help                          Show this message and exit.
 ```
 
 </details>
