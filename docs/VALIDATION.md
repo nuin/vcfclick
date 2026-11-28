@@ -96,6 +96,22 @@ produce identical trio calls on real benchmark data. (slivar ships a
 Linux binary only, so this comparison is documented rather than run in
 CI; the bcftools cross-check above is the CI-runnable one.)
 
+### Sibling segregation (`db segregate`)
+
+`tests/test_segregate.py` checks the `consistent` set of each row model on a
+seven-sample family (two affected, two unaffected, one unknown child, 139
+sites with planted edge cases) two independent ways, on both backends: against
+`bcftools query -i` expressions that never run vcfclick code (genotype classes,
+GQ, DP, allele-balance bands and the parental alt-read ceiling written as
+filter expressions; sites with a partial call are removed from bcftools'
+answer, because their reference is deliberately not proven), and against a
+pure-Python reading of the VCF text. A third test evaluates the SQL pruning
+predicate in DuckDB over every combination of member states and requires it to
+agree with the status verdict. Compound-het pairs are checked against a hand
+table, since bcftools cannot express gene pairs. Not validated: real
+families, and the timing of the pivot query on a whole-genome keep-reference
+store (see TRIO.md).
+
 ## 3. Recessive / dominant / compound-het on real genotypes
 
 `tests/fixtures/giab/cftr_trio.vcf.gz` holds real GIAB trio genotypes at

@@ -326,7 +326,13 @@ def db_trio(options: TrioOptions) -> None:
         trio_text(analysis, options.category)
 
 
-def _build_scope(ctx: click.Context, options: TrioOptions, sess, ingest_id: str):
+def _build_scope(
+    ctx: click.Context,
+    options: TrioOptions,
+    sess,
+    ingest_id: str,
+    command: str = "trio",
+):
     """The run's cli.scope.Scope from the resolved scope values (flag > preset >
     default), or None. Gene lists are resolved here, once for every trio; a
     refusal (unresolved genes, no gene table, a GRCh37 database) is a
@@ -335,7 +341,8 @@ def _build_scope(ctx: click.Context, options: TrioOptions, sess, ingest_id: str)
     from cli.scope import SCOPE_KEYS, ScopeError, ScopeRequest, build_scope
 
     state = preset_state(ctx)
-    resolved, _ = resolve_filters(ctx, "trio", state)
+    # the command id the filters are registered under (`trio`, `segregate`)
+    resolved, _ = resolve_filters(ctx, command, state)
     values = {k: resolved[k].value for k in SCOPE_KEYS if k in resolved}
     if state is not None:
         # the descriptive companions follow the lists they describe: a typed

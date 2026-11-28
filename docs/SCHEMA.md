@@ -430,6 +430,13 @@ observed ALT allele. None of the three counts toward `n_called`; the
 per-site `variants.an_called` / `ac_called` count their called alleles
 and remain exact.
 
+**Call accounting.** For a site, `variants.n_called` plus the number of
+distinct samples with a `missing_genotypes` row equals `ingestions.n_samples`
+exactly when no sample has a partial call. `db segregate` reads this as proof
+that an absent sample was called with no ALT allele (`absent_called`), and a
+shortfall as a partial call at the site; with a NULL `n_called` (an older
+ingest) or without the table it proves neither.
+
 Size: about samples × sites × missing rate rows. On a large cohort with
 a lot of missing data that can exceed the sparse `genotypes` table, so
 pass `--no-record-missing` if you will not run `db popgen` (the per-site

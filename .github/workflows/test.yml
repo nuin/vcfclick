@@ -150,7 +150,7 @@ jobs:
         timeout-minutes: 15
         run: uv run pytest tests/ -v -m "not timing" -n auto
 
-  # Wall-clock timing gates (tests/test_trio_timing.py), both backends,
+  # Wall-clock timing gates (tests/test_trio_timing.py, tests/test_segregate_timing.py), both backends,
   # on one runner. Their budgets are relative to a scan of the same store
   # on the same machine, so a slow runner scales both sides.
   timing:
@@ -176,7 +176,7 @@ jobs:
 
       - name: Run timing gates
         timeout-minutes: 20
-        run: uv run pytest tests/test_trio_timing.py -v -m timing
+        run: uv run pytest tests/test_trio_timing.py tests/test_segregate_timing.py -v -m timing
 
   # Wheel smoke test. The test matrix runs from the source tree, where every
   # package imports whether or not the build ships it. The 0.14.3 wheel

@@ -196,6 +196,8 @@ NEVER_PRESET: dict[str, str] = {
     ),
     **dict.fromkeys(("attest_affected", "attest_affected_from_pedigree"), _ATTEST),
     "calling": _EVIDENCE + " (it declares how the cohort was called)",
+    "absent": _EVIDENCE + " (absent=called infers reference from absence)",
+    "max_unaffected_carriers": _EVIDENCE + " (it tolerates unaffected carriers)",
 }
 
 
@@ -212,10 +214,11 @@ register(
         "category",
         "all",
         "Pr-a",
-        ("trio",),
+        ("trio", "segregate"),
         choices=_category_choices,
         help="Inheritance model: a name, a comma list (recessive,comphet) or "
-        "'all'. 'all' prints per-model candidate counts.",
+        "'all'. 'all' prints per-model candidate counts. (db segregate has no "
+        "xlinked: sex contigs are skipped there.)",
     )
 )
 register(
@@ -229,7 +232,8 @@ register(
         _ALL,
         lo=0,
         hi=99,
-        help="Minimum genotype quality (GQ) of the proband and both parents. "
+        help="Minimum genotype quality (GQ) of the proband and both parents "
+        "(db segregate: of every member of the sibship). "
         "A call with no GQ passes unless --strict-missing.",
     )
 )
@@ -244,7 +248,8 @@ register(
         _ALL,
         lo=0,
         hi=10000,
-        help="Minimum read depth (DP) of the proband and both parents. "
+        help="Minimum read depth (DP) of the proband and both parents "
+        "(db segregate: of every member of the sibship). "
         "A call with no DP passes unless --strict-missing.",
     )
 )
@@ -276,7 +281,8 @@ register(
         _ALL,
         lo=0.0,
         hi=1.0,
-        help=f"Lowest {_AB} (alt reads / all reads) a proband het call may have.",
+        help=f"Lowest {_AB} (alt reads / all reads) a proband het call may have "
+        "(db segregate: any child).",
     )
 )
 register(
@@ -290,7 +296,7 @@ register(
         _ALL,
         lo=0.0,
         hi=1.0,
-        help=f"Highest {_AB} a proband het call may have.",
+        help=f"Highest {_AB} a proband het call may have (db segregate: any child).",
     )
 )
 register(
@@ -365,7 +371,9 @@ register(
         lo=0.0,
         hi=1.0,
         help="With --parent-alt-screen: the parent alt-read fraction at and "
-        "above which a stored 0/0 is not trusted.",
+        "above which a stored 0/0 is not trusted. (db segregate always applies "
+        "it, to the stored 0/0 of a parent or an unaffected child in the de "
+        "novo model.)",
     )
 )
 register(
@@ -564,6 +572,72 @@ register(
         choices=lambda: _BUILDS,
         help="The assembly the regions are written in (GRCh37 or GRCh38), "
         "checked against the database's build when it is known.",
+    )
+)
+
+# ───────────────────────────── the keys of S ─────────────────────────────
+# `db segregate`: sibling segregation (cli/segregation.py).
+
+register(
+    FilterKey(
+        "min_homalt_ab",
+        "min_homalt_ab",
+        "--min-homalt-ab",
+        "float",
+        0.85,
+        "S",
+        ("segregate",),
+        lo=0.0,
+        hi=1.0,
+        help="Lowest alt fraction (alt reads / all reads) of an AFFECTED child's "
+        "hom-alt call: an affected 1/1 with 20 ref and 20 alt reads is not a "
+        "clean hom-alt. A call without allele depths passes.",
+    )
+)
+register(
+    FilterKey(
+        "partial_calls",
+        "partial_calls",
+        "--partial-calls",
+        "text",
+        "strict",
+        "S",
+        ("segregate",),
+        choices=lambda: ("strict", "ignore"),
+        help="strict: at a site where some sample has a partial call ('0/.', "
+        "'./1') a stored 0/0 is not proof of reference, so a candidate that "
+        "rests on one is only compatible. ignore: trust the stored 0/0, as "
+        "db trio does.",
+    )
+)
+register(
+    FilterKey(
+        "parent_phenotype",
+        "parent_phenotype",
+        "--parent-phenotype",
+        "text",
+        "ignore",
+        "S",
+        ("segregate",),
+        choices=lambda: ("ignore", "use"),
+        help="use: a dominant candidate whose carrier parent is declared "
+        "unaffected becomes reduced_penetrance. Default ignore, because a pedigree "
+        "built from flags declares no parent phenotype.",
+    )
+)
+register(
+    FilterKey(
+        "allow_unresolved",
+        "allow_unresolved",
+        "--allow-unresolved/--no-allow-unresolved",
+        "bool",
+        False,
+        "S",
+        ("segregate",),
+        widening=False,
+        help="Also list compatible candidates: nothing contradicts the model, "
+        "but a child could not be resolved (no-call, low quality, no row) or a "
+        "partial call blocks a reference proof. Counts always include them.",
     )
 )
 

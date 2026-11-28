@@ -43,6 +43,11 @@ Stop the server with `Ctrl-C`.
   briefing the MCP server gives an LLM to generate SQL, shows you the
   SQL, and runs it. Bring your own API key (Gemini or Anthropic) — it
   stays in your browser and is sent only to the provider you pick.
+- **Sibling segregation** — `GET /api/segregate` runs
+  [`db segregate`](TRIO.md#sibling-segregation) (same parameters as the CLI's
+  main flags, no preset or scope) and returns its JSON plus a
+  `columns`/`rows` table; `/api/meta` lists the eligible `sibships` (family,
+  parents and children with their phenotype).
 - **Trio** — pick a proband (the list is the probands of the loaded
   pedigree, by the rule `db trio` uses: a child with both parents declared
   who is not marked unaffected and has no children or is affected; with
